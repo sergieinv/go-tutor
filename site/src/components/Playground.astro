@@ -15,7 +15,8 @@ const fallback = await highlight(code.trimEnd(), "go");
 <section class="playground" aria-label="Песочница" data-playground data-lesson={lesson}>
   <h2>Песочница</h2>
   <p class="muted hint">
-    Измените пример и запустите его. <kbd>Ctrl</kbd>/<kbd>⌘</kbd>+<kbd>Enter</kbd> — запуск.
+    Измените пример и запустите его. <kbd>Ctrl</kbd>/<kbd>⌘</kbd>+<kbd>Enter</kbd> — запуск, <kbd>Tab</kbd> — отступ,
+    <kbd>Esc</kbd> и затем <kbd>Tab</kbd> — выйти из редактора.
     {race && <> Код собирается с детектором гонок <code>-race</code>.</>}
   </p>
   <script type="application/json" data-initial set:html={scriptJSON(code)} />

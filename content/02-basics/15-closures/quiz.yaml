@@ -1,0 +1,108 @@
+questions:
+  - id: capture-variable
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func main() {
+      	msg := "hello"
+      	f := func() { fmt.Println(msg) }
+      	msg = "bye"
+      	f()
+      }
+    options:
+      - text: hello
+        explain: Замыкание не копирует значение при создании — оно ссылается на саму переменную `msg`.
+      - text: bye
+        correct: true
+        explain: "`f` захватила переменную `msg`. К моменту вызова в ней уже `\"bye\"`."
+      - text: Ошибка компиляции
+        explain: Анонимная функция может читать и менять переменные окружающей функции.
+
+  - id: loopvar-122
+    kind: output
+    prompt: Что выведет программа (go.mod с `go 1.25`)?
+    code: |
+      package main
+
+      import "fmt"
+
+      func main() {
+      	var fs []func()
+      	for i := 0; i < 3; i++ {
+      		fs = append(fs, func() { fmt.Print(i) })
+      	}
+      	for _, f := range fs {
+      		f()
+      	}
+      	fmt.Println()
+      }
+    options:
+      - text: "333"
+        explain: Так было до Go 1.22 — и так до сих пор ведёт себя `for` в C#. С Go 1.22 у каждой итерации своя `i`.
+      - text: "012"
+        correct: true
+        explain: "Начиная с Go 1.22 переменная, объявленная в заголовке `for`, создаётся заново на каждой итерации. Каждое замыкание захватило свою `i`."
+      - text: "222"
+        explain: "Даже при старой семантике последним значением `i` было бы 3 — условие `i < 3` проверяется после последнего `i++`."
+
+  - id: independent-counters
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func gen() func() int {
+      	n := 0
+      	return func() int {
+      		n += 10
+      		return n
+      	}
+      }
+
+      func main() {
+      	a := gen()
+      	b := gen()
+      	a()
+      	a()
+      	fmt.Println(a(), b())
+      }
+    options:
+      - text: "30 10"
+        correct: true
+        explain: "Каждый вызов `gen` создаёт свою `n`. `a` вызвали трижды — 30, `b` один раз — 10."
+      - text: "30 40"
+        explain: "`n` — локальная переменная `gen`, у каждого вызова своя. Общей она была бы, если бы её объявили на уровне пакета."
+      - text: "10 10"
+        explain: Замыкание сохраняет `n` между вызовами — значение накапливается.
+
+  - id: shared-outer
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func main() {
+      	var fs []func() int
+      	v := 0
+      	for i := range 3 {
+      		v = i
+      		fs = append(fs, func() int { return v })
+      	}
+      	fmt.Println(fs[0](), fs[1](), fs[2]())
+      }
+    options:
+      - text: "0 1 2"
+        explain: Новой на каждой итерации становится только переменная цикла `i`. `v` объявлена до цикла и одна на всех.
+      - text: "2 2 2"
+        correct: true
+        explain: "Все три замыкания захватили одну и ту же `v`. К моменту вызовов в ней последнее значение — 2."
+      - text: "3 3 3"
+        explain: "`v` присваивается значение `i` внутри тела, последнее — 2."

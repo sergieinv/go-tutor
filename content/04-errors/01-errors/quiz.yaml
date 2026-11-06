@@ -1,0 +1,111 @@
+questions:
+  - id: ignored-error
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"strconv"
+      )
+
+      func main() {
+      	n, _ := strconv.Atoi("7x")
+      	fmt.Println(n + 1)
+      }
+    options:
+      - text: "8"
+        explain: "`Atoi` не разбирает число частично: при ошибке он возвращает 0, а не 7."
+      - text: "1"
+        correct: true
+        explain: Ошибка выброшена в `_`, исключения нет, а `n` — нулевое значение. Программа тихо продолжает с мусором.
+      - text: panic
+        explain: Ошибки в Go не бросаются — `Atoi` вернул ошибку как значение, а её проигнорировали.
+
+  - id: shadowed-err
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"strconv"
+      )
+
+      func main() {
+      	var err error
+      	if true {
+      		_, err := strconv.Atoi("x")
+      		_ = err
+      	}
+      	fmt.Println(err == nil)
+      }
+    options:
+      - text: "true"
+        correct: true
+        explain: "`:=` внутри блока объявил новую переменную `err`, которая затенила внешнюю. Внешняя `err` так и осталась `nil`."
+      - text: "false"
+        explain: Было бы так с `=` вместо `:=`. Здесь ошибка записана в другую, внутреннюю переменную.
+      - text: panic
+        explain: Сравнение интерфейса с `nil` никогда не паникует.
+
+  - id: single-value-context
+    kind: compile
+    prompt: Скомпилируется ли программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"strconv"
+      )
+
+      func main() {
+      	n := strconv.Atoi("5")
+      	fmt.Println(n)
+      }
+    compiles: false
+    explain: "`Atoi` возвращает два значения, и принять одно из них нельзя: `assignment mismatch`. Ошибку нужно либо получить в переменную, либо явно выбросить через `_`."
+
+  - id: nil-error-print
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func check(x int) error {
+      	if x < 0 {
+      		return fmt.Errorf("x = %d", x)
+      	}
+      	return nil
+      }
+
+      func main() {
+      	fmt.Println(check(1), check(-1))
+      }
+    options:
+      - text: "<nil> x = -1"
+        correct: true
+        explain: "`Println` печатает `nil`-интерфейс как `<nil>`, а у ошибки вызывает метод `Error()`."
+      - text: " x = -1"
+        explain: "`nil`-значение печатается явно, как `<nil>`, а не пустой строкой."
+      - text: "nil x = -1"
+        explain: Пакет `fmt` печатает нулевой интерфейс в угловых скобках — `<nil>`.
+
+  - id: what-is-error
+    kind: single
+    prompt: Что такое `error` в Go?
+    options:
+      - text: Базовый класс исключений, как `Exception`
+        explain: Классов и наследования в Go нет, а ошибка не бросается — её возвращают.
+      - text: Встроенный интерфейс с методом `Error() string`
+        correct: true
+        explain: Любой тип с методом `Error() string` — ошибка. Поэтому ошибки бывают и простыми строками, и структурами с полями.
+      - text: Ключевое слово для объявления исключения
+        explain: Это обычный идентификатор предопределённого интерфейсного типа, а не ключевое слово.
+      - text: Целочисленный код возврата, как errno в C
+        explain: Это интерфейс; в нём может лежать значение любого типа, реализующего `Error()`.

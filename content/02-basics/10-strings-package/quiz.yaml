@@ -1,0 +1,113 @@
+questions:
+  - id: split-empty
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"strings"
+      )
+
+      func main() {
+      	fmt.Println(len(strings.Split("", ",")), len(strings.Fields("")))
+      }
+    options:
+      - text: "0 0"
+        explain: "`Split` всегда возвращает хотя бы одно поле: для пустой строки — срез из одной пустой строки."
+      - text: "1 0"
+        correct: true
+        explain: "`Split(\"\", \",\")` даёт `[\"\"]` — одно пустое поле. `Fields` пустых полей не возвращает, для пустой строки результат пустой."
+      - text: "1 1"
+        explain: "`Fields` режет по пробелам и выбрасывает пустые куски — в пустой строке полей нет."
+
+  - id: trim-cutset
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"strings"
+      )
+
+      func main() {
+      	fmt.Println(strings.Trim("abcHelloCba", "abc"))
+      	fmt.Println(strings.TrimPrefix("abcabcX", "abc"))
+      }
+    options:
+      - text: |
+          HelloC
+          abcX
+        correct: true
+        explain: "Второй аргумент `Trim` — набор символов: с обоих краёв убираются любые из `a`, `b`, `c`. Справа ушли `a` и `b`, а `C` в верхнем регистре в набор не входит. `TrimPrefix` убирает подстроку ровно один раз."
+      - text: |
+          Hello
+          abcX
+        explain: "Сравнение регистрозависимое: `C` не входит в набор `abc`, поэтому обрезка справа на нём останавливается."
+      - text: |
+          HelloC
+          X
+        explain: "`TrimPrefix` убирает префикс один раз и не повторяет."
+      - text: |
+          HelloCba
+          abcX
+        explain: "`Trim` обрезает оба края; только левый обрезает `TrimLeft`."
+
+  - id: atoi-error
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"strconv"
+      )
+
+      func main() {
+      	n, err := strconv.Atoi("42abc")
+      	fmt.Println(n, err != nil)
+      }
+    options:
+      - text: "42 true"
+        explain: "`Atoi` не разбирает «сколько получится», как `parseInt` в JavaScript: строка должна быть числом целиком."
+      - text: "0 true"
+        correct: true
+        explain: "Строка не число целиком — `Atoi` возвращает ошибку и нулевое значение 0."
+      - text: panic
+        explain: "`strconv` не паникует и не бросает исключений — ошибка возвращается вторым результатом."
+
+  - id: string-compare
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func main() {
+      	fmt.Println("Zoo" < "apple", "10" < "9")
+      }
+    options:
+      - text: "true true"
+        correct: true
+        explain: "Сравнение побайтовое: `Z` (90) меньше `a` (97), а `1` (49) меньше `9` (57). Ни культуры, ни числового порядка."
+      - text: "false false"
+        explain: Так было бы при сравнении без учёта регистра и «естественной» сортировке чисел. Go сравнивает байты.
+      - text: "false true"
+        explain: "Заглавные буквы в ASCII идут раньше строчных: `Z` < `a`."
+
+  - id: builder-value
+    kind: single
+    prompt: Как правильно собрать строку из 10 000 частей в цикле?
+    options:
+      - text: "`s += part` — компилятор Go это оптимизирует"
+        explain: Компилятор не превращает `+=` в цикле в буфер — каждая итерация копирует всю строку, получается O(n²).
+      - text: "`var b strings.Builder; b.WriteString(part)`, в конце `b.String()`"
+        correct: true
+        explain: "`Builder` дописывает в растущий буфер, а `String()` возвращает результат без лишней копии."
+      - text: "`fmt.Sprintf(\"%s%s\", s, part)` в цикле"
+        explain: Это та же конкатенация с копированием, только ещё и медленнее из-за разбора формата.

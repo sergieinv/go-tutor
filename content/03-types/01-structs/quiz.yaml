@@ -1,0 +1,124 @@
+questions:
+  - id: copy-on-assign
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      type Point struct{ X, Y int }
+
+      func main() {
+      	a := Point{X: 1}
+      	b := a
+      	b.X = 2
+      	pa := &a
+      	pa.Y = 5
+      	fmt.Println(a, b)
+      }
+    options:
+      - text: "{1 5} {2 0}"
+        correct: true
+        explain: "`b := a` копирует структуру, поэтому `b.X = 2` меняет только копию. `pa` указывает на `a`, и запись `pa.Y` видна в `a`."
+      - text: "{2 5} {2 5}"
+        explain: Так было бы с классом C#, где присваивание копирует ссылку. Структура Go копируется целиком.
+      - text: "{1 0} {2 0}"
+        explain: "`pa` — указатель на `a`, а не на копию: `pa.Y = 5` меняет саму `a`."
+      - text: "{2 5} {2 0}"
+        explain: "`b` — независимая копия, её изменение не возвращается в `a`."
+
+  - id: pass-by-value
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      type Counter struct{ N int }
+
+      func inc(c Counter)     { c.N++ }
+      func incPtr(c *Counter) { c.N++ }
+
+      func main() {
+      	c := Counter{}
+      	inc(c)
+      	incPtr(&c)
+      	incPtr(&c)
+      	fmt.Println(c.N)
+      }
+    options:
+      - text: "3"
+        explain: "`inc` получает копию структуры и увеличивает её счётчик, а не исходный."
+      - text: "2"
+        correct: true
+        explain: Только вызовы через указатель меняют `c`. `inc(c)` работает с копией.
+      - text: "0"
+        explain: "`incPtr` получает адрес `c` и меняет исходную структуру — дважды."
+
+  - id: compare-with-slice
+    kind: compile
+    prompt: Скомпилируется ли программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      type Order struct {
+      	ID    int
+      	Items []string
+      }
+
+      func main() {
+      	a := Order{ID: 1}
+      	b := Order{ID: 1}
+      	fmt.Println(a == b)
+      }
+    compiles: false
+    explain: "Срезы несравнимы, поэтому и структура со срезом несравнима: `invalid operation: a == b (struct containing []string cannot be compared)`. Сравнивайте поля вручную или через `reflect.DeepEqual`/`slices.Equal`."
+
+  - id: map-field-assign
+    kind: compile
+    prompt: Скомпилируется ли программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      type Point struct{ X, Y int }
+
+      func main() {
+      	m := map[string]Point{"a": {1, 2}}
+      	m["a"].X = 10
+      	fmt.Println(m)
+      }
+    compiles: false
+    explain: "Элемент map не адресуем — `m[\"a\"]` возвращает копию, и менять её поле бессмысленно. Компилятор запрещает это: `cannot assign to struct field m[\"a\"].X in map`."
+
+  - id: zero-value-print
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      type User struct {
+      	Name string
+      	Age  int
+      	Tags []string
+      }
+
+      func main() {
+      	var u User
+      	fmt.Printf("%+v %v\n", u, u.Tags == nil)
+      }
+    options:
+      - text: "{Name: Age:0 Tags:[]} true"
+        correct: true
+        explain: Нулевое значение структуры — нулевые поля. Пустая строка печатается как ничего, `nil`-срез — как `[]`, но он равен `nil`.
+      - text: "<nil>"
+        explain: Структура — значение, а не ссылка. У переменной `u` нет состояния `nil`.
+      - text: "{Name: Age:0 Tags:[]} false"
+        explain: Неинициализированное поле-срез равно `nil`; `[]` в выводе — просто так печатается пустой срез.

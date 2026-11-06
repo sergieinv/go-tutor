@@ -1,0 +1,125 @@
+questions:
+  - id: nil-pointer-error
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      type MyErr struct{ Msg string }
+
+      func (e *MyErr) Error() string { return e.Msg }
+
+      func check(ok bool) error {
+      	var e *MyErr
+      	if !ok {
+      		e = &MyErr{"bad"}
+      	}
+      	return e
+      }
+
+      func main() {
+      	err := check(true)
+      	fmt.Println(err != nil)
+      }
+    options:
+      - text: "false"
+        explain: Так было бы в C#. Но `return e` упаковал в `error` пару «тип `*MyErr`, значение `nil`», а такой интерфейс не равен `nil`.
+      - text: "true"
+        correct: true
+        explain: "Интерфейс равен `nil`, только если пусты и тип, и значение. Здесь тип есть — `*MyErr`. Нужно писать `return nil` явно."
+      - text: panic
+        explain: Сравнение интерфейса с `nil` не вызывает методов и не паникует.
+
+  - id: value-does-not-implement
+    kind: compile
+    prompt: Скомпилируется ли программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      type MyErr struct{ Msg string }
+
+      func (e *MyErr) Error() string { return e.Msg }
+
+      func main() {
+      	var err error = MyErr{"bad"}
+      	fmt.Println(err)
+      }
+    compiles: false
+    explain: "Метод `Error` объявлен на `*MyErr`, поэтому `error` реализует только указатель. Значение `MyErr` в `error` не положить: `MyErr does not implement error (method Error has pointer receiver)`. Нужно `&MyErr{\"bad\"}`."
+
+  - id: as-through-wrap
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"errors"
+      	"fmt"
+      )
+
+      type HTTPError struct{ Code int }
+
+      func (e *HTTPError) Error() string { return fmt.Sprint("http ", e.Code) }
+
+      func main() {
+      	err := fmt.Errorf("fetch: %w", &HTTPError{Code: 503})
+      	var he *HTTPError
+      	_, isHTTP := err.(*HTTPError)
+      	fmt.Println(isHTTP, errors.As(err, &he), he.Code)
+      }
+    options:
+      - text: "true true 503"
+        explain: "Приведение типа смотрит только на верхнюю ошибку, а сверху лежит обёртка от `fmt.Errorf`, а не `*HTTPError`."
+      - text: "false true 503"
+        correct: true
+        explain: "`err.(*HTTPError)` не видит обёрток и не срабатывает. `errors.As` проходит по цепочке, находит `*HTTPError` и записывает его в `he`."
+      - text: "false false 0"
+        explain: "`%w` сохраняет исходную ошибку, поэтому `errors.As` её находит."
+
+  - id: value-receiver-equal
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"errors"
+      	"fmt"
+      )
+
+      type CodeError struct{ Code int }
+
+      func (e CodeError) Error() string { return fmt.Sprint("code ", e.Code) }
+
+      func main() {
+      	a := error(CodeError{404})
+      	b := error(&CodeError{404})
+      	fmt.Println(errors.Is(a, CodeError{404}), errors.Is(b, &CodeError{404}))
+      }
+    options:
+      - text: "true true"
+        explain: Указатели сравниваются по адресу, а не по содержимому. Два `&CodeError{404}` — разные объекты.
+      - text: "true false"
+        correct: true
+        explain: Значения структур сравниваются по полям, поэтому `CodeError{404}` равны. Два `&CodeError{404}` — два разных указателя, и `errors.Is` их не путает.
+      - text: "false false"
+        explain: "`errors.Is` сравнивает через `==`, а `==` для сравнимых структур сравнивает поля — первые две ошибки равны."
+
+  - id: fix-nil-trap
+    kind: single
+    prompt: Как надёжно избежать ловушки «`nil`-указатель внутри `error`»?
+    options:
+      - text: Объявлять результат функции как `*MyErr` вместо `error`
+        explain: Ловушка просто переедет к вызывающему, как только он сохранит результат в переменную типа `error`.
+      - text: Возвращать `nil` литералом, а не переменной конкретного типа ошибки
+        correct: true
+        explain: "`return nil` в функции с результатом `error` даёт настоящий `nil`-интерфейс. Конкретный тип ошибки появляется только там, где ошибка действительно есть."
+      - text: Сравнивать `err` с `(*MyErr)(nil)`
+        explain: Это лечит симптом в одном месте и требует от каждого вызывающего знать внутреннее устройство функции.
+      - text: Делать метод `Error` на значении, а не на указателе
+        explain: С `var e MyErr; return e` интерфейс вообще никогда не будет `nil` — ошибка «есть» всегда.

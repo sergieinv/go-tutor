@@ -1,0 +1,8 @@
+5
+hi Go hi Go 
+func(int, int) int 30
+9 20
+49
+no such op
+uryyb, tb
+6

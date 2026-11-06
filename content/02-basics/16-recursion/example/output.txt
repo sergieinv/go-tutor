@@ -1,0 +1,9 @@
+5! = 120
+a
+  b
+    d
+  c
+    e
+depth: 100000
+nodes: 5
+true true

@@ -1,0 +1,110 @@
+questions:
+  - id: struct-copy
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      type user struct{ Name string }
+
+      func rename(u user) { u.Name = "Bob" }
+
+      func renamePtr(u *user) { u.Name = "Eve" }
+
+      func main() {
+      	u := user{"Ann"}
+      	rename(u)
+      	fmt.Print(u.Name, " ")
+      	renamePtr(&u)
+      	fmt.Println(u.Name)
+      }
+    options:
+      - text: "Bob Eve"
+        explain: Так было бы, если бы `user` был классом C#. В Go структура передаётся копией.
+      - text: "Ann Eve"
+        correct: true
+        explain: "`rename` получает копию структуры и меняет её. `renamePtr` получает адрес `u` и меняет оригинал."
+      - text: "Ann Ann"
+        explain: "`u.Name` через указатель — это `(*u).Name`, запись идёт в исходную переменную."
+
+  - id: reassign-param
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func set(p *int) {
+      	v := 42
+      	p = &v
+      }
+
+      func main() {
+      	x := 1
+      	set(&x)
+      	fmt.Println(x)
+      }
+    options:
+      - text: "42"
+        explain: "`p = &v` меняет локальную копию указателя, а не `x`. Для записи нужно `*p = 42`."
+      - text: "1"
+        correct: true
+        explain: Указатель передан по значению. Функция перенаправила свою копию на `v`, а `x` никто не трогал.
+      - text: panic
+        explain: Указатель не `nil`, и адрес локальной `v` брать безопасно.
+
+  - id: pointer-arith
+    kind: compile
+    prompt: Скомпилируется ли программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func main() {
+      	a := [3]int{1, 2, 3}
+      	p := &a[0]
+      	p++
+      	fmt.Println(*p)
+      }
+    compiles: false
+    explain: "Арифметики указателей в Go нет: `p++` для `*int` — ошибка компиляции. Чтобы ходить по элементам, используют индексы или срезы."
+
+  - id: elem-after-append
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func main() {
+      	s := make([]int, 1, 1)
+      	p := &s[0]
+      	s = append(s, 2)
+      	*p = 7
+      	fmt.Println(s[0])
+      }
+    options:
+      - text: "7"
+        explain: Было бы так, если бы `append` дописал в тот же массив. Но ёмкость 1 исчерпана.
+      - text: "0"
+        correct: true
+        explain: "`append` выделил новый массив и скопировал туда 0. `p` указывает в старый массив, запись `*p = 7` туда и уходит."
+      - text: panic
+        explain: Старый массив жив, пока на него есть указатель, — запись в него корректна.
+
+  - id: return-local
+    kind: single
+    prompt: Что произойдёт, если функция вернёт `&x`, где `x` — её локальная переменная?
+    options:
+      - text: Висячий указатель, как в C — неопределённое поведение
+        explain: В Go нет висячих указателей на локальные переменные. Компилятор видит, что адрес «убегает», и размещает переменную в куче.
+      - text: Ошибка компиляции
+        explain: Это обычный идиоматичный код, например в конструкторах `NewX() *X`.
+      - text: Всё корректно — переменная переживёт функцию
+        correct: true
+        explain: "Escape analysis переносит `x` в кучу, сборщик мусора освободит её, когда на неё не останется указателей."

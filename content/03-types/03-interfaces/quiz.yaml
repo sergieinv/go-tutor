@@ -1,0 +1,108 @@
+questions:
+  - id: wrong-signature
+    kind: compile
+    prompt: Скомпилируется ли программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      type Shape interface {
+      	Area() float64
+      }
+
+      type Square struct{ side int }
+
+      func (s Square) Area() int { return s.side * s.side }
+
+      func main() {
+      	var sh Shape = Square{side: 2}
+      	fmt.Println(sh.Area())
+      }
+    compiles: false
+    explain: "Реализация проверяется по полной сигнатуре. `Area() int` — другой метод, чем `Area() float64`, поэтому `Square does not implement Shape (wrong type for method Area)`."
+
+  - id: copy-into-interface
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      type Shape interface{ Area() int }
+
+      type Square struct{ side int }
+
+      func (s Square) Area() int { return s.side * s.side }
+
+      func main() {
+      	s := Square{side: 2}
+      	var a Shape = s
+      	var b Shape = &s
+      	s.side = 3
+      	fmt.Println(a.Area(), b.Area())
+      }
+    options:
+      - text: "4 9"
+        correct: true
+        explain: "В `a` скопировано значение `Square{2}`. В `b` лежит указатель на `s`, и `b.Area()` разыменует его уже после изменения. Value-методы `*Square` тоже имеет — их method set включает методы `Square`."
+      - text: "9 9"
+        explain: Присваивание в интерфейс копирует значение, как и любое присваивание в Go. `a` не следит за `s`.
+      - text: "4 4"
+        explain: "`b` хранит указатель `&s`, поэтому видит изменение `s.side`."
+
+  - id: compile-check-line
+    kind: single
+    prompt: Что делает строка `var _ io.Writer = (*MyWriter)(nil)` на уровне пакета?
+    options:
+      - text: Проверяет при компиляции, что `*MyWriter` реализует `io.Writer`
+        correct: true
+        explain: Присваивание в переменную типа `io.Writer` компилируется, только если тип реализует интерфейс. Имя `_` отбрасывает значение, `nil` не требует памяти.
+      - text: Регистрирует `MyWriter` как реализацию `io.Writer`, без неё тип интерфейс не реализует
+        explain: Реализация в Go всегда неявная, регистрировать ничего не нужно. Строка — только проверка.
+      - text: Создаёт глобальный `nil`-писатель, который паникует при записи
+        explain: Переменная `_` недоступна, значение сразу отбрасывается — ничего во время выполнения не происходит.
+
+  - id: interface-equality
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      type Named interface{ Name() string }
+
+      type User struct{ name string }
+
+      func (u User) Name() string { return u.name }
+
+      type Admin struct{ name string }
+
+      func (a Admin) Name() string { return a.name }
+
+      func main() {
+      	var a, b, c Named = User{"x"}, User{"x"}, Admin{"x"}
+      	fmt.Println(a == b, a == c)
+      }
+    options:
+      - text: "true false"
+        correct: true
+        explain: Интерфейсы равны, когда равны и динамический тип, и значение. У `a` и `b` тип `User` и одинаковые поля, у `c` — другой тип `Admin`.
+      - text: "true true"
+        explain: Одинаковые поля не делают значения разных типов равными — сравнивается и динамический тип.
+      - text: "false false"
+        explain: "`==` для интерфейсов сравнивает содержимое, а не адреса: `User{\"x\"} == User{\"x\"}`."
+
+  - id: where-declare
+    kind: single
+    prompt: Пакет `report` использует только метод `Query` у клиента базы из пакета `db`. Где по соглашениям Go объявить интерфейс для него?
+    options:
+      - text: В пакете `report` — с единственным методом `Query`
+        correct: true
+        explain: Интерфейс объявляет потребитель и включает только то, что ему нужно. `*db.Client` реализует его неявно, а в тестах легко подставить фейк.
+      - text: В пакете `db` — со всеми методами клиента, и `NewClient` должен возвращать этот интерфейс
+        explain: Это стиль C#. В Go конструктор возвращает конкретный тип, а широкий интерфейс «на всякий случай» только мешает.
+      - text: Нигде — в Go интерфейсы нужны только для стандартной библиотеки
+        explain: Интерфейсы — главный способ развязать пакеты и подменить зависимость в тестах.

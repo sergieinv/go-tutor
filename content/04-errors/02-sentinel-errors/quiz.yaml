@@ -1,0 +1,101 @@
+questions:
+  - id: same-text
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"errors"
+      	"fmt"
+      )
+
+      var ErrEmpty = errors.New("empty")
+
+      func main() {
+      	err := errors.New("empty")
+      	fmt.Println(err == ErrEmpty, errors.Is(err, ErrEmpty))
+      }
+    options:
+      - text: "true true"
+        explain: Одинаковый текст не делает ошибки равными — сравниваются значения (указатели), а не строки.
+      - text: "false true"
+        explain: "`errors.Is` тоже сравнивает значения, просто ещё и по цепочке обёрток. Текст он не смотрит."
+      - text: "false false"
+        correct: true
+        explain: "`errors.New` создал новое значение, не связанное с `ErrEmpty`. Ни `==`, ни `errors.Is` их не путают — поэтому sentinel возвращают, а не создают заново."
+
+  - id: wrap-with-v
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"errors"
+      	"fmt"
+      )
+
+      var ErrNotFound = errors.New("not found")
+
+      func main() {
+      	a := fmt.Errorf("user 7: %w", ErrNotFound)
+      	b := fmt.Errorf("user 7: %v", ErrNotFound)
+      	fmt.Println(errors.Is(a, ErrNotFound), errors.Is(b, ErrNotFound))
+      }
+    options:
+      - text: "true true"
+        explain: Тексты `a` и `b` совпадают, но `%v` вставил только текст ошибки, а саму ошибку выбросил.
+      - text: "true false"
+        correct: true
+        explain: "`%w` сохраняет исходную ошибку внутри новой, и `errors.Is` её находит. `%v` превращает её в строку — связь потеряна."
+      - text: "false false"
+        explain: "`errors.Is` проходит по цепочке обёрток, созданных через `%w`, поэтому для `a` ответ — `true`."
+
+  - id: reassign-sentinel
+    kind: compile
+    prompt: Скомпилируется ли программа?
+    code: |
+      package main
+
+      import (
+      	"errors"
+      	"fmt"
+      	"io"
+      )
+
+      func main() {
+      	io.EOF = errors.New("my eof")
+      	fmt.Println(io.EOF)
+      }
+    compiles: true
+    explain: "Sentinel-ошибки — обычные переменные пакета, а не константы: `errors.New` нельзя вызвать в `const`. Поэтому присвоить им новое значение технически можно — и это сломает каждое сравнение с `io.EOF` во всей программе. Никогда так не делайте."
+
+  - id: eof-is-normal
+    kind: single
+    prompt: "`Read` вернул `n > 0` и `io.EOF`. Как правильно поступить?"
+    options:
+      - text: Обработать первые `n` байт, затем выйти из цикла чтения
+        correct: true
+        explain: Контракт `io.Reader` разрешает вернуть данные и `io.EOF` одним вызовом. Сначала используйте прочитанное, потом смотрите на ошибку.
+      - text: Отбросить данные и вернуть ошибку выше
+        explain: "`io.EOF` — ожидаемый конец, а не сбой, и последние байты потеряются."
+      - text: Вызвать `panic`
+        explain: Конец данных — нормальная ситуация, `panic` для неё не предназначен.
+      - text: Повторять `Read`, пока ошибка не исчезнет
+        explain: После `io.EOF` данные больше не появятся — цикл станет бесконечным.
+
+  - id: when-sentinel
+    kind: multiple
+    prompt: Где sentinel-ошибка — хороший выбор?
+    options:
+      - text: "«Запись не найдена» в репозитории"
+        correct: true
+        explain: Вызывающему важен сам факт, деталей нет — классический `sql.ErrNoRows`.
+      - text: "Конец потока данных"
+        correct: true
+        explain: Именно так устроен `io.EOF`.
+      - text: Ошибка валидации, где нужно знать имя поля и причину
+        explain: Sentinel — одно фиксированное значение без полей. Для деталей нужен свой тип ошибки и `errors.As`.
+      - text: Ошибка разбора с номером строки и колонки
+        explain: Номер строки разный для каждой ошибки, а sentinel — один на все случаи. Здесь нужен тип со структурой, как `*json.SyntaxError`.

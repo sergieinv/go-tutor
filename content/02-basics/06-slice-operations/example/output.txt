@@ -1,0 +1,11 @@
+copy: 3 [1 2 3]
+contains: true
+index: 2 -1
+equal: true
+sort: [c# go rust] orig: [go rust c#]
+insert: [10 15 20 30 40 50]
+delete: [10 15 40 50]
+swap-delete: [7 10 9]
+full slice: 2 2
+after append: [1 2 99] [1 2 3 4 5]
+grid: [[0 0 0] [0 0 7]] cells: [0 0 0 0 0 7]

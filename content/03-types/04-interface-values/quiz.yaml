@@ -1,0 +1,132 @@
+questions:
+  - id: nil-pointer-error
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      type MyErr struct{}
+
+      func (e *MyErr) Error() string { return "boom" }
+
+      func check(fail bool) error {
+      	var e *MyErr
+      	if fail {
+      		e = &MyErr{}
+      	}
+      	return e
+      }
+
+      func main() {
+      	if err := check(false); err != nil {
+      		fmt.Println("error")
+      	} else {
+      		fmt.Println("ok")
+      	}
+      }
+    options:
+      - text: ok
+        explain: "Указатель `e` действительно `nil`, но при возврате он упаковывается в интерфейс `error` вместе с типом `*MyErr`. Такой интерфейс не равен `nil`."
+      - text: error
+        correct: true
+        explain: "Интерфейс равен `nil`, только если пусты оба слова — тип и значение. Здесь тип `*MyErr` заполнен, поэтому `err != nil`. Возвращайте `nil` явно."
+      - text: panic
+        explain: Метод `Error` никто не вызывает, а сравнение интерфейса с `nil` не паникует.
+
+  - id: switch-on-nil
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func kind(v any) string {
+      	switch v.(type) {
+      	case nil:
+      		return "nil"
+      	case *int:
+      		return "*int"
+      	default:
+      		return "other"
+      	}
+      }
+
+      func main() {
+      	var p *int
+      	var a any
+      	fmt.Println(kind(a), kind(p))
+      }
+    options:
+      - text: "nil *int"
+        correct: true
+        explain: "`a` — nil-интерфейс, его ловит `case nil`. `p` при передаче в `any` превращается в пару (`*int`, nil), и срабатывает ветка `*int`."
+      - text: "nil nil"
+        explain: "`case nil` срабатывает только для интерфейса без типа. У `p` тип есть — `*int`."
+      - text: "other *int"
+        explain: "Для nil-интерфейса в type switch предусмотрена ветка `case nil`."
+
+  - id: comma-ok-zero
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func main() {
+      	var v any = 42
+      	s, ok := v.(string)
+      	n, ok2 := v.(int)
+      	fmt.Printf("%q %v %d %v\n", s, ok, n, ok2)
+      }
+    options:
+      - text: '"" false 42 true'
+        correct: true
+        explain: При несовпадении форма с `ok` возвращает нулевое значение типа (пустую строку) и `false` — без паники.
+      - text: '"42" false 42 true'
+        explain: Type assertion ничего не преобразует, это не `strconv.Itoa`. Значение либо этого типа, либо нет.
+      - text: panic
+        explain: Паникует только форма без `ok`. С двумя результатами несовпадение — обычный случай.
+
+  - id: different-dynamic-types
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func main() {
+      	var a any = 1
+      	var b any = int64(1)
+      	var c any = 1
+      	fmt.Println(a == b, a == c)
+      }
+    options:
+      - text: "false true"
+        correct: true
+        explain: "У `a` динамический тип `int`, у `b` — `int64`. Разные типы — интерфейсы не равны, даже если числа совпадают."
+      - text: "true true"
+        explain: "Сравнение интерфейсов сначала сравнивает типы. Неявного приведения `int` к `int64` нет."
+      - text: "false false"
+        explain: "`a` и `c` содержат `int` со значением 1 — пары совпадают полностью."
+
+  - id: assert-non-interface
+    kind: compile
+    prompt: Скомпилируется ли программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func main() {
+      	x := 5
+      	if n, ok := x.(int); ok {
+      		fmt.Println(n)
+      	}
+      }
+    compiles: false
+    explain: "Type assertion применяется только к значению интерфейсного типа: `invalid operation: x (variable of type int) is not an interface`. У `int` статический тип уже известен, проверять нечего."

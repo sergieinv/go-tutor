@@ -1,0 +1,8 @@
+0=go 1=c# 2=rust 
+total: 8 [<go> <c#> <rust>]
+via copy: [{pen 1} {cup 2}]
+via index: [{pen 10} {cup 20}]
+0:g 1:o 2:- 3:м 5:и 7:р 
+cup:0 ink:7 pen:3 
+0 1 2 
+append: [1 2 3 10 20 30]

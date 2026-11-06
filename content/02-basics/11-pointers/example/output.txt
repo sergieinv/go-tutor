@@ -1,0 +1,9 @@
+x: 2 *p: 2 same: true
+incValue: 2
+incPtr: 3
+new: 0 nil: true
+copy: {10 2} {100 2}
+newPoint: {3 4} 4
+elem: [5 60 7] field: {10 -1}
+eq: true false
+recovered: runtime error: invalid memory address or nil pointer dereference

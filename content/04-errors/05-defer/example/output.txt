@@ -1,0 +1,16 @@
+open a
+open b
+работаем с a и b
+close b
+close a
+в конце x = 2
+defer видит x = 1
+write log
+close log
+write вернул: close log: disk full
+open x
+обработка x
+close x
+open y
+обработка y
+close y

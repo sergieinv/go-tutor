@@ -1,0 +1,86 @@
+questions:
+  - id: wrong-verb
+    kind: output
+    prompt: "Что выведет программа? (go vet здесь не запускается — только `go build`)"
+    code: |
+      package main
+
+      import "fmt"
+
+      func main() {
+      	fmt.Printf("%d items\n", "five")
+      }
+    options:
+      - text: "%!d(string=five) items"
+        correct: true
+        explain: "`fmt` не паникует при несовпадении верба и типа, а вставляет метку `%!верб(тип=значение)`. Компилятор такое пропускает, ловит `go vet`."
+      - text: five items
+        explain: "`%d` не превращается в `%v` сам — для строки это ошибка формата, и `fmt` её помечает."
+      - text: panic
+        explain: Ошибки формата в `fmt` не приводят к панике — они попадают прямо в вывод.
+      - text: ошибка компиляции
+        explain: "Для компилятора аргументы `Printf` — это `...any`, а форматная строка — просто строка. Проверяет её `go vet`, а не `go build`."
+
+  - id: println-directive
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func main() {
+      	fmt.Println("total: %d", 5)
+      }
+    options:
+      - text: "total: %d 5"
+        correct: true
+        explain: "`Println` не разбирает форматные директивы: он печатает строку как есть и через пробел — второй аргумент."
+      - text: "total: 5"
+        explain: Так сработал бы `Printf`. `Println` форматную строку не обрабатывает — `go vet` предупредит о «possible Printf formatting directive».
+      - text: "total: %!d(MISSING) 5"
+        explain: Метки `%!` вставляют только функции семейства `Printf`.
+
+  - id: missing-arg
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func main() {
+      	fmt.Printf("%s=%d%%\n", "cpu")
+      }
+    options:
+      - text: "cpu=%!d(MISSING)%"
+        correct: true
+        explain: "Для `%d` аргумента не хватило — `fmt` вставляет `%!d(MISSING)`. `%%` аргумент не потребляет и печатается как `%`."
+      - text: "cpu=0%"
+        explain: Недостающий аргумент не заменяется нулевым значением — это ошибка формата, и она видна в выводе.
+      - text: "cpu=%!d(MISSING)%!%(MISSING)"
+        explain: "`%%` — экранированный знак процента, а не директива, аргумент ему не нужен."
+
+  - id: go-run-file
+    kind: single
+    prompt: "В каталоге пакета `main` два файла: `main.go` вызывает функцию `helper` из `helper.go`. Что сделает `go run main.go`?"
+    options:
+      - text: "Ошибка компиляции `undefined: helper`"
+        correct: true
+        explain: С явным списком файлов `go` компилирует только их. `helper.go` в сборку не попал. Нужно `go run .` — путь пакета, а не файла.
+      - text: Соберёт весь каталог и запустит программу
+        explain: Так работает `go run .`. Список файлов — это не пакет.
+      - text: Запустит программу, но `helper` вернёт нулевое значение
+        explain: Функция не объявлена в собираемых файлах — компиляция не пройдёт.
+
+  - id: gofmt-config
+    kind: single
+    prompt: Команда хочет отступы в 4 пробела вместо табов. Как это сделать с `gofmt`?
+    options:
+      - text: Никак — у `gofmt` нет настроек стиля
+        correct: true
+        explain: Это сознательное решение — один стиль на весь Go-код. Ширину таба можно настроить в редакторе, сам файл останется с табами.
+      - text: Флагом `gofmt -tabwidth=4`
+        explain: Такого флага у `gofmt` нет; отступы всегда табами.
+      - text: Через `.editorconfig` в корне модуля
+        explain: "`gofmt` не читает `.editorconfig` — это механизм редакторов и `dotnet format`."

@@ -1,0 +1,124 @@
+questions:
+  - id: comma-ok-zero
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func main() {
+      	m := map[string]int{"a": 0}
+      	v, ok := m["a"]
+      	w, ok2 := m["b"]
+      	fmt.Println(v, ok, w, ok2)
+      }
+    options:
+      - text: "0 true 0 false"
+        correct: true
+        explain: Оба чтения возвращают 0, но `ok` различает их — ключ `"a"` есть, `"b"` нет.
+      - text: "0 true 0 true"
+        explain: "`ok` равен `false`, если ключа в map нет, даже когда возвращено нулевое значение."
+      - text: "0 false 0 false"
+        explain: "Ключ `\"a\"` в map есть, его значение просто нулевое — `ok` равен `true`."
+      - text: panic
+        explain: Чтение отсутствующего ключа в Go не паникует, в отличие от `Dictionary` в C#.
+
+  - id: counter
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func main() {
+      	m := map[rune]int{}
+      	for _, r := range "banana" {
+      		m[r]++
+      	}
+      	fmt.Println(len(m), m['a'], m['z'])
+      }
+    options:
+      - text: "3 3 0"
+        correct: true
+        explain: "Разных букв три: b, a, n. `m[r]++` для нового ключа начинает с нулевого значения, `'a'` встречается трижды, а отсутствующий `'z'` даёт 0."
+      - text: "6 3 0"
+        explain: "`len` считает ключи, а не сумму значений — повторная запись в существующий ключ его не добавляет."
+      - text: "3 3 -1"
+        explain: Для отсутствующего ключа возвращается нулевое значение `int`, то есть 0.
+
+  - id: map-in-func
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func update(m map[string]int) {
+      	m["a"] = 1
+      	m = map[string]int{"b": 2}
+      	m["c"] = 3
+      }
+
+      func main() {
+      	m := map[string]int{}
+      	update(m)
+      	fmt.Println(m)
+      }
+    options:
+      - text: "map[]"
+        explain: Функция получила ссылку на ту же таблицу, и первая запись видна снаружи.
+      - text: "map[a:1]"
+        correct: true
+        explain: Запись `m["a"] = 1` идёт в общую таблицу. Затем локальной переменной присвоена новая map — `main` об этом не знает, и `b`, `c` попадают уже в неё.
+      - text: "map[a:1 b:2 c:3]"
+        explain: Присваивание `m = ...` меняет только параметр функции, а не переменную в `main`.
+      - text: "map[b:2 c:3]"
+        explain: Переменная в `main` по-прежнему указывает на исходную таблицу.
+
+  - id: addr-of-elem
+    kind: compile
+    prompt: Скомпилируется ли программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func main() {
+      	m := map[string]int{"a": 1}
+      	p := &m["a"]
+      	*p = 2
+      	fmt.Println(m)
+      }
+    compiles: false
+    explain: Элемент map не адресуем — при росте таблицы элементы переезжают в другие группы, и указатель стал бы висячим. Ошибка `cannot take address of m["a"]`.
+
+  - id: nil-map
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func main() {
+      	defer func() {
+      		if r := recover(); r != nil {
+      			fmt.Println("panic")
+      		}
+      	}()
+      	var m map[string]int
+      	fmt.Print(len(m), m["x"], " ")
+      	m["x"] = 1
+      	fmt.Println("ok")
+      }
+    options:
+      - text: "0 0 ok"
+        explain: Читать `nil`-map можно, но запись в неё паникует — до `ok` дело не дойдёт.
+      - text: "0 0 panic"
+        correct: true
+        explain: "`len` и чтение из `nil`-map безопасны и дают нули. Запись `m[\"x\"] = 1` паникует: `assignment to entry in nil map`."
+      - text: panic
+        explain: "Паникует только запись — `len(m)` и `m[\"x\"]` для `nil`-map работают и печатают `0 0`."

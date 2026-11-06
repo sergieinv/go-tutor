@@ -1,0 +1,11 @@
+123.45 RUB
+13 <nil> hello, reader
+3 "abc" <nil>
+3 "def" <nil>
+1 "g" <nil>
+0 "" EOF
+5.00 USD
+written: 9
+twice twice
+[1.00 USD 2.00 USD 3.00 USD]
+[3.00 USD 2.00 USD 1.00 USD]

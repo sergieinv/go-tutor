@@ -1,0 +1,6 @@
+возраст: 42
+ошибка: разбор возраста "abc": strconv.Atoi: parsing "abc": invalid syntax
+ошибка: возраст не может быть отрицательным
+ошибок: 2
+первая: strconv.Atoi: parsing "x": invalid syntax
+без проверки: 0

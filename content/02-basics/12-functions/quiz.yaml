@@ -1,0 +1,81 @@
+questions:
+  - id: overload
+    kind: compile
+    prompt: Скомпилируется ли программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func area(side int) int { return side * side }
+
+      func area(w, h int) int { return w * h }
+
+      func main() {
+      	fmt.Println(area(2), area(2, 3))
+      }
+    compiles: false
+    explain: "Перегрузки в Go нет: имя `area` объявлено в пакете дважды — `area redeclared in this block`. Нужны разные имена, например `square` и `rect`."
+
+  - id: func-value
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func double(x int) int { return x * 2 }
+
+      func main() {
+      	ops := []func(int) int{double, func(x int) int { return x + 1 }}
+      	x := 3
+      	for _, f := range ops {
+      		x = f(x)
+      	}
+      	fmt.Println(x)
+      }
+    options:
+      - text: "8"
+        explain: Это порядок «сначала +1, потом ×2». Функции применяются в порядке элементов среза.
+      - text: "7"
+        correct: true
+        explain: "Сначала `double(3) = 6`, затем `6 + 1 = 7`. Функции — обычные значения и лежат в срезе как любые другие."
+      - text: "6"
+        explain: Цикл вызывает обе функции и сохраняет результат в `x`.
+
+  - id: nil-func
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func main() {
+      	var f func() string
+      	if f == nil {
+      		f = func() string { return "default" }
+      	}
+      	fmt.Println(f())
+      }
+    options:
+      - text: default
+        correct: true
+        explain: "Нулевое значение функционального типа — `nil`, его можно проверить и подменить. Вызов без проверки был бы паникой."
+      - text: panic
+        explain: "Паника была бы при вызове `nil`-функции, но до вызова `f` уже присвоена."
+      - text: "(пустая строка)"
+        explain: Функция не возвращает нулевое значение сама по себе — её нужно вызвать, а вызывается присвоенный литерал.
+
+  - id: same-type-params
+    kind: single
+    prompt: Какое объявление эквивалентно `func f(a int, b int, c string)`?
+    options:
+      - text: "`func f(a, b int, c string)`"
+        correct: true
+        explain: Подряд идущие параметры одного типа можно перечислить через запятую и указать тип один раз.
+      - text: "`func f(int a, int b, string c)`"
+        explain: В Go тип пишется после имени, а не перед ним.
+      - text: "`func f(a, b, c int, string)`"
+        explain: Так у `c` оказался бы тип `int`, а последний параметр был бы безымянным — к тому же смешивать именованные и безымянные параметры нельзя.

@@ -1,0 +1,106 @@
+questions:
+  - id: init-shadow
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func main() {
+      	x := 1
+      	if x := 2; x > 1 {
+      		fmt.Print(x)
+      	}
+      	fmt.Println(x)
+      }
+    options:
+      - text: "21"
+        correct: true
+        explain: "`x := 2` в init-выражении объявляет новую `x`, которая живёт только внутри `if`. После него снова видна внешняя `x == 1`."
+      - text: "22"
+        explain: "`:=` не присваивает внешней `x`, а создаёт новую в области видимости `if`."
+      - text: "1"
+        explain: Условие проверяет внутреннюю `x == 2`, поэтому тело выполняется и печатает 2.
+      - text: ошибка компиляции
+        explain: Затенение переменной во вложенной области разрешено — это не повторное объявление в той же области.
+
+  - id: init-scope
+    kind: compile
+    prompt: Скомпилируется ли программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"strconv"
+      )
+
+      func main() {
+      	if n, err := strconv.Atoi("10"); err != nil {
+      		fmt.Println(err)
+      	}
+      	fmt.Println(n)
+      }
+    compiles: false
+    explain: "`n` объявлена в init-выражении и видна только внутри `if` и его `else`. После `if` её нет — `undefined: n`."
+
+  - id: err-shadow
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"strconv"
+      )
+
+      func main() {
+      	var err error
+      	if true {
+      		n, err := strconv.Atoi("x")
+      		_, _ = n, err
+      	}
+      	fmt.Println(err == nil)
+      }
+    options:
+      - text: "true"
+        correct: true
+        explain: "`n, err :=` внутри блока объявляет новые `n` и `err`. Ошибка Atoi попала во внутреннюю `err`, внешняя осталась `nil`."
+      - text: "false"
+        explain: Так было бы при `n, err = ...` с заранее объявленной `n`. С `:=` во вложенном блоке внешняя `err` не меняется.
+
+  - id: else-newline
+    kind: compile
+    prompt: Скомпилируется ли программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func main() {
+      	x := 5
+      	if x > 0 {
+      		fmt.Println("pos")
+      	}
+      	else {
+      		fmt.Println("non-pos")
+      	}
+      }
+    compiles: false
+    explain: Компилятор вставляет `;` после `}` в конце строки, и `else` оказывается началом нового оператора. Пишите `} else {` на одной строке.
+
+  - id: ternary
+    kind: single
+    prompt: Как в Go записать «`y` равно `a`, если `ok`, иначе `b`»?
+    options:
+      - text: "y := ok ? a : b"
+        explain: Тернарного оператора в Go нет — это ошибка компиляции.
+      - text: "y := b; if ok { y = a }"
+        correct: true
+        explain: Стандартный способ — начальное значение и `if`, который его переопределяет.
+      - text: "y := if ok { a } else { b }"
+        explain: "`if` в Go — оператор, а не выражение, у него нет значения."
+      - text: "y := max(a, b)"
+        explain: "`max` выбирает большее значение и не зависит от `ok`."

@@ -150,3 +150,20 @@ test("без runner песочница сообщает, что делать", a
   await page.locator("[data-playground]").getByRole("button", { name: "Запустить" }).click();
   await expect(page.locator("[data-playground] [data-result]")).toContainText("docker compose up");
 });
+
+test("Tab в редакторе ставит отступ, Esc и Tab выводят из редактора", async ({ page }) => {
+  await page.goto(lessons[0].url);
+  const editor = page.locator("[data-playground] [data-editor]");
+  await replaceCode(page, editor, "package main\n\nfunc main() {\nx\n}\n");
+  const line = editor.locator(".cm-line").nth(3);
+  await line.click();
+  await page.keyboard.press("Tab");
+  await expect(line).toHaveText("\tx");
+  await expect(editor.locator(".cm-content")).toBeFocused();
+  await page.keyboard.press("Shift+Tab");
+  await expect(line).toHaveText("x");
+
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("Tab");
+  await expect(editor.locator(".cm-content")).not.toBeFocused();
+});

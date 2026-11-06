@@ -1,0 +1,108 @@
+questions:
+  - id: shadow-self
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func main() {
+      	x := 1
+      	if x > 0 {
+      		x := x + 1
+      		fmt.Print(x, " ")
+      	}
+      	fmt.Println(x)
+      }
+    options:
+      - text: 2 1
+        correct: true
+        explain: "`x := x + 1` объявляет новую переменную в блоке `if`. Справа ещё виден внешний `x`, поэтому внутренний равен 2, а внешний остаётся 1."
+      - text: 2 2
+        explain: Так было бы при `x = x + 1`. С `:=` во вложенном блоке появляется новая переменная, внешняя не меняется.
+      - text: 1 1
+        explain: Внутренний `x` инициализируется выражением `x + 1`, где `x` — ещё внешняя переменная со значением 1.
+
+  - id: parallel-assign
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func main() {
+      	a, b := 1, 2
+      	a, b = b, a+b
+      	fmt.Println(a, b)
+      }
+    options:
+      - text: 2 3
+        correct: true
+        explain: Сначала вычисляется вся правая часть — `2` и `1+2 = 3`, — и только потом значения присваиваются.
+      - text: 2 4
+        explain: Так было бы при последовательных `a = b; b = a + b`. Множественное присваивание использует старые значения.
+      - text: 1 3
+        explain: "`a` получает старое значение `b`, то есть 2."
+
+  - id: zero-values
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func main() {
+      	var s string
+      	var n int
+      	var ok bool
+      	var p *int
+      	fmt.Printf("%q %d %t %v\n", s, n, ok, p)
+      }
+    options:
+      - text: '"" 0 false <nil>'
+        correct: true
+        explain: Каждая переменная получает нулевое значение своего типа. У строки это пустая строка, а `nil` бывает только у указателей, срезов, map, каналов, функций и интерфейсов.
+      - text: "<nil> 0 false <nil>"
+        explain: "`string` в Go — значение, а не ссылка. Нулевая строка — `\"\"`, `nil` ей присвоить нельзя."
+      - text: ошибка компиляции
+        explain: Читать переменную до присваивания в Go можно — она уже содержит нулевое значение.
+
+  - id: unused-var
+    kind: compile
+    prompt: Скомпилируется ли программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func main() {
+      	total := 0
+      	for i := range 3 {
+      		total := total + i
+      	}
+      	fmt.Println(total)
+      }
+    compiles: false
+    explain: "Внутри цикла `total := ...` объявляет новую переменную, которая нигде не читается, — это ошибка `declared and not used`. Нужно `total += i` или `total = total + i`."
+
+  - id: redeclare-err
+    kind: compile
+    prompt: Скомпилируется ли программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"strconv"
+      )
+
+      func main() {
+      	a, err := strconv.Atoi("1")
+      	b, err := strconv.Atoi("2")
+      	fmt.Println(a+b, err)
+      }
+    compiles: true
+    explain: Во втором `:=` переменная `b` новая, поэтому объявление разрешено, а `err` в той же области видимости просто получает новое значение.

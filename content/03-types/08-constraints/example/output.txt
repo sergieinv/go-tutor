@@ -1,0 +1,8 @@
+6 0.75
+1.5s
+7 go
+25.0°C
+dev 29 Eve
+dev 35 Ann
+ops 30 Dan
+ops 41 Bob

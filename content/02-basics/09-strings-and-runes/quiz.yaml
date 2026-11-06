@@ -1,0 +1,104 @@
+questions:
+  - id: len-cyrillic
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func main() {
+      	s := "привет"
+      	fmt.Println(len(s))
+      }
+    options:
+      - text: "6"
+        explain: Так считает `Length` в C# — кодовые единицы UTF-16. `len` в Go считает байты.
+      - text: "12"
+        correct: true
+        explain: Каждая кириллическая буква в UTF-8 занимает 2 байта, 6 × 2 = 12.
+      - text: "24"
+        explain: "`rune` занимает 4 байта, но строка хранит не руны, а байты UTF-8."
+
+  - id: range-offsets
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func main() {
+      	for i := range "aбв" {
+      		fmt.Print(i, " ")
+      	}
+      	fmt.Println()
+      }
+    options:
+      - text: "0 1 2 "
+        explain: Это были бы номера символов. `range` по строке отдаёт смещения в байтах.
+      - text: "0 1 3 "
+        correct: true
+        explain: "«a» занимает байт 0, «б» — байты 1–2, «в» — байты 3–4. `range` отдаёт смещение начала каждой руны."
+      - text: "0 1 2 3 4 "
+        explain: Так шёл бы `for i := 0; i < len(s); i++` — по байтам. `range` шагает по рунам.
+
+  - id: index-is-byte
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func main() {
+      	s := "яблоко"
+      	fmt.Println(s[0], []rune(s)[0])
+      }
+    options:
+      - text: "я я"
+        explain: "`byte` и `rune` — числа, `Println` печатает их как числа. Символ напечатал бы `%c` или `string(r)`."
+      - text: "209 1103"
+        correct: true
+        explain: "`s[0]` — первый байт двухбайтовой буквы «я» (0xD1 = 209). `[]rune(s)` декодирует UTF-8, и его нулевой элемент — кодовая точка «я», 1103."
+      - text: "1103 1103"
+        explain: "Индекс строки даёт байт, а не руну: в один байт кодовая точка 1103 не помещается."
+
+  - id: assign-to-index
+    kind: compile
+    prompt: Скомпилируется ли программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func main() {
+      	s := "hello"
+      	s[0] = 'H'
+      	fmt.Println(s)
+      }
+    compiles: false
+    explain: "Строки неизменяемы, `s[0]` нельзя присвоить. Нужно `b := []byte(s); b[0] = 'H'; s = string(b)` или `\"H\" + s[1:]`."
+
+  - id: byte-copy
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func main() {
+      	s := "go"
+      	b := []byte(s)
+      	b[0] = 'G'
+      	fmt.Println(s, string(b))
+      }
+    options:
+      - text: "Go Go"
+        explain: Срез и строка не делят память — иначе через срез можно было бы изменить неизменяемую строку.
+      - text: "go Go"
+        correct: true
+        explain: "`[]byte(s)` копирует байты в новый массив. Изменение копии не трогает строку."
+      - text: "go go"
+        explain: "`b[0] = 'G'` изменил копию, и `string(b)` это показывает."

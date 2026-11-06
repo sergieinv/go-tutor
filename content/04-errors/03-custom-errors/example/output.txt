@@ -1,0 +1,7 @@
+"bob": ок
+"": ошибка в поле name (пустое значение)
+"alexander": ошибка в поле name (длиннее 5 байт)
+type switch: name
+ve == nil: true
+e == nil: false
+внутри e: *main.ValidationError

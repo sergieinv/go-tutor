@@ -1,0 +1,7 @@
+hello, dog rex
+hello, data.csv
+dog max
+hosts
+built
+int string main.Dog <nil> 
+true

@@ -1,0 +1,106 @@
+questions:
+  - id: multi-in-args
+    kind: compile
+    prompt: Скомпилируется ли программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func pair() (int, int) { return 1, 2 }
+
+      func main() {
+      	fmt.Println("pair:", pair())
+      }
+    compiles: false
+    explain: "Вызов с несколькими результатами можно передать аргументами, только если он — единственный аргумент: `fmt.Println(pair())`. Рядом с `\"pair:\"` получится `multiple-value pair() in single-value context`."
+
+  - id: naked-return
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func count() (n int) {
+      	for i := range 3 {
+      		n += i
+      	}
+      	return
+      }
+
+      func main() {
+      	fmt.Println(count())
+      }
+    options:
+      - text: "0"
+        explain: Голый `return` возвращает текущее значение именованного результата, а не нулевое.
+      - text: "3"
+        correct: true
+        explain: "`n` начинается с 0, цикл добавляет 0, 1 и 2. Голый `return` возвращает `n` = 3."
+      - text: "6"
+        explain: "`range 3` даёт 0, 1, 2 — тройка не входит."
+
+  - id: comma-ok-zero
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func main() {
+      	m := map[string]int{"a": 0}
+      	va, oka := m["a"]
+      	vb, okb := m["b"]
+      	fmt.Println(va, oka, vb, okb)
+      }
+    options:
+      - text: "0 true 0 false"
+        correct: true
+        explain: "Для отсутствующего ключа map возвращает нулевое значение — по нему не отличить «нет» от «ноль». Это различие и даёт второй результат `ok`."
+      - text: "0 true <nil> false"
+        explain: "У `int` нет `nil` — отсутствующий ключ даёт нулевое значение типа, 0."
+      - text: panic
+        explain: Чтение отсутствующего ключа не паникует — ни в форме с `ok`, ни без неё.
+
+  - id: shadow-err
+    kind: compile
+    prompt: Скомпилируется ли программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"strconv"
+      )
+
+      func parse(s string) (n int, err error) {
+      	if s != "" {
+      		n, err := strconv.Atoi(s)
+      		if err != nil {
+      			return
+      		}
+      		fmt.Println(n)
+      	}
+      	return
+      }
+
+      func main() {
+      	fmt.Println(parse("1"))
+      }
+    compiles: false
+    explain: "`:=` внутри `if` объявил новые `n` и `err`, затенив именованные результаты. Голый `return` в такой области — ошибка `result parameter n not in scope at return`. Внутри блока нужно `=`, а не `:=`."
+
+  - id: why-not-naked
+    kind: single
+    prompt: Почему голый `return` не рекомендуют в длинных функциях?
+    options:
+      - text: Он медленнее явного `return x, y`
+        explain: Разницы в скорости нет — компилятор генерирует тот же код.
+      - text: Читателю приходится отслеживать, что лежит в именованных результатах к этому моменту
+        correct: true
+        explain: В короткой функции это видно сразу. В длинной голый `return` скрывает, какие значения на самом деле возвращаются.
+      - text: Он запрещён, если результатов больше одного
+        explain: Голый `return` работает с любым числом именованных результатов.

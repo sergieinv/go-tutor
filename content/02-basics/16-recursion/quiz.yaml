@@ -1,0 +1,98 @@
+questions:
+  - id: recursive-literal
+    kind: compile
+    prompt: Скомпилируется ли программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func main() {
+      	sum := func(n int) int {
+      		if n == 0 {
+      			return 0
+      		}
+      		return n + sum(n-1)
+      	}
+      	fmt.Println(sum(3))
+      }
+    compiles: false
+    explain: "Область видимости `sum`, объявленной через `:=`, начинается после всего объявления, поэтому внутри литерала имя `sum` не определено. Нужно `var sum func(int) int`, а затем `sum = func(...)`."
+
+  - id: recursive-var
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func main() {
+      	var pow func(b, e int) int
+      	pow = func(b, e int) int {
+      		if e == 0 {
+      			return 1
+      		}
+      		return b * pow(b, e-1)
+      	}
+      	fmt.Println(pow(2, 10))
+      }
+    options:
+      - text: "1024"
+        correct: true
+        explain: "Переменная `pow` объявлена до литерала, поэтому замыкание её видит. К моменту вызова ей уже присвоена сама функция."
+      - text: "20"
+        explain: Это `2 * 10`. Функция умножает `b` на себя `e` раз.
+      - text: panic
+        explain: "Паника была бы, если бы `pow` вызвали до присваивания — тогда она `nil`. Здесь вызов идёт после."
+
+  - id: stack-overflow
+    kind: single
+    prompt: Что произойдёт при бесконечной рекурсии в Go?
+    options:
+      - text: Компилятор превратит хвостовой вызов в цикл, и программа зависнет
+        explain: Go не гарантирует оптимизацию хвостовых вызовов — стек будет расти.
+      - text: "Паника, которую можно перехватить `recover`"
+        explain: Переполнение стека — фатальная ошибка рантайма, а не паника. `recover` её не видит.
+      - text: "Стек дорастёт до лимита (1 ГБ на 64-битных системах), и процесс упадёт с `fatal error: stack overflow`"
+        correct: true
+        explain: Стек горутины растёт динамически, но не бесконечно. При превышении лимита рантайм завершает программу.
+      - text: "`StackOverflowException` после 1 МБ, как в .NET"
+        explain: У горутины нет фиксированного стека в 1 МБ — он начинается с нескольких КБ и растёт по мере надобности.
+
+  - id: tree-nil
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      type node struct {
+      	left, right *node
+      }
+
+      func leaves(n *node) int {
+      	if n == nil {
+      		return 0
+      	}
+      	if n.left == nil && n.right == nil {
+      		return 1
+      	}
+      	return leaves(n.left) + leaves(n.right)
+      }
+
+      func main() {
+      	t := &node{&node{}, &node{nil, &node{}}}
+      	fmt.Println(leaves(t), leaves(nil))
+      }
+    options:
+      - text: "2 0"
+        correct: true
+        explain: "Листья — левый потомок корня и правый потомок правого потомка. `nil`-дерево — базовый случай, 0 листьев."
+      - text: "3 0"
+        explain: "У правого потомка корня есть свой потомок, поэтому он не лист."
+      - text: "2 1"
+        explain: "Для `nil` срабатывает первая проверка и возвращается 0."
+      - text: panic
+        explain: "Проверка `n == nil` идёт до обращения к полям, разыменования `nil` нет."

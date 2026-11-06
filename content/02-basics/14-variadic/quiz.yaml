@@ -1,0 +1,92 @@
+questions:
+  - id: spread-shares
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func reset(xs ...int) {
+      	for i := range xs {
+      		xs[i] = 0
+      	}
+      }
+
+      func main() {
+      	s := []int{1, 2}
+      	reset(s...)
+      	a, b := 3, 4
+      	reset(a, b)
+      	fmt.Println(s, a, b)
+      }
+    options:
+      - text: "[1 2] 3 4"
+        explain: С разворотом `s...` функция получает сам срез `s`, а не копию.
+      - text: "[0 0] 3 4"
+        correct: true
+        explain: "`reset(s...)` работает с массивом `s` и обнуляет его. Для `reset(a, b)` компилятор собрал новый срез из копий `a` и `b` — переменные не изменились."
+      - text: "[0 0] 0 0"
+        explain: Отдельные аргументы копируются в новый срез — сами `a` и `b` функции недоступны.
+
+  - id: no-args-nil
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func f(xs ...string) {
+      	fmt.Println(xs == nil, len(xs))
+      }
+
+      func main() {
+      	f()
+      }
+    options:
+      - text: "true 0"
+        correct: true
+        explain: Без аргументов variadic-параметр равен `nil`. В C# `params` дал бы пустой массив.
+      - text: "false 0"
+        explain: Компилятор не выделяет пустой срез, когда аргументов нет, — параметр остаётся `nil`.
+      - text: panic
+        explain: "`len` от `nil`-среза — 0, никакой паники."
+
+  - id: mix-spread
+    kind: compile
+    prompt: Скомпилируется ли программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func sum(nums ...int) int {
+      	t := 0
+      	for _, n := range nums {
+      		t += n
+      	}
+      	return t
+      }
+
+      func main() {
+      	s := []int{2, 3}
+      	fmt.Println(sum(1, s...))
+      }
+    compiles: false
+    explain: "Отдельные значения и разворот `s...` смешивать нельзя: `s...` должен быть единственным аргументом для variadic-параметра. Нужно `sum(append([]int{1}, s...)...)`."
+
+  - id: strings-to-any
+    kind: compile
+    prompt: Скомпилируется ли программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func main() {
+      	names := []string{"a", "b"}
+      	fmt.Println(names...)
+      }
+    compiles: false
+    explain: "`fmt.Println` принимает `...any`, а разворот требует срез ровно типа `[]any`. `[]string` — другой тип, неявного преобразования срезов нет."

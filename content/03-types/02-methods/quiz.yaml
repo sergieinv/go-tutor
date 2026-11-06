@@ -1,0 +1,122 @@
+questions:
+  - id: value-receiver-copy
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      type Wallet struct{ balance int }
+
+      func (w Wallet) Deposit(n int)   { w.balance += n }
+      func (w *Wallet) Withdraw(n int) { w.balance -= n }
+
+      func main() {
+      	w := Wallet{balance: 100}
+      	w.Deposit(50)
+      	w.Withdraw(30)
+      	fmt.Println(w.balance)
+      }
+    options:
+      - text: "120"
+        explain: "`Deposit` с value receiver увеличил баланс копии, исходный кошелёк не изменился."
+      - text: "70"
+        correct: true
+        explain: "`Deposit` работает с копией, а `Withdraw` — через указатель (компилятор сам взял `&w`). Итог: 100 − 30."
+      - text: "100"
+        explain: "`w.Withdraw(30)` вызывается как `(&w).Withdraw(30)` и меняет `w`."
+
+  - id: pointer-method-interface
+    kind: compile
+    prompt: Скомпилируется ли программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      type Resetter interface{ Reset() }
+
+      type Form struct{ text string }
+
+      func (f *Form) Reset() { f.text = "" }
+
+      func main() {
+      	var r Resetter = Form{text: "draft"}
+      	r.Reset()
+      	fmt.Println("ok")
+      }
+    compiles: false
+    explain: "Метод `Reset` объявлен на `*Form`, поэтому в method set типа `Form` его нет: `Form does not implement Resetter (method Reset has pointer receiver)`. Нужно `var r Resetter = &Form{...}`."
+
+  - id: map-element-pointer-method
+    kind: compile
+    prompt: Скомпилируется ли программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      type Counter struct{ n int }
+
+      func (c *Counter) Inc() { c.n++ }
+
+      func main() {
+      	m := map[string]Counter{"a": {}}
+      	m["a"].Inc()
+      	fmt.Println(m)
+      }
+    compiles: false
+    explain: "Автоматическое `&` работает только для адресуемых значений. Элемент map не адресуем, поэтому `(&m[\"a\"]).Inc()` невозможен: `cannot call pointer method Inc on Counter`. Храните в map указатели или копируйте значение туда и обратно."
+
+  - id: method-value-copy
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      type Temp struct{ deg int }
+
+      func (t Temp) Show()   { fmt.Println(t.deg) }
+      func (t *Temp) Print() { fmt.Println(t.deg) }
+
+      func main() {
+      	t := Temp{deg: 10}
+      	show := t.Show
+      	print := t.Print
+      	t.deg = 20
+      	show()
+      	print()
+      }
+    options:
+      - text: |
+          10
+          20
+        correct: true
+        explain: "Method value вычисляет получателя сразу: для `Show` копируется значение `t` (10), для `Print` — берётся адрес `&t`, поэтому видно новое значение 20."
+      - text: |
+          20
+          20
+        explain: "`t.Show` с value receiver копирует `t` в момент создания method value — позднее изменение не видно."
+      - text: |
+          10
+          10
+        explain: "`t.Print` захватывает указатель на `t`, а через указатель видно изменение `t.deg = 20`."
+
+  - id: choose-receiver
+    kind: multiple
+    prompt: В каких случаях стоит выбрать pointer receiver?
+    options:
+      - text: Метод меняет поля получателя
+        correct: true
+        explain: С value receiver изменения останутся в копии.
+      - text: Структура большая, и копировать её на каждый вызов дорого
+        correct: true
+        explain: Указатель — одно машинное слово, копия большой структуры — все её байты.
+      - text: Структура содержит `sync.Mutex` или другое поле, которое нельзя копировать
+        correct: true
+        explain: Копия мьютекса — отдельный мьютекс, блокировка через копию ничего не защищает. `go vet` ловит такие копии.
+      - text: Тип — это `type Celsius float64`, и метод только вычисляет значение
+        explain: Для маленьких неизменяемых значений value receiver проще и не создаёт лишней косвенности.

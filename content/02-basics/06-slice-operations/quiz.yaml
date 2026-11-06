@@ -1,0 +1,108 @@
+questions:
+  - id: delete-alias
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"slices"
+      )
+
+      func main() {
+      	s := []int{1, 2, 3, 4}
+      	t := slices.Delete(s, 0, 1)
+      	fmt.Println(s, t)
+      }
+    options:
+      - text: "[1 2 3 4] [2 3 4]"
+        explain: Так было бы, если бы `Delete` копировал. Он сдвигает элементы в том же массиве, и `s` это видит.
+      - text: "[2 3 4 4] [2 3 4]"
+        explain: Так работает удаление через `append(s[:0], s[1:]...)`. `slices.Delete` с Go 1.22 ещё и обнуляет освободившийся хвост.
+      - text: "[2 3 4 0] [2 3 4]"
+        correct: true
+        explain: "`Delete` сдвинул элементы влево в общем массиве и обнулил последний. `s` по-прежнему длины 4 и показывает этот массив целиком."
+
+  - id: copy-zero-len
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func main() {
+      	src := []int{1, 2, 3}
+      	dst := make([]int, 0, 10)
+      	n := copy(dst, src)
+      	fmt.Println(n, len(dst))
+      }
+    options:
+      - text: "3 3"
+        explain: "`copy` не меняет длину приёмника и не смотрит на его ёмкость."
+      - text: "0 0"
+        correct: true
+        explain: Копируется `min(len(dst), len(src)) = min(0, 3) = 0` элементов. Ёмкость 10 роли не играет.
+      - text: "3 0"
+        explain: Записать элементы за пределы `len(dst)` `copy` не может, поэтому скопировано 0.
+
+  - id: copy-min
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func main() {
+      	dst := []int{0, 0, 0, 0, 0}
+      	n := copy(dst, []int{7, 8})
+      	fmt.Println(n, dst)
+      }
+    options:
+      - text: "2 [7 8 0 0 0]"
+        correct: true
+        explain: Копируется `min(5, 2) = 2` элемента в начало `dst`, остальные не трогаются.
+      - text: "2 [7 8]"
+        explain: "`copy` не меняет длину `dst` — она остаётся 5."
+      - text: "5 [7 8 7 8 7]"
+        explain: "`copy` не повторяет источник по кругу."
+
+  - id: full-slice-expr
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func main() {
+      	s := []int{1, 2, 3, 4}
+      	a := s[1:2:3]
+      	a = append(a, 10)
+      	a = append(a, 20)
+      	fmt.Println(s, len(a), cap(a) >= 3)
+      }
+    options:
+      - text: "[1 2 10 4] 3 true"
+        correct: true
+        explain: "У `a` ёмкость `3 - 1 = 2`. Первый `append` помещается и пишет 10 в `s[2]`. Второму места нет — выделяется новый массив, и `s[3]` остаётся 4."
+      - text: "[1 2 10 20] 3 true"
+        explain: Ёмкость ограничена третьим индексом, поэтому второй `append` уже не пишет в массив `s`.
+      - text: "[1 2 3 4] 3 true"
+        explain: Первый `append` укладывается в ёмкость 2 и пишет в общий массив.
+
+  - id: ordered-delete
+    kind: single
+    prompt: "Как удалить элемент с индексом `i` из `s`, сохранив порядок остальных?"
+    options:
+      - text: "s = slices.Delete(s, i, i+1)"
+        correct: true
+        explain: "`Delete(s, i, j)` удаляет полуинтервал `[i, j)` со сдвигом элементов. Результат присваиваем обратно."
+      - text: "slices.Delete(s, i, i+1)"
+        explain: Длина `s` не изменится — результат `Delete` нужно присвоить, иначе в конце останется обнулённый элемент.
+      - text: "s[i] = s[len(s)-1]; s = s[:len(s)-1]"
+        explain: Это быстрое удаление за O(1), но порядок элементов меняется.
+      - text: "s = s[:i] + s[i+1:]"
+        explain: Оператора `+` для срезов нет — программа не скомпилируется.

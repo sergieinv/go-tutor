@@ -1,0 +1,131 @@
+questions:
+  - id: iota-skip
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      const (
+      	A = iota
+      	_
+      	C
+      	D = "d"
+      	E
+      	F = iota
+      )
+
+      func main() {
+      	fmt.Println(C, E, F)
+      }
+    options:
+      - text: "2 d 5"
+        correct: true
+        explain: "`iota` — номер строки в блоке, независимо от того, используется ли он. `_` занимает строку 1, `C` = 2. `E` повторяет выражение `D` — строку `\"d\"`. `F` стоит в строке 5."
+      - text: "1 d 3"
+        explain: "`_` не пропускает счётчик — он просто отбрасывает значение. И строки с `D` и `E` тоже увеличивают `iota`."
+      - text: "2 4 5"
+        explain: "Константа без выражения повторяет выражение предыдущей. Для `E` это `\"d\"`, а не `iota`."
+
+  - id: iota-same-line
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      const (
+      	a, b = iota, iota * 10
+      	c, d
+      	e, f
+      )
+
+      func main() {
+      	fmt.Println(c, d, f)
+      }
+    options:
+      - text: "1 10 20"
+        correct: true
+        explain: "`iota` растёт по строкам (ConstSpec), а не по именам. Во второй строке `iota` = 1: `c` = 1, `d` = 10. В третьей — 2, `f` = 20."
+      - text: "2 30 50"
+        explain: "Две константы на одной строке получают одинаковый `iota`."
+      - text: "1 1 2"
+        explain: "Пустая строка повторяет оба выражения списка: `iota, iota * 10`."
+
+  - id: string-out-of-range
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      type Color int
+
+      const (
+      	Red Color = iota
+      	Green
+      	Blue
+      )
+
+      func (c Color) String() string {
+      	switch c {
+      	case Red:
+      		return "red"
+      	case Green:
+      		return "green"
+      	case Blue:
+      		return "blue"
+      	}
+      	return fmt.Sprintf("Color(%d)", int(c))
+      }
+
+      func main() {
+      	fmt.Println(Blue, Color(7))
+      }
+    options:
+      - text: "blue Color(7)"
+        correct: true
+        explain: "`Color(7)` — допустимое значение: тип ничего не ограничивает. `String()` попадает в запасную ветку."
+      - text: "2 7"
+        explain: "У `Color` есть метод `String()`, и `fmt.Println` вызывает его вместо печати числа."
+      - text: panic
+        explain: "Go не проверяет, что значение входит в перечисление, — `Color(7)` создаётся без ошибок."
+
+  - id: typed-var
+    kind: compile
+    prompt: Скомпилируется ли программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      type Level int
+
+      const Debug Level = 0
+
+      func show(l Level) { fmt.Println(l) }
+
+      func main() {
+      	show(3)
+      	n := 3
+      	show(n)
+      }
+    compiles: false
+    explain: "`show(3)` компилируется: нетипизированная константа 3 приводится к `Level`. А `n` — переменная типа `int`, и `int` в `Level` неявно не превращается: `cannot use n (variable of type int) as Level value`. Нужно `show(Level(n))`."
+
+  - id: flags-ops
+    kind: single
+    prompt: "`p` — набор флагов типа `Perm` (`Read`, `Write`, `Exec` объявлены как `1 << iota`). Как снять флаг `Write`, не трогая остальные?"
+    options:
+      - text: "p &^= Write"
+        correct: true
+        explain: "`&^` — AND NOT: биты из `Write` обнуляются, остальные остаются как есть."
+      - text: "p ^= Write"
+        explain: "XOR переключает бит: если `Write` не был установлен, он установится."
+      - text: "p -= Write"
+        explain: "Вычитание работает, только если бит был установлен; иначе испортит остальные биты."
+      - text: "p &= Write"
+        explain: Оставит только `Write` (если он был) и снимет все остальные флаги.

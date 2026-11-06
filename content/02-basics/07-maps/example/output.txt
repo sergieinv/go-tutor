@@ -1,0 +1,10 @@
+ann: 31 len: 2
+eve: 0
+ok: true false
+after delete: 2
+literal: map[c#:2000 go:2009 rust:2015]
+c#=2000 go=2009 rust=2015 
+counts: map[be:2 not:1 or:1 to:2]
+bonus: map[ann:41 bob:37]
+nil map: true 0 0
+clear: 0 false

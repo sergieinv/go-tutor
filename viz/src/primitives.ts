@@ -114,16 +114,19 @@ export interface ArrowOptions {
   cls?: string;
   /** Сторона цели, в которую входит стрелка. По умолчанию — по взаимному положению точек. */
   enter?: Side;
+  /** Сторона источника, из которой стрелка выходит. По умолчанию — right. */
+  exit?: Side;
 }
 
 /** Длина наконечника: путь кончается раньше, остриё ложится точно в `to`. */
 export const ARROW_HEAD = 8;
 
+const outward: Record<Side, Point> = { top: { x: 0, y: -1 }, bottom: { x: 0, y: 1 }, left: { x: -1, y: 0 }, right: { x: 1, y: 0 } };
 const inward: Record<Side, Point> = { top: { x: 0, y: 1 }, bottom: { x: 0, y: -1 }, left: { x: 1, y: 0 }, right: { x: -1, y: 0 } };
 
 /**
- * Стрелка-указатель: выходит из from вправо и входит в to перпендикулярно
- * стороне enter, поэтому наконечник всегда смотрит в цель.
+ * Стрелка-указатель: выходит из from перпендикулярно стороне exit и входит
+ * в to перпендикулярно стороне enter, поэтому наконечник всегда смотрит в цель.
  */
 export function arrow(id: string, from: Point, to: Point, o: ArrowOptions = {}): Shape {
   const dx = to.x - from.x;
@@ -133,7 +136,8 @@ export function arrow(id: string, from: Point, to: Point, o: ArrowOptions = {}):
   // Конец пути — у основания наконечника.
   const end = { x: to.x - dir.x * ARROW_HEAD, y: to.y - dir.y * ARROW_HEAD };
   const k = Math.max(30, Math.min(80, Math.hypot(dx, dy) / 2));
-  const c1 = { x: from.x + k, y: from.y };
+  const out = outward[o.exit ?? "right"];
+  const c1 = { x: from.x + out.x * k, y: from.y + out.y * k };
   const c2 = { x: end.x - dir.x * k, y: end.y - dir.y * k };
   const d = `M${from.x},${from.y} C${c1.x},${c1.y} ${c2.x},${c2.y} ${end.x},${end.y}`;
   return { type: "path", id, d, arrow: true, cls: o.cls ?? "v-ptr" };

@@ -1,0 +1,13 @@
+bytes: 10
+runes: 7
+s[0]: 71 s[4]: 208
+hex: 47 6f 2c 20 d0 bc d0 b8 d1 80
+0:G(1) 1:o(1) 2:,(1) 3: (1) 4:м(2) 6:и(2) 8:р(2) 
+rune: ж U+0436 1078
+slice: o,  м
+runes[4]: м 7
+copy: go, мир Go, мир
+concat: Go, мир! 11
+compare: true true
+valid: false
+bad: U+FFFD

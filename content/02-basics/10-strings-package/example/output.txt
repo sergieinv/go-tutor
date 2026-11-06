@@ -1,0 +1,18 @@
+true
+2 5
+true
+"Go is fun, Go is fast"
+true true
+Rust is fun, Go is fast
+GO IS FUN, GO IS FAST
+["a" "" "b"]
+["a" "b" "c"]
+port 8080 true
+false
+item0, item1, item2 19
+x-y-z
+true true
+42!
+123 <nil>
+strconv.Atoi: parsing "12a": invalid syntax
+6.5 true "tab\there"

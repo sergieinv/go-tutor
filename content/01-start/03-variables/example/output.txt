@@ -1,0 +1,10 @@
+a: 10
+b: 2.5 (float64)
+zero: 0 "" false 0
+привет Go 2009
+x, y: 1 2
+swap: 2 1
+x, z: 100 3
+inner x: строка
+outer x: 100
+second: 2

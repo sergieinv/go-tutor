@@ -1,0 +1,117 @@
+questions:
+  - id: string-index
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func main() {
+      	for i := range "aбв" {
+      		fmt.Print(i)
+      	}
+      	fmt.Println()
+      }
+    options:
+      - text: "012"
+        explain: Индекс — смещение в байтах, а кириллица в UTF-8 занимает 2 байта.
+      - text: "013"
+        correct: true
+        explain: "`a` — 1 байт (индекс 0), `б` — 2 байта (индекс 1), `в` начинается с байта 3."
+      - text: "01234"
+        explain: "`range` по строке перебирает руны, а не байты: итераций три, а не пять."
+
+  - id: append-during-range
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func main() {
+      	s := []int{1, 2, 3}
+      	for _, v := range s {
+      		s = append(s, v)
+      	}
+      	fmt.Println(len(s))
+      }
+    options:
+      - text: "6"
+        correct: true
+        explain: Срез для `range` вычисляется один раз, поэтому итераций три — по исходной длине. Каждая добавляет элемент.
+      - text: бесконечный цикл
+        explain: Цикл не видит новую длину `s` — она зафиксирована до начала обхода.
+      - text: panic
+        explain: Изменять срез во время `range` разрешено, в отличие от `List<T>` в C#.
+
+  - id: write-ahead
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func main() {
+      	s := []int{1, 2, 3}
+      	sum := 0
+      	for i, v := range s {
+      		if i == 0 {
+      			s[2] = 10
+      		}
+      		sum += v
+      	}
+      	fmt.Println(sum)
+      }
+    options:
+      - text: "6"
+        explain: Так было бы с массивом — его `range` копирует. Срез не копирует данные, только заголовок.
+      - text: "13"
+        correct: true
+        explain: "`range` по срезу читает элементы из общего массива на каждой итерации, поэтому к третьей итерации `s[2]` уже 10: 1 + 2 + 10."
+      - text: "12"
+        explain: Изменён третий элемент, а не второй — сумма 1 + 2 + 10.
+
+  - id: struct-copy
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      type acc struct{ balance int }
+
+      func main() {
+      	accs := []acc{{10}, {20}}
+      	for _, a := range accs {
+      		a.balance += 5
+      	}
+      	fmt.Println(accs[0].balance, accs[1].balance)
+      }
+    options:
+      - text: "15 25"
+        explain: "`a` — копия элемента, изменения в ней теряются. Менять нужно `accs[i].balance`."
+      - text: "10 20"
+        correct: true
+        explain: На каждой итерации структура копируется в `a`, и `+= 5` меняет копию. Срез остаётся прежним.
+      - text: ошибка компиляции
+        explain: Изменять переменную цикла разрешено — просто это бесполезно.
+
+  - id: range-int-two-vars
+    kind: compile
+    prompt: Скомпилируется ли программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func main() {
+      	for i, v := range 3 {
+      		fmt.Println(i, v)
+      	}
+      }
+    compiles: false
+    explain: Range по целому числу выдаёт только одно значение — от 0 до n-1. Вторая переменная — ошибка `range over 3 permits only one iteration variable`.

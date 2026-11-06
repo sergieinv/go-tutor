@@ -1,0 +1,131 @@
+questions:
+  - id: empty-case
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func main() {
+      	n := 0
+      	for _, d := range []string{"sat", "sun", "mon"} {
+      		switch d {
+      		case "sat":
+      		case "sun":
+      			n++
+      		}
+      	}
+      	fmt.Println(n)
+      }
+    options:
+      - text: "2"
+        explain: Так работают подряд идущие метки в C#. В Go пустой `case "sat":` — это отдельная ветка без действий.
+      - text: "1"
+        correct: true
+        explain: Для `"sat"` выполняется пустая ветка и `switch` завершается. Счётчик увеличивает только `"sun"`.
+      - text: "0"
+        explain: Ветка `"sun"` срабатывает, и `n++` выполняется один раз.
+
+  - id: fallthrough-no-check
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func main() {
+      	x := 5
+      	switch {
+      	case x > 0:
+      		fmt.Print("a")
+      		fallthrough
+      	case x > 100:
+      		fmt.Print("b")
+      	case x > 1:
+      		fmt.Print("c")
+      	}
+      	fmt.Println()
+      }
+    options:
+      - text: "a"
+        explain: "`fallthrough` не проверяет условие `x > 100` — тело следующей ветки выполняется безусловно."
+      - text: "ab"
+        correct: true
+        explain: После `a` управление переходит в тело следующего `case`. Там нет `fallthrough`, поэтому до `c` дело не доходит.
+      - text: "abc"
+        explain: "`fallthrough` действует только на одну ветку. Во второй его нет, и `switch` завершается."
+      - text: "ac"
+        explain: "`fallthrough` ведёт в следующую по тексту ветку, а не в следующую подходящую."
+
+  - id: first-match
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func main() {
+      	n := 15
+      	switch {
+      	case n%3 == 0:
+      		fmt.Println("fizz")
+      	case n%5 == 0:
+      		fmt.Println("buzz")
+      	case n%15 == 0:
+      		fmt.Println("fizzbuzz")
+      	}
+      }
+    options:
+      - text: fizz
+        correct: true
+        explain: Ветки проверяются сверху вниз, и выполняется первая истинная. До `n%15 == 0` очередь не доходит — поэтому её ставят первой.
+      - text: fizzbuzz
+        explain: Самое «точное» условие не имеет приоритета — важен только порядок веток.
+      - text: |
+          fizz
+          buzz
+          fizzbuzz
+        explain: Без `fallthrough` выполняется только одна ветка.
+
+  - id: duplicate-case
+    kind: compile
+    prompt: Скомпилируется ли программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func main() {
+      	x := 1
+      	switch x {
+      	case 1, 2:
+      		fmt.Println("small")
+      	case 2, 3:
+      		fmt.Println("medium")
+      	}
+      }
+    compiles: false
+    explain: Повторяющиеся константы в `case` одного `switch` — ошибка компиляции (`duplicate case 2`). Для неконстантных выражений компилятор такое проверить не может, и тогда сработает первая ветка.
+
+  - id: fallthrough-last
+    kind: compile
+    prompt: Скомпилируется ли программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func main() {
+      	switch x := 1; x {
+      	case 1:
+      		fmt.Println("one")
+      	default:
+      		fmt.Println("other")
+      		fallthrough
+      	}
+      }
+    compiles: false
+    explain: "`fallthrough` в последней ветке некуда передавать управление — `cannot fallthrough final case in switch`."

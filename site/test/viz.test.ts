@@ -164,6 +164,10 @@ test("стрелка входит в цель перпендикулярно с�
     // Последний отрезок касательной лежит на той же прямой — маркер смотрит в цель.
     assert.equal(dir.x === 0 ? c2x - ex : c2y - ey, 0, enter);
   }
+  // exit: первый отрезок касательной уходит от источника в сторону exit.
+  const up = nums((arrow("e", { x: 50, y: 50 }, { x: 150, y: 10 }, { exit: "top", enter: "left" }) as { d: string }).d);
+  assert.equal(up[2], 50);
+  assert.ok(up[3] < 50);
   // Без enter: цель ниже — вход сверху, на одном уровне — слева.
   const down = nums((arrow("b", { x: 0, y: 0 }, { x: 100, y: 200 }) as { d: string }).d);
   assert.deepEqual(down.slice(-2), [100, 200 - ARROW_HEAD]);

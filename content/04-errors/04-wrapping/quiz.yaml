@@ -1,0 +1,126 @@
+questions:
+  - id: unwrap-join
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"errors"
+      	"fmt"
+      )
+
+      func main() {
+      	a := errors.New("a")
+      	b := errors.New("b")
+      	err := errors.Join(a, b)
+      	fmt.Println(errors.Unwrap(err) == nil, errors.Is(err, b))
+      }
+    options:
+      - text: "false true"
+        explain: "`errors.Unwrap` не вернёт ни `a`, ни `b`: он умеет только `Unwrap() error`, а у `Join`-ошибки метод `Unwrap() []error`."
+      - text: "true true"
+        correct: true
+        explain: "`errors.Unwrap` для ошибки с несколькими причинами возвращает `nil`. `errors.Is` же обходит все ветви дерева и находит `b`."
+      - text: "true false"
+        explain: "`errors.Is` понимает `Unwrap() []error` и проверяет каждую из объединённых ошибок."
+
+  - id: wrap-nil
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"errors"
+      	"fmt"
+      )
+
+      func save() error { return nil }
+
+      func main() {
+      	err := save()
+      	wrapped := fmt.Errorf("save: %w", err)
+      	fmt.Println(wrapped == nil, errors.Join(err) == nil)
+      }
+    options:
+      - text: "true true"
+        explain: "`fmt.Errorf` не знает, что вы хотели «обернуть ничего», — он всегда возвращает новую ошибку."
+      - text: "false true"
+        correct: true
+        explain: "`fmt.Errorf` возвращает не-`nil` ошибку с текстом `save: %!w(<nil>)`. `errors.Join` пропускает `nil`, и если ничего не осталось — возвращает `nil`."
+      - text: "false false"
+        explain: "`errors.Join` отбрасывает `nil`-аргументы и для пустого результата возвращает `nil`."
+
+  - id: is-method
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"errors"
+      	"fmt"
+      )
+
+      var ErrNotFound = errors.New("not found")
+
+      type HTTPError struct{ Code int }
+
+      func (e *HTTPError) Error() string { return fmt.Sprint("http ", e.Code) }
+
+      func (e *HTTPError) Is(target error) bool {
+      	return target == ErrNotFound && e.Code == 404
+      }
+
+      func main() {
+      	err := fmt.Errorf("fetch: %w", &HTTPError{Code: 404})
+      	other := fmt.Errorf("fetch: %w", &HTTPError{Code: 500})
+      	fmt.Println(errors.Is(err, ErrNotFound), errors.Is(other, ErrNotFound))
+      }
+    options:
+      - text: "false false"
+        explain: "`ErrNotFound` действительно нет в цепочке, но `errors.Is` спрашивает ещё и метод `Is` у каждого звена."
+      - text: "true false"
+        correct: true
+        explain: "Метод `Is` позволяет типу считаться равным sentinel'у. Для кода 404 он отвечает `true`, для 500 — `false`."
+      - text: "true true"
+        explain: "Метод `Is` проверяет код: для 500 он возвращает `false`."
+
+  - id: join-text
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"errors"
+      	"fmt"
+      )
+
+      func main() {
+      	err := errors.Join(errors.New("name: required"), nil, errors.New("age: invalid"))
+      	fmt.Println(err)
+      }
+    options:
+      - text: "name: required; age: invalid"
+        explain: Разделитель у `errors.Join` — перевод строки, а не точка с запятой.
+      - text: "name: required\nage: invalid"
+        correct: true
+        explain: "`errors.Join` пропускает `nil` и склеивает тексты ошибок через `\\n`."
+      - text: "name: required\n<nil>\nage: invalid"
+        explain: "`nil`-аргументы отбрасываются ещё до склейки."
+
+  - id: wrap-or-hide
+    kind: single
+    prompt: Пакет `storage` получил ошибку драйвера PostgreSQL. Как вернуть её наружу?
+    options:
+      - text: "`fmt.Errorf(\"get user: %w\", pgErr)` — пусть вызывающий разбирается"
+        explain: Тип ошибки драйвера станет частью API пакета. Клиенты начнут делать `errors.As` на `*pgconn.PgError`, и смена базы сломает их код.
+      - text: Перевести в свою ошибку (`ErrNotFound`, `ErrConflict`), а прочие обернуть через `%v`
+        correct: true
+        explain: Вызывающий проверяет только ошибки вашего пакета, а текст причины остаётся в логах. Детали реализации не утекают.
+      - text: "`panic(pgErr)`"
+        explain: Сбой базы — ожидаемая ошибка, а не баг. `panic` для неё не предназначен.
+      - text: Вернуть `errors.New(pgErr.Error())`
+        explain: Это то же, что `%v`, только без контекста, и вызывающий всё равно не может отличить «не найдено» от аварии.

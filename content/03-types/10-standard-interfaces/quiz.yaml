@@ -1,0 +1,119 @@
+questions:
+  - id: stringer-pointer
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      type Temp struct{ C int }
+
+      func (t *Temp) String() string { return fmt.Sprintf("%d°C", t.C) }
+
+      func main() {
+      	t := Temp{20}
+      	fmt.Println(t, &t)
+      }
+    options:
+      - text: "{20} 20°C"
+        correct: true
+        explain: "`String` объявлен на `*Temp`, поэтому `Temp` не реализует `fmt.Stringer`, и `fmt` печатает поля. Указатель `&t` реализует — для него вызывается `String`."
+      - text: "20°C 20°C"
+        explain: "Автоматическое `&` работает при вызове метода на переменной, но не при проверке интерфейса: в `Println` передаётся копия-значение без метода `String`."
+      - text: "{20} &{20}"
+        explain: "`*Temp` реализует `fmt.Stringer`, и `fmt` вызывает `String()` для указателя."
+
+  - id: read-loop
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"strings"
+      )
+
+      func main() {
+      	r := strings.NewReader("hello")
+      	buf := make([]byte, 2)
+      	for {
+      		n, err := r.Read(buf)
+      		fmt.Print(n, string(buf[:n]), " ")
+      		if err != nil {
+      			fmt.Println(err)
+      			break
+      		}
+      	}
+      }
+    options:
+      - text: 2he 2ll 1o 0 EOF
+        correct: true
+        explain: "Каждый `Read` заполняет не больше `len(buf)` байт. Последний кусок `o` приходит без ошибки, а следующий вызов возвращает `0` и `io.EOF`."
+      - text: 2he 2ll 1o EOF
+        explain: "`strings.Reader` возвращает последний байт без ошибки; `io.EOF` приходит отдельным вызовом с `n == 0`, и он тоже печатается."
+      - text: 2he 2ll 2lo 0 EOF
+        explain: "`buf[:n]` обрезает буфер по реально прочитанным байтам — хвост от прошлого чтения не печатается."
+
+  - id: buffer-value-writer
+    kind: compile
+    prompt: Скомпилируется ли программа?
+    code: |
+      package main
+
+      import (
+      	"bytes"
+      	"fmt"
+      	"io"
+      )
+
+      func main() {
+      	var buf bytes.Buffer
+      	var w io.Writer = buf
+      	fmt.Fprint(w, "hi")
+      }
+    compiles: false
+    explain: "`Write` у `bytes.Buffer` объявлен на указателе: `bytes.Buffer does not implement io.Writer (method Write has pointer receiver)`. Нужно `var w io.Writer = &buf` — иначе запись шла бы в копию буфера."
+
+  - id: io-copy
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"bytes"
+      	"fmt"
+      	"io"
+      	"strings"
+      )
+
+      func main() {
+      	var dst bytes.Buffer
+      	dst.WriteString(">")
+      	n, err := io.Copy(&dst, strings.NewReader("abc"))
+      	fmt.Println(n, err, dst.String())
+      }
+    options:
+      - text: 3 <nil> >abc
+        correct: true
+        explain: "`io.Copy` дописывает в `Writer` и возвращает число скопированных байт — 3. Конец источника (`io.EOF`) — штатное завершение, а не ошибка, поэтому `err == nil`."
+      - text: 3 EOF >abc
+        explain: "`io.Copy` читает до `io.EOF` и не считает его ошибкой."
+      - text: 4 <nil> >abc
+        explain: Счётчик включает только байты, скопированные из источника, а не то, что уже лежало в буфере.
+      - text: 3 <nil> abc
+        explain: "`bytes.Buffer` дописывает в конец — `>` остаётся в начале."
+
+  - id: sort-choice
+    kind: single
+    prompt: Нужно отсортировать `[]User` по возрасту в новом коде. Что выбрать?
+    options:
+      - text: "`slices.SortFunc(users, func(a, b User) int { return cmp.Compare(a.Age, b.Age) })`"
+        correct: true
+        explain: Одна функция сравнения, без вспомогательного типа; обобщённая реализация обычно быстрее `sort.Sort` — нет вызовов через интерфейс.
+      - text: Объявить `type byAge []User` с методами `Len`, `Less`, `Swap` и вызвать `sort.Sort`
+        explain: Работает, но это старый стиль — три метода и отдельный тип ради одной сортировки.
+      - text: "`sort.Ints` по возрастам"
+        explain: Отсортирует только отдельный срез чисел, а не пользователей.

@@ -1,0 +1,106 @@
+questions:
+  - id: init-order
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      var x = setup()
+
+      func setup() int {
+      	fmt.Print("var ")
+      	return 1
+      }
+
+      func init() {
+      	fmt.Print("init ")
+      }
+
+      func main() {
+      	fmt.Println("main", x)
+      }
+    options:
+      - text: var init main 1
+        correct: true
+        explain: Сначала инициализируются переменные пакета, затем выполняются функции `init`, и только потом `main`.
+      - text: init var main 1
+        explain: "`init` вызывается после инициализации всех переменных пакета — он может на них опираться."
+      - text: main 1
+        explain: Инициализация пакета выполняется до `main` в любом случае, даже если её никто явно не вызывает.
+
+  - id: json-unexported
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"encoding/json"
+      	"fmt"
+      )
+
+      type User struct {
+      	Name  string
+      	email string
+      }
+
+      func main() {
+      	b, _ := json.Marshal(User{Name: "Ann", email: "a@b.c"})
+      	fmt.Println(string(b))
+      }
+    options:
+      - text: '{"Name":"Ann"}'
+        correct: true
+        explain: Поле `email` начинается со строчной буквы и не экспортируется. `encoding/json` — другой пакет, он его не видит и молча пропускает.
+      - text: '{"Name":"Ann","email":"a@b.c"}'
+        explain: Видимость в Go распространяется и на рефлексию из других пакетов — неэкспортированные поля сериализатор не видит.
+      - text: '{"name":"Ann","email":"a@b.c"}'
+        explain: "`encoding/json` не меняет регистр имён: без тегов ключ совпадает с именем поля, а `email` и вовсе пропущен."
+
+  - id: unexported-func
+    kind: compile
+    prompt: Скомпилируется ли программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"strings"
+      )
+
+      func main() {
+      	fmt.Println(strings.indexFunc)
+      }
+    compiles: false
+    explain: "Функция `indexFunc` в пакете `strings` есть, но её имя начинается со строчной буквы — вне пакета она не видна: `name indexFunc not exported by package strings`."
+
+  - id: exported-names
+    kind: multiple
+    prompt: Какие из имён, объявленных на уровне пакета, видны из других пакетов?
+    options:
+      - text: "`User`"
+        correct: true
+        explain: Первая буква заглавная — имя экспортируется.
+      - text: "`Ёлка`"
+        correct: true
+        explain: Правило работает для любой заглавной буквы Unicode, не только латинской.
+      - text: "`_Config`"
+        explain: Первый символ — подчёркивание, а не заглавная буква, поэтому имя не экспортируется.
+      - text: "`userID`"
+        explain: Первая буква строчная, регистр остальных значения не имеет.
+
+  - id: internal-rule
+    kind: single
+    prompt: "Модуль `example.com/shop` содержит пакет `example.com/shop/internal/money`. Кто может его импортировать?"
+    options:
+      - text: "`example.com/shop/cmd/api`"
+        correct: true
+        explain: Пакет лежит в дереве `example.com/shop` — родителя каталога `internal`.
+      - text: "`example.com/shop2/billing`"
+        explain: Путь начинается со строки `example.com/shop`, но это другое дерево — `shop2`, а не `shop`.
+      - text: "`example.com/billing`"
+        explain: Пакет из другого модуля не может импортировать `internal`-пакет чужого модуля.
+      - text: Любой пакет, если указать путь полностью
+        explain: Ограничение проверяет сам `go build`, обойти его указанием пути нельзя.

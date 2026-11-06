@@ -1,0 +1,14 @@
+load profile 7: SELECT users: not found
+  *fmt.wrapError
+  *main.QueryError
+  *errors.errorString
+is ErrNotFound: true
+as QueryError: true SELECT users
+name: required
+manager: not found
+joined is ErrNotFound: true
+join of nils: <nil>
+sync: not found, then timeout
+is timeout: true
+unwrap: <nil>
+opaque is ErrNotFound: false

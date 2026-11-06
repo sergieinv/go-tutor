@@ -1,0 +1,5 @@
+<nil>
+bad arg: panic: mustPositive: -1 <= 0
+index: panic: runtime error: index out of range [5] with length 3
+runtime.Error: true — assignment to entry in nil map
+outer: panic: disk on fire

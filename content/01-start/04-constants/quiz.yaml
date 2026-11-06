@@ -1,0 +1,101 @@
+questions:
+  - id: huge-shift
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      const big = 1 << 100
+
+      func main() {
+      	fmt.Println(big >> 98)
+      }
+    options:
+      - text: "4"
+        correct: true
+        explain: "`big >> 98` — константное выражение, и оно считается точно: `2^100 / 2^98 = 4`. В `int` превращается уже результат, а он помещается."
+      - text: "0"
+        explain: Константы не ограничены 64 битами, `1 << 100` не обнуляется.
+      - text: ошибка компиляции
+        explain: Ошибкой было бы `fmt.Println(big)` — сама `big` в `int` не помещается. Результат сдвига помещается.
+
+  - id: const-vs-var-float
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func main() {
+      	const a, b = 0.1, 0.2
+      	x, y := 0.1, 0.2
+      	fmt.Println(a+b == 0.3, x+y == 0.3)
+      }
+    options:
+      - text: true false
+        correct: true
+        explain: Сумма констант вычисляется компилятором точно и равна 0.3. Сумма переменных `float64` получается во время выполнения с ошибкой округления — `0.30000000000000004`.
+      - text: false false
+        explain: Константная арифметика в Go точная, ошибка округления `double` к ней не относится.
+      - text: true true
+        explain: Переменные `x` и `y` — уже `float64`, и их сумма подвержена обычной ошибке округления.
+
+  - id: untyped-int-division
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func main() {
+      	var f float64 = 7 / 2
+      	fmt.Println(f)
+      }
+    options:
+      - text: "3"
+        correct: true
+        explain: "`7` и `2` — нетипизированные целые константы, `7 / 2` считается как целое деление и даёт 3. Только потом результат становится `float64`."
+      - text: "3.5"
+        explain: Тип `float64` применяется к готовому результату, а не к операндам. Нужно `7.0 / 2`.
+      - text: ошибка компиляции
+        explain: Целую константу 3 можно присвоить `float64` — она точно представима.
+
+  - id: untyped-to-many
+    kind: compile
+    prompt: Скомпилируется ли программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      const n = 5
+
+      func main() {
+      	var f float64 = n
+      	var i int64 = n
+      	var b byte = n
+      	fmt.Println(f, i, b)
+      }
+    compiles: true
+    explain: "`n` — нетипизированная константа, она подставляется в любой числовой тип, в котором представима. `5` помещается и в `float64`, и в `int64`, и в `byte`."
+
+  - id: typed-const
+    kind: compile
+    prompt: Скомпилируется ли программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      const n int = 5
+
+      func main() {
+      	var f float64 = n
+      	fmt.Println(f)
+      }
+    compiles: false
+    explain: "`n` объявлена с типом `int` и ведёт себя как значение `int`, а неявных преобразований в Go нет. Нужно `float64(n)` или нетипизированная `const n = 5`."

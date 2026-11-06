@@ -1,0 +1,110 @@
+questions:
+  - id: lifo-loop
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func main() {
+      	for i := range 3 {
+      		defer fmt.Print(i)
+      	}
+      	fmt.Print("go:")
+      }
+    options:
+      - text: "go:012"
+        explain: Отложенные вызовы образуют стек — последний выполняется первым.
+      - text: "go:210"
+        correct: true
+        explain: Все три `defer` копятся до выхода из `main` и выполняются в обратном порядке. Аргумент `i` вычислен в момент `defer`, поэтому значения 0, 1, 2 сохранены.
+      - text: "0go:12"
+        explain: "`defer` привязан к функции, а не к телу цикла: ни один вызов не выполнится до выхода из `main`."
+      - text: "go:222"
+        explain: Аргументы отложенного вызова вычисляются сразу, к тому же с Go 1.22 у каждой итерации своя `i`.
+
+  - id: args-vs-closure
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func main() {
+      	x := 1
+      	defer fmt.Println("a", x)
+      	defer func() { fmt.Println("b", x) }()
+      	x = 2
+      }
+    options:
+      - text: "a 1\nb 2"
+        explain: Порядок обратный — первым выполняется последний `defer`, то есть замыкание.
+      - text: "b 2\na 1"
+        correct: true
+        explain: "Замыкание отложено последним и выполняется первым; оно читает `x` в момент выполнения — 2. У `fmt.Println(\"a\", x)` аргумент вычислен ещё в строке `defer` — 1."
+      - text: "b 2\na 2"
+        explain: Аргументы отложенного вызова вычисляются в момент `defer`, а не при выполнении.
+      - text: "b 1\na 1"
+        explain: Замыкание не копирует `x`, а читает переменную в момент вызова — к этому времени там 2.
+
+  - id: named-result
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func named() (n int) {
+      	defer func() { n *= 2 }()
+      	return 3
+      }
+
+      func unnamed() int {
+      	n := 3
+      	defer func() { n *= 2 }()
+      	return n
+      }
+
+      func main() {
+      	fmt.Println(named(), unnamed())
+      }
+    options:
+      - text: "6 6"
+        explain: "В `unnamed` замыкание меняет локальную переменную уже после того, как её значение скопировано в результат."
+      - text: "6 3"
+        correct: true
+        explain: "`return 3` записывает 3 в именованный результат `n`, затем `defer` удваивает его. В `unnamed` результат безымянный: `return n` копирует 3, и изменение `n` на него не влияет."
+      - text: "3 3"
+        explain: Отложенная функция выполняется после присваивания результата и может изменить именованный результат.
+
+  - id: defer-not-call
+    kind: compile
+    prompt: Скомпилируется ли программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func main() {
+      	defer fmt.Println
+      	fmt.Println("hi")
+      }
+    compiles: false
+    explain: "После `defer` должен стоять вызов функции: `defer fmt.Println()`. Значение функции без скобок — ошибка `expression in defer must be function call`."
+
+  - id: loop-files
+    kind: single
+    prompt: "В цикле по 10 000 путей стоит `f, _ := os.Open(p); defer f.Close()`. Что произойдёт?"
+    options:
+      - text: Каждый файл закроется в конце своей итерации
+        explain: Так работает `using` в C#. `defer` привязан к функции, а не к блоку.
+      - text: Все файлы останутся открытыми до выхода из функции
+        correct: true
+        explain: "Отложенные `Close` копятся и выполнятся только при возврате из функции. Можно упереться в лимит файловых дескрипторов. Тело цикла выносят в отдельную функцию."
+      - text: Компилятор запретит `defer` внутри цикла
+        explain: Это допустимый код — компилятор не запрещает `defer` в цикле, и ошибку легко не заметить.
+      - text: Закроется только последний файл
+        explain: Каждый `defer` регистрирует свой вызов со своим `f`, закроются все — но поздно.

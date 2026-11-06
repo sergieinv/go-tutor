@@ -1,0 +1,10 @@
+{Name:Alice Age:30 Admin:false}
+{Name: Age:0 Admin:false} ""
+Alice Bob
+true
+30 4
+{30 40}
+{0 0} true
+localhost:8080
+1 one
+2 two

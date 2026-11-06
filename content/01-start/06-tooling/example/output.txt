@@ -1,0 +1,8 @@
+готово: 50%
+[go    ] [  3.14] [+5] [0xff]
+%!d(string=пять) товаров
+чай и %!s(MISSING)
+1%!(EXTRA int=2)
+итого: %d 42
+true и 1.5
+[1 2] map[string]int

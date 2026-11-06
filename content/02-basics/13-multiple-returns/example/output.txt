@@ -1,0 +1,8 @@
+divmod: 3 2
+rem: 1
+error: деление на ноль
+atoi: 42 <nil>
+bob: нет, age = 0
+split: 7 10
+7 0
+swap: right left

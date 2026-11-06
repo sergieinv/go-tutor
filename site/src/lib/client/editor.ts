@@ -1,4 +1,5 @@
 // Редактор Go на CodeMirror 6 с цветами из CSS-переменных сайта.
+import { indentWithTab } from "@codemirror/commands";
 import { go } from "@codemirror/lang-go";
 import { HighlightStyle, indentUnit, syntaxHighlighting } from "@codemirror/language";
 import { EditorState, StateEffect, StateField, type Extension } from "@codemirror/state";
@@ -88,7 +89,10 @@ export function createEditor(parent: HTMLElement, opts: EditorOptions): EditorVi
     EditorState.tabSize.of(4),
     theme,
     highlightField,
-    EditorView.contentAttributes.of({ "aria-label": opts.label }),
+    // Tab — отступ, как в IDE. Уйти из редактора с клавиатуры: Esc, затем Tab
+    // (встроенный режим CodeMirror, без него клавиатура «застревает» в редакторе).
+    keymap.of([indentWithTab]),
+    EditorView.contentAttributes.of({ "aria-label": `${opts.label}. Tab — отступ; чтобы выйти из редактора, нажмите Esc, затем Tab` }),
   ];
   if (opts.onSubmit) {
     const submit = opts.onSubmit;

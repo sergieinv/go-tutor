@@ -1,0 +1,86 @@
+questions:
+  - id: print-spacing
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func main() {
+      	fmt.Print("go", "lang", 1, 2, "\n")
+      }
+    options:
+      - text: golang1 2
+        correct: true
+        explain: "`Print` ставит пробел только между соседними аргументами, если ни один из них не строка. Между `\"go\"` и `\"lang\"`, `\"lang\"` и `1` пробела нет, между `1` и `2` — есть."
+      - text: go lang 1 2
+        explain: Так напечатал бы `Println` — он разделяет пробелом любые аргументы. У `Print` правило другое.
+      - text: golang12
+        explain: Между двумя нестроковыми аргументами `Print` всё-таки вставляет пробел.
+
+  - id: println-mixed
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func main() {
+      	fmt.Println("x =", 10/4, 10.0/4, 1 < 2)
+      }
+    options:
+      - text: x = 2 2.5 true
+        correct: true
+        explain: "`10/4` — деление целых, дробная часть отбрасывается. `10.0/4` — константное выражение с плавающей точкой. `Println` разделяет всё пробелами, `bool` печатается как `true`."
+      - text: x = 2.5 2.5 true
+        explain: Оба операнда `10/4` — целые константы, поэтому и результат целый — `2`.
+      - text: x = 2 2.5 True
+        explain: В Go `bool` печатается в нижнем регистре, `True` — это C#-шный `ToString()`.
+
+  - id: allman-brace
+    kind: compile
+    prompt: Скомпилируется ли программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func main()
+      {
+      	fmt.Println("hi")
+      }
+    compiles: false
+    explain: После `)` в конце строки лексер вставляет `;`, и объявление функции заканчивается без тела. Открывающая `{` должна стоять на той же строке, что и `func main()`.
+
+  - id: unused-import
+    kind: compile
+    prompt: Скомпилируется ли программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"strings"
+      )
+
+      func main() {
+      	fmt.Println("hi")
+      }
+    compiles: false
+    explain: Импорт `strings` не используется, а в Go это ошибка компиляции, а не предупреждение. Если пакет нужен только ради побочных эффектов, его импортируют как `_ "pkg"`.
+
+  - id: entry-point
+    kind: single
+    prompt: Что нужно, чтобы `go build` собрал исполняемый файл?
+    options:
+      - text: Пакет `main` с функцией `func main()`
+        correct: true
+        explain: Это единственное требование. Имя файла и каталога значения не имеют.
+      - text: Тип `Program` со статическим методом `Main`
+        explain: Классов и статических методов в Go нет — функции живут прямо в пакете.
+      - text: Функция `func main(args []string) int` в любом пакете
+        explain: "`main` не принимает параметров и ничего не возвращает, и находиться она должна в пакете `main`."
+      - text: Файл с именем `main.go`
+        explain: Имя файла может быть любым — важны объявление `package main` и функция `main`.

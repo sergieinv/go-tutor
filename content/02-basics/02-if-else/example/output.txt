@@ -1,0 +1,6 @@
+тепло
+число: 84
+ошибка: strconv.Atoi: parsing "4x2": invalid syntax
+larger: 7
+min/max: 3 10
+ok 17 отрицательное не число

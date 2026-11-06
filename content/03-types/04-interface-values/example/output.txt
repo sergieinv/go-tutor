@@ -1,0 +1,11 @@
+*strings.Reader
+3 true
+writer: false
+nil-интерфейс
+int, x+1 = 42
+текст string
+текст []uint8
+ошибка: k not found
+что-то ещё: float64
+false *main.NotFound
+true

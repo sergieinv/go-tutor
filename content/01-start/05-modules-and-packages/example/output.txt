@@ -1,0 +1,6 @@
+1. инициализация переменных пакета
+2. init
+3. main, total = 100
+GO ---
+{"ID":7,"Customer":"Аня"} <nil>
+discount: 10

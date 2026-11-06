@@ -1,0 +1,119 @@
+questions:
+  - id: assign-copy
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func main() {
+      	a := [3]int{1, 2, 3}
+      	b := a
+      	b[0] = 100
+      	fmt.Println(a[0], b[0])
+      }
+    options:
+      - text: "1 100"
+        correct: true
+        explain: Массив — значение. `b := a` копирует все три элемента, и `b` живёт отдельно от `a`.
+      - text: "100 100"
+        explain: Так было бы с C#-массивом или со срезом Go. Массив Go копируется целиком.
+      - text: "1 1"
+        explain: "`b[0] = 100` меняет копию — у `b` первый элемент теперь 100."
+
+  - id: func-copy
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func fill(a [3]int) [3]int {
+      	for i := range a {
+      		a[i] = 7
+      	}
+      	return a
+      }
+
+      func main() {
+      	a := [3]int{}
+      	b := fill(a)
+      	fmt.Println(a, b)
+      }
+    options:
+      - text: "[7 7 7] [7 7 7]"
+        explain: Функция получила копию массива, поэтому `a` в `main` не меняется.
+      - text: "[0 0 0] [7 7 7]"
+        correct: true
+        explain: "`fill` заполняет свою копию и возвращает её — ещё одной копией. Исходный `a` остался из нулей."
+      - text: "[0 0 0] [0 0 0]"
+        explain: Копия внутри функции заполнена семёрками и возвращена — `b` её содержит.
+
+  - id: length-in-type
+    kind: compile
+    prompt: Скомпилируется ли программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func main() {
+      	var a [3]int
+      	var b [4]int
+      	fmt.Println(a == b)
+      }
+    compiles: false
+    explain: Длина — часть типа. `[3]int` и `[4]int` — разные типы, и сравнивать их нельзя (`mismatched types`).
+
+  - id: indexed-literal
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func main() {
+      	a := [...]int{5: 1, 2}
+      	fmt.Println(len(a), a[6])
+      }
+    options:
+      - text: "2 0"
+        explain: "`5: 1` ставит элемент по индексу 5, и следующий элемент без индекса идёт за ним."
+      - text: "7 2"
+        correct: true
+        explain: "`5: 1` кладёт 1 в индекс 5, `2` без индекса — в индекс 6. Длина массива — максимальный индекс плюс один: 7."
+      - text: "6 0"
+        explain: Элемент `2` занимает индекс 6, поэтому длина 7, а не 6.
+      - text: ошибка компиляции
+        explain: Смешивать элементы с индексом и без индекса в литерале можно.
+
+  - id: range-copy
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func main() {
+      	a := [3]int{1, 2, 3}
+      	sum := 0
+      	for i, v := range a {
+      		if i == 0 {
+      			a[2] = 10
+      		}
+      		sum += v
+      	}
+      	fmt.Println(sum, a[2])
+      }
+    options:
+      - text: "13 10"
+        explain: Так было бы со срезом. Для массива `range` вычисляется один раз и обходит его копию.
+      - text: "6 10"
+        correct: true
+        explain: "`range a` обходит копию массива, сделанную до цикла, поэтому `v` на третьей итерации — 3. Сам `a[2]` при этом изменился."
+      - text: "6 3"
+        explain: Запись `a[2] = 10` меняет сам массив — меняется только то, что видит цикл.

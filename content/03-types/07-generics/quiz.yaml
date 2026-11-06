@@ -1,0 +1,104 @@
+questions:
+  - id: any-not-comparable
+    kind: compile
+    prompt: Скомпилируется ли программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func Contains[T any](s []T, v T) bool {
+      	for _, x := range s {
+      		if x == v {
+      			return true
+      		}
+      	}
+      	return false
+      }
+
+      func main() {
+      	fmt.Println(Contains([]int{1, 2}, 2))
+      }
+    compiles: false
+    explain: "Тело generic-функции проверяется один раз — для всех допустимых `T`. `any` включает срезы, map и функции, которые нельзя сравнивать, поэтому `x == v` запрещено: `incomparable types in type set`. Нужно `[T comparable]`."
+
+  - id: zero-values
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func Zero[T any]() T {
+      	var z T
+      	return z
+      }
+
+      func main() {
+      	fmt.Println(Zero[int](), Zero[string]() == "", Zero[*int]() == nil, len(Zero[[]int]()))
+      }
+    options:
+      - text: "0 true true 0"
+        correct: true
+        explain: "`var z T` даёт нулевое значение конкретного типа: 0, пустую строку, `nil`-указатель, `nil`-срез длины 0."
+      - text: "<nil> false true 0"
+        explain: "Для `int` нулевое значение — 0, а не `nil`. `T` подставляется при инстанцировании, и `var z T` ведёт себя как для обычного типа."
+      - text: Не скомпилируется
+        explain: "Аргументы типа указаны явно, выводить нечего. `Zero()` без `[int]` действительно не скомпилировался бы."
+
+  - id: instantiation-types
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      type Box[T any] struct{ V T }
+
+      func main() {
+      	a := Box[int]{V: 1}
+      	b := Box[int64]{V: 1}
+      	fmt.Printf("%T %T %v\n", a, b, a == Box[int]{V: 1})
+      }
+    options:
+      - text: "main.Box[int] main.Box[int64] true"
+        correct: true
+        explain: "Каждое инстанцирование — отдельный тип со своим именем. `Box[int]` сравним, потому что сравнимо поле `int`."
+      - text: "main.Box main.Box true"
+        explain: "Аргументы типа входят в имя типа, `%T` их печатает."
+      - text: Не скомпилируется
+        explain: "Сравнение `Box[int]` с `Box[int]` допустимо. Не скомпилировалось бы `a == b`: `Box[int]` и `Box[int64]` — разные типы."
+
+  - id: infer-from-result
+    kind: compile
+    prompt: Скомпилируется ли программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func Parse[T any](s string) T {
+      	var z T
+      	return z
+      }
+
+      func main() {
+      	var n int = Parse("42")
+      	fmt.Println(n)
+      }
+    compiles: false
+    explain: "`T` не встречается среди параметров функции, а по типу переменной слева Go его не выводит: `cannot infer T`. Пишите `Parse[int](\"42\")`."
+
+  - id: no-variance
+    kind: single
+    prompt: "`Dog` реализует интерфейс `Animal`. Есть функция `func Feed(s []Animal)` и переменная `dogs []Dog`. Как передать собак в `Feed`?"
+    options:
+      - text: Создать новый срез `[]Animal` и скопировать в него элементы
+        correct: true
+        explain: "Вариантности нет: `[]Dog` и `[]Animal` устроены по-разному в памяти (значения против пар тип+данные), поэтому нужна поэлементная конвертация. Альтернатива — сделать `Feed` обобщённой: `func Feed[T Animal](s []T)`."
+      - text: "`Feed(dogs)` — срез собак и есть срез животных"
+        explain: "Это ковариантность `IEnumerable<out T>` из C#. В Go `[]Dog` нельзя использовать как `[]Animal`."
+      - text: "`Feed([]Animal(dogs))`"
+        explain: Такого преобразования нет — типы элементов различаются, и даже размер элемента у них разный.

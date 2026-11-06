@@ -1,0 +1,117 @@
+questions:
+  - id: break-in-switch
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func main() {
+      	sum := 0
+      	for i := range 5 {
+      		switch {
+      		case i == 2:
+      			break
+      		}
+      		sum += i
+      	}
+      	fmt.Println(sum)
+      }
+    options:
+      - text: "1"
+        explain: Так было бы, если бы `break` завершил цикл на `i == 2`. Но он завершает только `switch`.
+      - text: "10"
+        correct: true
+        explain: "`break` относится к ближайшему `switch`, цикл продолжается, и складываются все числа 0..4."
+      - text: "8"
+        explain: "`break` не пропускает остаток итерации, как `continue`: `sum += i` выполняется и для `i == 2`."
+
+  - id: continue-label
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func main() {
+      	count := 0
+      outer:
+      	for i := range 3 {
+      		for j := range 3 {
+      			if j > i {
+      				continue outer
+      			}
+      			count++
+      		}
+      	}
+      	fmt.Println(count)
+      }
+    options:
+      - text: "9"
+        explain: Внутренний цикл прерывается, как только `j > i`, поэтому полных 3×3 итераций не будет.
+      - text: "6"
+        correct: true
+        explain: "`continue outer` переходит к следующему `i`. Для `i` = 0, 1, 2 внутренний цикл успевает посчитать 1, 2 и 3 раза: всего 6."
+      - text: "1"
+        explain: Это поведение `break outer` — он завершил бы весь внешний цикл. `continue outer` лишь начинает его следующую итерацию.
+      - text: "3"
+        explain: Внутренний цикл выполняет `count++`, пока `j <= i`, — для `i == 2` это три раза.
+
+  - id: parens
+    kind: compile
+    prompt: Скомпилируется ли программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func main() {
+      	for (i := 0; i < 3; i++) {
+      		fmt.Println(i)
+      	}
+      }
+    compiles: false
+    explain: "Заголовок `for` пишут без скобок: `for i := 0; i < 3; i++ {`. Скобки вокруг трёх частей — синтаксическая ошибка, а не стиль."
+
+  - id: closures
+    kind: output
+    prompt: "Что выведет программа (в `go.mod` указано `go 1.25`)?"
+    code: |
+      package main
+
+      import "fmt"
+
+      func main() {
+      	var fns []func() int
+      	for i := 0; i < 3; i++ {
+      		fns = append(fns, func() int { return i })
+      	}
+      	for _, f := range fns {
+      		fmt.Print(f())
+      	}
+      	fmt.Println()
+      }
+    options:
+      - text: "333"
+        explain: Так работал Go до 1.22 и так работает C#-цикл `for`. Сейчас у каждой итерации своя переменная.
+      - text: "012"
+        correct: true
+        explain: С Go 1.22 переменная классического `for` создаётся заново на каждой итерации, и каждое замыкание запоминает свою.
+      - text: "222"
+        explain: Замыкания не видят «последнее значение внутри цикла» — у каждого своя копия `i`.
+
+  - id: do-while
+    kind: single
+    prompt: Как в Go записать цикл, тело которого выполнится хотя бы раз (аналог `do-while`)?
+    options:
+      - text: "do { ... } while cond"
+        explain: Ключевого слова `do` в Go нет.
+      - text: "for { ...; if !cond { break } }"
+        correct: true
+        explain: Бесконечный цикл с проверкой условия в конце тела — стандартный способ.
+      - text: "for cond { ... }"
+        explain: "Это `while` — условие проверяется до первой итерации, и тело может не выполниться ни разу."
+      - text: "for range cond { ... }"
+        explain: "`range` по `bool` не определён — программа не скомпилируется."

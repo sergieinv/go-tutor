@@ -1,0 +1,98 @@
+questions:
+  - id: literal-types
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func main() {
+      	fmt.Printf("%T %T %T\n", 1, 1.0, 'a')
+      }
+    options:
+      - text: int float64 int32
+        correct: true
+        explain: Нетипизированные константы получают тип по умолчанию — `int`, `float64` и `rune`. `rune` — псевдоним `int32`, и `%T` печатает именно `int32`.
+      - text: int float64 rune
+        explain: "`rune` — псевдоним, а не отдельный тип. `%T` показывает настоящий тип — `int32`."
+      - text: int32 float64 char
+        explain: Литерал `1` получает тип `int`, а типа `char` в Go нет — символьный литерал имеет тип `rune`.
+
+  - id: uint8-overflow
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func main() {
+      	var x uint8 = 250
+      	x += 10
+      	fmt.Println(x)
+      }
+    options:
+      - text: "4"
+        correct: true
+        explain: "`uint8` хранит 0..255, переполнение заворачивается по модулю 256: `260 - 256 = 4`. Паники нет."
+      - text: "255"
+        explain: Насыщения в Go нет — значение не «упирается» в максимум.
+      - text: "260"
+        explain: В `uint8` число 260 не помещается — тип переменной не расширяется сам.
+      - text: panic
+        explain: Целочисленное переполнение во время выполнения в Go никогда не паникует.
+
+  - id: division-truncation
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func main() {
+      	a, b := 7, 2
+      	f := -2.9
+      	fmt.Println(float64(a/b), float64(a)/float64(b), int(f))
+      }
+    options:
+      - text: 3 3.5 -2
+        correct: true
+        explain: "`a/b` — деление целых, результат 3, и уже потом он переводится в `float64` (печатается как `3`). Во втором случае делятся дробные числа. `int(-2.9)` усекает к нулю — `-2`."
+      - text: 3.5 3.5 -3
+        explain: Преобразование `float64(a/b)` применяется к результату целого деления, а `int(f)` не округляет вниз, а усекает к нулю.
+      - text: 3 3.5 -3
+        explain: "`int` отбрасывает дробную часть — к нулю, а не к минус бесконечности."
+
+  - id: no-implicit-widening
+    kind: compile
+    prompt: Скомпилируется ли программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func main() {
+      	var a int32 = 10
+      	var b int64 = a
+      	fmt.Println(b)
+      }
+    compiles: false
+    explain: "`int32` и `int64` — разные типы, и Go не расширяет их неявно, даже когда это безопасно. Нужно `var b int64 = int64(a)`."
+
+  - id: mixed-arith
+    kind: compile
+    prompt: Скомпилируется ли программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func main() {
+      	n := 3
+      	price := 9.99
+      	fmt.Println(n * price)
+      }
+    compiles: false
+    explain: "`n` имеет тип `int`, `price` — `float64`. Операнды бинарной операции должны быть одного типа: `float64(n) * price`."

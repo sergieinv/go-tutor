@@ -1,0 +1,116 @@
+questions:
+  - id: missing-tilde
+    kind: compile
+    prompt: Скомпилируется ли программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      type Number interface{ int | float64 }
+
+      func Sum[T Number](s []T) T {
+      	var t T
+      	for _, v := range s {
+      		t += v
+      	}
+      	return t
+      }
+
+      type Cents int
+
+      func main() {
+      	fmt.Println(Sum([]Cents{100, 250}))
+      }
+    compiles: false
+    explain: "`int` в объединении означает ровно `int`. У `Cents` базовый тип `int`, но это другой тип: `Cents does not satisfy Number (possibly missing ~ for int in Number)`. С `~int` программа бы скомпилировалась."
+
+  - id: constraint-as-type
+    kind: compile
+    prompt: Скомпилируется ли программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      type Number interface{ ~int | ~float64 }
+
+      func main() {
+      	var x Number = 3
+      	fmt.Println(x)
+      }
+    compiles: false
+    explain: "Интерфейс с набором типов — только ограничение для параметров типа: `cannot use type Number outside a type constraint: interface contains type constraints`. Для обычной переменной подойдёт `any`."
+
+  - id: cmp-compare
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"cmp"
+      	"fmt"
+      )
+
+      func main() {
+      	fmt.Println(cmp.Compare("apple", "banana"), cmp.Compare(10, 2), cmp.Compare(1.5, 1.5))
+      }
+    options:
+      - text: "-1 1 0"
+        correct: true
+        explain: "`cmp.Compare` возвращает −1, если первый аргумент меньше, +1 — если больше, 0 — если равны. Строки сравниваются побайтово: `\"apple\" < \"banana\"`."
+      - text: "-1 8 0"
+        explain: "`cmp.Compare` не вычитает числа, а всегда возвращает −1, 0 или +1."
+      - text: "true false false"
+        explain: Это результат `cmp.Less`, а `cmp.Compare` возвращает целое число.
+
+  - id: sort-with-or
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"cmp"
+      	"fmt"
+      	"slices"
+      )
+
+      type P struct {
+      	Name string
+      	Age  int
+      }
+
+      func main() {
+      	ps := []P{{"c", 30}, {"a", 25}, {"b", 30}}
+      	slices.SortFunc(ps, func(x, y P) int {
+      		return cmp.Or(cmp.Compare(y.Age, x.Age), cmp.Compare(x.Name, y.Name))
+      	})
+      	for _, p := range ps {
+      		fmt.Print(p.Name)
+      	}
+      	fmt.Println()
+      }
+    options:
+      - text: bca
+        correct: true
+        explain: "`cmp.Compare(y.Age, x.Age)` — аргументы переставлены, значит по возрасту по убыванию: сначала оба 30, потом 25. При равном возрасте `cmp.Or` переходит ко второму сравнению — по имени: `b` раньше `c`."
+      - text: abc
+        explain: Это сортировка только по имени. Первым ключом здесь идёт возраст.
+      - text: cba
+        explain: "Второй ключ — имя по возрастанию, поэтому среди 30-летних `b` идёт раньше `c`."
+      - text: acb
+        explain: Возраст сравнивается в обратном порядке (`y` перед `x`) — это сортировка по убыванию.
+
+  - id: generic-or-interface
+    kind: single
+    prompt: "Какой из вариантов выигрывает от параметра типа по сравнению с обычным интерфейсом?"
+    options:
+      - text: "`func Max[T cmp.Ordered](s []T) T` — нужен оператор `<`, и результат того же типа, что элементы"
+        correct: true
+        explain: "Операторы доступны только через ограничение с набором типов, а `T` связывает вход и выход — без generics пришлось бы возвращать `any`."
+      - text: "`func Log[T fmt.Stringer](v T) { fmt.Println(v.String()) }`"
+        explain: "Здесь используется только метод — `func Log(v fmt.Stringer)` делает то же самое проще."
+      - text: "`func Close[T io.Closer](c T) error { return c.Close() }`"
+        explain: Только вызов метода и ничего типозависимого — достаточно параметра `io.Closer`.

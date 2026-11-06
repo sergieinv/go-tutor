@@ -1,0 +1,7 @@
+Monday 1
+Wednesday 3
+Sunday
+Weekday(42)
+1024 1048576 1073741824
+[bold|underline] false true
+[underline] 4

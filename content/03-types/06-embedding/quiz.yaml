@@ -1,0 +1,144 @@
+questions:
+  - id: no-virtual
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      type Animal struct{}
+
+      func (Animal) Sound() string   { return "..." }
+      func (a Animal) Speak() string { return "says " + a.Sound() }
+
+      type Dog struct{ Animal }
+
+      func (Dog) Sound() string { return "woof" }
+
+      func main() {
+      	d := Dog{}
+      	fmt.Println(d.Sound(), d.Speak())
+      }
+    options:
+      - text: "woof says ..."
+        correct: true
+        explain: "`d.Sound()` — метод `Dog`, он затеняет `Animal.Sound`. Но `Speak` — метод `Animal`: внутри него `a` имеет тип `Animal`, и `a.Sound()` вызывает `Animal.Sound`. Виртуальных методов нет."
+      - text: "woof says woof"
+        explain: Так работал бы `override` в C#. Встраивание — это поле, а не базовый класс, и `Animal` ничего не знает о `Dog`.
+      - text: "... says ..."
+        explain: "Снаружи `d.Sound()` находит метод на меньшей глубине — `Dog.Sound`."
+
+  - id: shadowed-field
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      type Base struct{ ID int }
+
+      type Item struct {
+      	Base
+      	ID string
+      }
+
+      func main() {
+      	it := Item{Base: Base{ID: 7}, ID: "x"}
+      	fmt.Println(it.ID, it.Base.ID)
+      }
+    options:
+      - text: "x 7"
+        correct: true
+        explain: "Поле на меньшей глубине затеняет продвинутое: `it.ID` — собственное поле `Item`. До встроенного добираются по имени типа: `it.Base.ID`."
+      - text: "7 7"
+        explain: Собственное поле внешней структуры всегда побеждает продвинутое.
+      - text: Не скомпилируется
+        explain: "Неоднозначность возникает только между полями на одной глубине. Здесь `Item.ID` на глубине 0, а `Base.ID` — на глубине 1."
+
+  - id: ambiguous
+    kind: compile
+    prompt: Скомпилируется ли программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      type File struct{}
+
+      func (File) Close() error { return nil }
+
+      type Conn struct{}
+
+      func (Conn) Close() error { return nil }
+
+      type Both struct {
+      	File
+      	Conn
+      }
+
+      func main() {
+      	var b Both
+      	fmt.Println(b.Close())
+      }
+    compiles: false
+    explain: "`Close` приходит из двух встроенных типов на одной глубине: `ambiguous selector b.Close`. Сама структура `Both` объявлена корректно — ошибка появляется только при обращении. Решение: свой метод `Close` у `Both` или явный вызов `b.File.Close()`."
+
+  - id: embedded-pointer-shared
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      type Stats struct{ Hits int }
+
+      func (s *Stats) Hit() { s.Hits++ }
+
+      type Handler struct {
+      	*Stats
+      	Name string
+      }
+
+      func main() {
+      	h1 := Handler{Stats: &Stats{}, Name: "a"}
+      	h2 := h1
+      	h2.Name = "b"
+      	h1.Hit()
+      	h2.Hit()
+      	fmt.Println(h1.Name, h2.Name, h1.Hits)
+      }
+    options:
+      - text: "a b 2"
+        correct: true
+        explain: "Копия `h2 := h1` копирует указатель `*Stats`, а не саму статистику. Оба `Hit` увеличивают один и тот же счётчик, а `Name` у каждой копии свой."
+      - text: "b b 2"
+        explain: "`Name` — обычное поле-строка, оно скопировалось. Общим оказался только встроенный указатель."
+      - text: "a b 1"
+        explain: Встроен указатель — обе копии структуры смотрят на один `Stats`.
+
+  - id: is-a
+    kind: compile
+    prompt: Скомпилируется ли программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      type User struct{ Name string }
+
+      type Admin struct {
+      	User
+      	Level int
+      }
+
+      func greet(u User) { fmt.Println("hi", u.Name) }
+
+      func main() {
+      	a := Admin{User{"ann"}, 1}
+      	greet(a)
+      }
+    compiles: false
+    explain: "Встраивание не делает `Admin` подтипом `User`: `cannot use a (variable of struct type Admin) as User value`. Передайте поле явно — `greet(a.User)` — или примите интерфейс, который `Admin` реализует продвинутыми методами."

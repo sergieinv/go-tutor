@@ -1,0 +1,129 @@
+questions:
+  - id: defer-runs-on-panic
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func f() {
+      	defer fmt.Println("defer f")
+      	panic("boom")
+      	fmt.Println("after panic")
+      }
+
+      func main() {
+      	defer func() {
+      		fmt.Println("recovered:", recover())
+      	}()
+      	f()
+      	fmt.Println("after f")
+      }
+    options:
+      - text: "defer f\nrecovered: boom"
+        correct: true
+        explain: Паника прерывает `f` и `main`. При раскрутке выполняется `defer` в `f`, затем отложенное замыкание в `main` останавливает панику. Строки после `panic` и после вызова `f()` не выполняются.
+      - text: "defer f\nafter f\nrecovered: boom"
+        explain: "`recover` не возвращает управление в точку вызова `f()`: `main` завершается, выполнив только отложенные вызовы."
+      - text: "recovered: boom\ndefer f"
+        explain: Раскрутка идёт от вершины стека — сначала отложенные вызовы `f`, потом `main`.
+      - text: "defer f\nafter panic\nrecovered: boom"
+        explain: После `panic` обычное выполнение функции прекращается.
+
+  - id: named-result-after-recover
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func parse(s string) (n int, ok bool) {
+      	defer func() {
+      		if recover() != nil {
+      			n = -1
+      		}
+      	}()
+      	ok = true
+      	return len(s) / len(s[1:]), ok
+      }
+
+      func main() {
+      	fmt.Println(parse("x"))
+      }
+    options:
+      - text: "-1 false"
+        explain: "`ok = true` выполнилось до паники, и `recover` не сбрасывает именованные результаты."
+      - text: "-1 true"
+        correct: true
+        explain: "`len(s[1:])` равно 0 — деление на ноль паникует. К этому моменту `ok` уже `true`, а замыкание записывает `n = -1`. Функция возвращает именованные результаты как есть."
+      - text: "0 false"
+        explain: После `recover` функция возвращает текущие значения именованных результатов, а не нулевые значения.
+      - text: panic
+        explain: Отложенное замыкание вызвало `recover`, паника остановлена.
+
+  - id: recover-in-helper
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func handle() {
+      	if r := recover(); r != nil {
+      		fmt.Println("handled:", r)
+      	}
+      }
+
+      func main() {
+      	defer func() {
+      		fmt.Println("outer:", recover())
+      	}()
+      	func() {
+      		defer func() { handle() }()
+      		panic("boom")
+      	}()
+      }
+    options:
+      - text: "handled: boom"
+        explain: "`handle` вызвана из отложенной функции, а не является ей: её `recover` возвращает `nil`."
+      - text: "outer: boom"
+        correct: true
+        explain: "`recover` работает, только если его вызвала непосредственно отложенная функция. В `handle` он вернул `nil`, паника пошла дальше и была перехвачена в `main`."
+      - text: "handled: boom\nouter: <nil>"
+        explain: Так было бы при `defer handle()`. Здесь между `defer` и `recover` лишний уровень вызова.
+
+  - id: recover-type
+    kind: compile
+    prompt: Скомпилируется ли программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func main() {
+      	defer func() {
+      		var err error = recover()
+      		fmt.Println(err)
+      	}()
+      	panic("boom")
+      }
+    compiles: false
+    explain: "`recover` возвращает `any`: паниковать можно чем угодно — строкой, числом, ошибкой. Присвоить `any` в `error` без приведения нельзя; нужно `err, ok := r.(error)` или `fmt.Errorf(\"%v\", r)`."
+
+  - id: when-panic
+    kind: multiple
+    prompt: Где `panic` уместен?
+    options:
+      - text: "`regexp.MustCompile` с регулярным выражением-константой в коде"
+        correct: true
+        explain: Некорректная константа — баг программиста, его лучше обнаружить сразу при старте.
+      - text: Нарушен внутренний инвариант, который «не может» нарушиться
+        correct: true
+        explain: Продолжать работу с повреждённым состоянием опаснее, чем упасть.
+      - text: Пользователь ввёл некорректный e-mail
+        explain: Плохой ввод — ожидаемая ситуация. Возвращайте `error`.
+      - text: Сервер базы данных недоступен
+        explain: Сетевые сбои ожидаемы — их возвращают как `error`, повторяют или показывают пользователю.
