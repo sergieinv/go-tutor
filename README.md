@@ -31,6 +31,7 @@ docker compose up --build        # учебник на http://localhost:8080
 | `POST /api/run` | `{"lesson"?, "files": {"main.go": "..."}, "flags"?}` | `stdout`, `stderr`, `exitCode`, `timedOut`, `truncated`, `buildFailed`, `buildOutput`, `durationMs` |
 | `POST /api/test` | `{"lesson", "files": {"task.go": "..."}}` | `passed`, `buildFailed`, `tests: [{name, status, output, elapsed, hidden}]`, `durationMs` |
 | `POST /api/fmt` | `{"files": {...}}` | `files`, `errors` |
+| `POST /api/solution` | `{"lesson"}` | `files` — эталон; сайт показывает его после успеха или трёх неудачных попыток |
 
 Тесты для `/api/test` runner берёт из контента урока, включая `hidden_test.go`; клиент присылает только своё решение.
 
@@ -43,10 +44,18 @@ go run ./tools/lessonlint content
 # только один урок; -update перезаписывает example/output.txt
 go run ./tools/lessonlint -run 05-concurrency/07-select -update content
 
-# сайт
+# сайт: /api/* в dev-режиме проксируется в runner на localhost:8081
+go run ./runner                      # runner без изоляции, для разработки
 cd site && npm ci && npm run dev     # http://localhost:4321
 cd site && npm run build             # статика в site/dist
+
+# тесты сайта: логика прогресса и «Поделиться»
+cd site && npm test
+# e2e: уроки от начала до конца в браузере, против docker compose на :8080
+cd site && npx playwright install chromium && npm run e2e
 ```
+
+Прогресс (квизы, попытки, «пройдено») хранится в `localStorage`; на главной есть экспорт и импорт JSON. Черновики кода тоже лежат в `localStorage`, но в экспорт не попадают.
 
 ```sh
 # тесты runner; изоляция по uid и тесты fork-бомбы — только под root на Linux

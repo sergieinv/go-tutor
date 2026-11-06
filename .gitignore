@@ -4,3 +4,5 @@ site/.astro/
 .DS_Store
 *.test
 /tmp/
+site/test-results/
+site/playwright-report/

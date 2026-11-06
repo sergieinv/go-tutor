@@ -39,6 +39,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/run", s.handleRun)
 	mux.HandleFunc("POST /api/test", s.handleTest)
 	mux.HandleFunc("POST /api/fmt", s.handleFmt)
+	mux.HandleFunc("POST /api/solution", s.handleSolution)
 	mux.HandleFunc("GET /api/health", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "lessons": len(s.lessons)})
 	})
@@ -130,6 +131,23 @@ func (s *Server) handleTest(w http.ResponseWriter, r *http.Request) {
 	s.log.Info("test", "lesson", req.Lesson, "ms", res.DurationMs, "passed", res.Passed,
 		"buildFailed", res.BuildFailed, "tests", len(res.Tests))
 	writeJSON(w, http.StatusOK, res)
+}
+
+// handleSolution отдаёт эталон задачи. Учебник для своей команды, поэтому
+// условие «после успеха или трёх попыток» проверяет интерфейс, а не сервер.
+func (s *Server) handleSolution(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Lesson string `json:"lesson"`
+	}
+	if !decode(w, r, &req) {
+		return
+	}
+	l, ok := s.lessons[req.Lesson]
+	if !ok || l.Solution == "" {
+		writeError(w, http.StatusNotFound, "у урока %q нет эталона", req.Lesson)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"files": sandbox.Files{"task.go": l.Solution}})
 }
 
 type fmtResponse struct {

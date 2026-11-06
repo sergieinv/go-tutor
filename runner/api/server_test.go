@@ -129,3 +129,18 @@ func TestFmt(t *testing.T) {
 		t.Errorf("нет ошибки для bad.go: %+v", res)
 	}
 }
+
+func TestSolution(t *testing.T) {
+	srv := newTestServer(t)
+	var res struct {
+		Files map[string]string `json:"files"`
+	}
+	code := post(t, srv, "/api/solution", map[string]any{"lesson": "02-basics/05-slices"}, &res)
+	if code != http.StatusOK || res.Files["task.go"] != readLessonFile(t, "02-basics/05-slices", "task/solution.go") {
+		t.Fatalf("status %d, files %v", code, res.Files)
+	}
+	var e map[string]string
+	if code := post(t, srv, "/api/solution", map[string]any{"lesson": "nope"}, &e); code != http.StatusNotFound {
+		t.Errorf("неизвестный урок: status %d", code)
+	}
+}

@@ -1,0 +1,70 @@
+---
+// Статус урока: прогресс по квизу и задаче, отметка «пройдено».
+// Урок отмечается сам в момент, когда ответы на квиз даны и задача решена.
+interface Props {
+  lesson: string;
+  quizIds: string[];
+  hasTask: boolean;
+}
+const { lesson, quizIds, hasTask } = Astro.props;
+---
+
+<div class="lesson-status card" data-status data-lesson={lesson} data-quiz={quizIds.join(",")} data-has-task={hasTask}>
+  <p class="checklist" data-checklist>Прогресс сохраняется в этом браузере.</p>
+  <button type="button" data-toggle hidden></button>
+</div>
+
+<script>
+  import { CHANGED, isComplete, lesson, load, setDone, storage } from "../lib/client/progress.ts";
+
+  const kv = storage();
+
+  for (const root of document.querySelectorAll<HTMLElement>("[data-status]")) {
+    const id = root.dataset.lesson!;
+    const quizIds = root.dataset.quiz!.split(",").filter(Boolean);
+    const hasTask = root.dataset.hasTask === "true";
+    const checklist = root.querySelector<HTMLElement>("[data-checklist]")!;
+    const toggle = root.querySelector<HTMLButtonElement>("[data-toggle]")!;
+    let wasComplete = isComplete(lesson(load(kv), id), quizIds, hasTask);
+
+    const render = () => {
+      const p = lesson(load(kv), id);
+      const answered = quizIds.filter((q) => q in p.quiz).length;
+      const parts = [`Квиз: ${answered} из ${quizIds.length}`];
+      if (hasTask) parts.push(`задача: ${p.task?.passed ? "решена ✓" : "не решена"}`);
+      checklist.textContent = (p.done ? "Урок пройден ✓ · " : "") + parts.join(" · ");
+      root.classList.toggle("is-done", p.done);
+      toggle.textContent = p.done ? "Снять отметку" : "Отметить пройденным";
+      toggle.hidden = false;
+    };
+
+    document.addEventListener(CHANGED, () => {
+      const now = isComplete(lesson(load(kv), id), quizIds, hasTask);
+      if (now && !wasComplete) setDone(kv, id, true);
+      wasComplete = now;
+      render();
+    });
+    toggle.addEventListener("click", () => {
+      setDone(kv, id, !lesson(load(kv), id).done);
+      render();
+    });
+    render();
+  }
+</script>
+
+<style>
+  .lesson-status {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    margin-top: 2.5rem;
+  }
+  .lesson-status.is-done {
+    border-color: var(--ok);
+  }
+  .checklist {
+    margin: 0;
+  }
+</style>

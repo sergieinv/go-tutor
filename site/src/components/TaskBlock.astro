@@ -1,66 +1,193 @@
 ---
-// Практическое задание: условие, шаблон, открытые тесты и подсказки.
-// Эталон и скрытые тесты в сборку сайта не попадают.
+// Практическое задание: редактор с заготовкой, проверка в runner открытыми
+// и скрытыми тестами, подсказки по уровням, эталон после успеха или трёх попыток.
+// Эталон и скрытые тесты в сборку сайта не попадают — их отдаёт runner.
 import type { Task } from "../lib/content";
-import { highlight, renderHints } from "../lib/markdown";
+import { highlight, renderHints, scriptJSON } from "../lib/markdown";
 
 interface Props {
+  lesson: string;
   statement: string; // HTML раздела «Задание»
   task: Task;
 }
-const { statement, task } = Astro.props;
+const { lesson, statement, task } = Astro.props;
 const template = await highlight(task.template.trimEnd(), "go");
 const tests = await highlight(task.tests.trimEnd(), "go");
 const hints = await renderHints(task.hints);
 ---
 
-<section class="task" aria-label="Задание">
-  <h2>Задание</h2>
+<section class="task" aria-label="Задание" data-task data-lesson={lesson}>
+  <h2>Задание <span class="task-state muted" data-state></span></h2>
   <div class="prose" set:html={statement} />
-  <figure>
-    <figcaption class="muted">task.go — заготовка</figcaption>
+
+  <script type="application/json" data-initial set:html={scriptJSON(task.template)} />
+  <div class="editor" data-editor>
     <Fragment set:html={template} />
-  </figure>
-  <details>
+  </div>
+  <div class="toolbar" role="toolbar" aria-label="Действия с решением">
+    <button type="button" class="primary" data-action="check" disabled>Проверить</button>
+    <button type="button" data-action="format" disabled>Формат</button>
+    <button type="button" data-action="reset" disabled>Вернуть заготовку</button>
+    <span class="toolbar-note muted" data-note aria-live="polite"></span>
+  </div>
+  <div class="result" data-result aria-live="polite"></div>
+
+  <details class="tests-source">
     <summary>Открытые тесты — task_test.go</summary>
     <Fragment set:html={tests} />
   </details>
-  <div class="hints">
+
+  <div class="hints" data-hints>
     {
       hints.map((h, i) => (
-        <details class="hint">
-          <summary>Подсказка {i + 1}</summary>
+        <div class="hint" data-hint={i} hidden>
+          <h3>Подсказка {i + 1}</h3>
           <div class="prose" set:html={h} />
-        </details>
+        </div>
       ))
     }
+    <button type="button" data-action="hint" disabled>Показать подсказку 1</button>
   </div>
-  <p class="muted note">
-    Проверка решения со скрытыми тестами заработает вместе с runner. Пока решайте локально: скопируйте заготовку и тесты в
-    пустой модуль и запустите <code>go test</code>.
-  </p>
+
+  <div class="solution">
+    <button type="button" data-action="solution" disabled>Показать эталон</button>
+    <span class="muted" data-solution-note></span>
+    <div class="solution-code" data-solution hidden></div>
+  </div>
 </section>
 
+<script>
+  import { format, RunnerError, solution, test } from "../lib/client/api.ts";
+  import { createEditor, getDoc, setDoc } from "../lib/client/editor.ts";
+  import {
+    CHANGED,
+    lesson,
+    load,
+    loadDraft,
+    recordTask,
+    saveDraft,
+    SOLUTION_AFTER_ATTEMPTS,
+    solutionUnlocked,
+    storage,
+  } from "../lib/client/progress.ts";
+  import { showError, showPending, showTests } from "../lib/client/render.ts";
+
+  const kv = storage();
+
+  for (const root of document.querySelectorAll<HTMLElement>("[data-task]")) {
+    const lessonId = root.dataset.lesson!;
+    const initial: string = JSON.parse(root.querySelector("[data-initial]")!.textContent!);
+    const host = root.querySelector<HTMLElement>("[data-editor]")!;
+    const result = root.querySelector<HTMLElement>("[data-result]")!;
+    const note = root.querySelector<HTMLElement>("[data-note]")!;
+    const state = root.querySelector<HTMLElement>("[data-state]")!;
+    const solutionNote = root.querySelector<HTMLElement>("[data-solution-note]")!;
+    const solutionBox = root.querySelector<HTMLElement>("[data-solution]")!;
+    const hintsEls = [...root.querySelectorAll<HTMLElement>("[data-hint]")];
+    const button = (a: string) => root.querySelector<HTMLButtonElement>(`[data-action="${a}"]`)!;
+
+    host.replaceChildren();
+    let busy = false;
+    const editor = createEditor(host, {
+      doc: loadDraft(kv, lessonId, "task") ?? initial,
+      label: "Решение задачи",
+      onSubmit: () => void check(),
+      onChange: (doc) => saveDraft(kv, lessonId, "task", doc, initial),
+    });
+
+    // Состояние задачи из прогресса: заголовок и доступность эталона.
+    const refresh = () => {
+      const p = lesson(load(kv), lessonId);
+      const t = p.task;
+      state.textContent = t?.passed ? "· решено ✓" : t?.attempts ? `· попыток: ${t.attempts}` : "";
+      const unlocked = solutionUnlocked(p);
+      button("solution").disabled = !unlocked || !solutionBox.hidden;
+      const left = SOLUTION_AFTER_ATTEMPTS - (t?.attempts ?? 0);
+      solutionNote.textContent = unlocked
+        ? ""
+        : `Откроется после успешного решения или ещё ${left} ${left === 1 ? "неудачной попытки" : "неудачных попыток"}.`;
+    };
+
+    async function check() {
+      if (busy) return;
+      busy = true;
+      button("check").disabled = true;
+      showPending(result, "Сборка и тесты…");
+      try {
+        const r = await test(lessonId, { "task.go": getDoc(editor) });
+        showTests(result, r);
+        recordTask(kv, lessonId, r.passed);
+        refresh();
+        document.dispatchEvent(new CustomEvent(CHANGED));
+      } catch (e) {
+        // Сбой runner — не попытка ученика, её не считаем.
+        showError(result, e instanceof RunnerError ? e.message : String(e));
+      } finally {
+        busy = false;
+        button("check").disabled = false;
+      }
+    }
+
+    button("check").addEventListener("click", check);
+    button("format").addEventListener("click", async () => {
+      try {
+        const r = await format({ "task.go": getDoc(editor) });
+        const err = r.errors?.["task.go"];
+        if (err) showError(result, `gofmt: ${err}`);
+        else setDoc(editor, r.files["task.go"]);
+      } catch (e) {
+        showError(result, e instanceof RunnerError ? e.message : String(e));
+      }
+    });
+    button("reset").addEventListener("click", () => {
+      setDoc(editor, initial);
+      note.textContent = "Заготовка восстановлена.";
+    });
+
+    let shown = 0;
+    button("hint").addEventListener("click", () => {
+      hintsEls[shown].hidden = false;
+      shown++;
+      if (shown < hintsEls.length) button("hint").textContent = `Показать подсказку ${shown + 1}`;
+      else button("hint").hidden = true;
+    });
+
+    button("solution").addEventListener("click", async () => {
+      button("solution").disabled = true;
+      try {
+        const r = await solution(lessonId);
+        solutionBox.replaceChildren();
+        createEditor(solutionBox, { doc: r.files["task.go"], label: "Эталонное решение", readOnly: true });
+        solutionBox.hidden = false;
+      } catch (e) {
+        button("solution").disabled = false;
+        solutionNote.textContent = e instanceof RunnerError ? e.message : String(e);
+      }
+    });
+
+    for (const b of root.querySelectorAll<HTMLButtonElement>("[data-action]")) b.disabled = false;
+    refresh();
+  }
+</script>
+
 <style>
-  figure {
-    margin: 1rem 0;
-  }
-  figcaption {
-    font-size: 0.85rem;
-    margin-bottom: 0.25rem;
-  }
-  details {
-    margin: 0.75rem 0;
-  }
-  .hints {
-    margin-top: 1rem;
+  .tests-source,
+  .hints,
+  .solution {
+    margin-top: 1.25rem;
   }
   .hint {
     border: 1px solid var(--border);
+    border-left: 4px solid var(--accent);
     border-radius: var(--radius);
-    padding: 0.5rem 1rem;
+    padding: 0.25rem 1rem;
+    margin-bottom: 0.75rem;
   }
-  .note {
-    font-size: 0.9rem;
+  .hint h3 {
+    font-size: 1rem;
+    margin: 0.5rem 0 0;
+  }
+  .solution-code {
+    margin-top: 0.75rem;
   }
 </style>

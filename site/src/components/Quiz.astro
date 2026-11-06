@@ -1,13 +1,13 @@
 ---
-// Квиз. Пока статический: ответы и объяснения раскрываются вручную.
-// Интерактивная проверка в браузере появится на этапе 3.
+// Квиз проверяется в браузере: правильные ответы есть в разметке, сервер не нужен.
 import type { QuizQuestion } from "../lib/content";
 import { highlight, inlineMarkdown } from "../lib/markdown";
 
 interface Props {
+  lesson: string;
   questions: QuizQuestion[];
 }
-const { questions } = Astro.props;
+const { lesson, questions } = Astro.props;
 
 const rendered = await Promise.all(
   questions.map(async (q) => {
@@ -19,59 +19,153 @@ const rendered = await Promise.all(
           ]
         : (q.options ?? []);
     return {
-      ...q,
+      id: q.id,
       prompt: inlineMarkdown(q.prompt),
       code: q.code ? await highlight(q.code.trimEnd(), "go") : "",
       multiple: q.kind === "multiple",
-      options: options.map((o) => ({
-        text: inlineMarkdown(o.text),
-        correct: !!o.correct,
-        explain: inlineMarkdown(o.explain ?? ""),
-      })),
+      correct: options.flatMap((o, i) => (o.correct ? [i] : [])).join(","),
+      options: options.map((o) => ({ text: inlineMarkdown(o.text), explain: inlineMarkdown(o.explain ?? "") })),
       explain: inlineMarkdown(q.explain ?? ""),
     };
   }),
 );
 ---
 
-<section class="quiz" aria-label="Квиз">
-  <h2>Проверьте себя</h2>
+<section class="quiz" aria-label="Квиз" data-quiz data-lesson={lesson}>
+  <h2>Проверьте себя <span class="score muted" data-score></span></h2>
+  <noscript><p class="muted">Квиз работает с включённым JavaScript.</p></noscript>
   <ol class="questions">
     {
-      rendered.map((q) => (
-        <li class="question card" id={`quiz-${q.id}`}>
-          <p class="prompt" set:html={q.prompt} />
-          {q.code && <Fragment set:html={q.code} />}
-          <ul class="options">
-            {q.options.map((o) => (
-              <li>
-                <span class="marker">{q.multiple ? "☐" : "○"}</span>
-                <span set:html={o.text} />
-              </li>
-            ))}
-          </ul>
-          <details>
-            <summary>Ответ и разбор</summary>
-            <ul class="answers">
-              {q.options.map((o) => (
-                <li class={o.correct ? "correct" : "wrong"}>
-                  <strong set:html={o.text} />
-                  {o.explain && (
-                    <>
-                      {" — "}
-                      <span set:html={o.explain} />
-                    </>
-                  )}
-                </li>
+      rendered.map((q, n) => (
+        <li>
+          <form class="question card" data-question data-id={q.id} data-correct={q.correct}>
+            <p class="prompt">
+              <span class="muted">{n + 1}.</span> <span set:html={q.prompt} />
+            </p>
+            {q.code && <Fragment set:html={q.code} />}
+            <fieldset>
+              <legend class="sr-only">{q.multiple ? "Выберите все верные варианты" : "Выберите один вариант"}</legend>
+              {q.multiple && <p class="muted small">Несколько верных вариантов.</p>}
+              {q.options.map((o, i) => (
+                <div class="option" data-option={i}>
+                  <label>
+                    <input type={q.multiple ? "checkbox" : "radio"} name={`q-${q.id}`} value={i} />
+                    <span set:html={o.text} />
+                  </label>
+                  {o.explain && <p class="option-explain" hidden set:html={o.explain} />}
+                </div>
               ))}
-            </ul>
-            {q.explain && <p set:html={q.explain} />}
-          </details>
+            </fieldset>
+            <p class="verdict" data-verdict hidden />
+            {q.explain && <p class="question-explain" data-explain hidden set:html={q.explain} />}
+            <div class="question-actions">
+              <button type="submit" class="primary" disabled>
+                Ответить
+              </button>
+              <button type="button" data-retry hidden>
+                Ответить заново
+              </button>
+            </div>
+          </form>
         </li>
       ))
     }
   </ol>
 </section>
+
+<script>
+  import { CHANGED, checkChoice, lesson, load, recordQuiz, resetQuiz, storage } from "../lib/client/progress.ts";
+
+  const kv = storage();
+
+  for (const quiz of document.querySelectorAll<HTMLElement>("[data-quiz]")) {
+    const lessonId = quiz.dataset.lesson!;
+    const forms = [...quiz.querySelectorAll<HTMLFormElement>("[data-question]")];
+    const score = quiz.querySelector<HTMLElement>("[data-score]")!;
+
+    const updateScore = () => {
+      const answers = lesson(load(kv), lessonId).quiz;
+      const answered = forms.filter((f) => f.dataset.id! in answers);
+      const right = answered.filter((f) => answers[f.dataset.id!].correct).length;
+      score.textContent = answered.length ? `· верно ${right} из ${forms.length}` : "";
+    };
+
+    for (const form of forms) {
+      const id = form.dataset.id!;
+      const correct = form.dataset.correct!.split(",").filter(Boolean).map(Number);
+      const inputs = [...form.querySelectorAll<HTMLInputElement>("input")];
+      const submit = form.querySelector<HTMLButtonElement>("button[type=submit]")!;
+      const retry = form.querySelector<HTMLButtonElement>("[data-retry]")!;
+      const verdict = form.querySelector<HTMLElement>("[data-verdict]")!;
+      const explain = form.querySelector<HTMLElement>("[data-explain]");
+      const options = [...form.querySelectorAll<HTMLElement>("[data-option]")];
+
+      const chosen = () => inputs.filter((i) => i.checked).map((i) => Number(i.value));
+
+      // Показывает разбор: верные варианты, выбранные неверные и их объяснения.
+      const reveal = (choice: number[]) => {
+        const ok = checkChoice(choice, correct);
+        options.forEach((o, i) => {
+          const isCorrect = correct.includes(i);
+          const isChosen = choice.includes(i);
+          o.classList.toggle("is-correct", isCorrect);
+          o.classList.toggle("is-wrong", isChosen && !isCorrect);
+          const ex = o.querySelector<HTMLElement>(".option-explain");
+          if (ex) ex.hidden = !(isCorrect || isChosen);
+        });
+        inputs.forEach((inp, i) => {
+          inp.checked = choice.includes(i);
+          inp.disabled = true;
+        });
+        verdict.hidden = false;
+        verdict.className = `verdict ${ok ? "status-ok" : "status-bad"}`;
+        verdict.textContent = ok ? "Верно!" : "Неверно — посмотрите разбор.";
+        if (explain) explain.hidden = false;
+        submit.hidden = true;
+        retry.hidden = false;
+      };
+
+      const clear = () => {
+        options.forEach((o) => {
+          o.classList.remove("is-correct", "is-wrong");
+          const ex = o.querySelector<HTMLElement>(".option-explain");
+          if (ex) ex.hidden = true;
+        });
+        inputs.forEach((inp) => {
+          inp.checked = false;
+          inp.disabled = false;
+        });
+        verdict.hidden = true;
+        if (explain) explain.hidden = true;
+        submit.hidden = false;
+        submit.disabled = true;
+        retry.hidden = true;
+      };
+
+      form.addEventListener("change", () => (submit.disabled = chosen().length === 0));
+      form.addEventListener("submit", (e) => {
+        e.preventDefault();
+        const choice = chosen();
+        if (!choice.length) return;
+        recordQuiz(kv, lessonId, id, choice, checkChoice(choice, correct));
+        reveal(choice);
+        updateScore();
+        document.dispatchEvent(new CustomEvent(CHANGED));
+      });
+      retry.addEventListener("click", () => {
+        resetQuiz(kv, lessonId, id);
+        clear();
+        updateScore();
+        inputs[0]?.focus();
+        document.dispatchEvent(new CustomEvent(CHANGED));
+      });
+
+      const saved = lesson(load(kv), lessonId).quiz[id];
+      if (saved) reveal(saved.choice);
+    }
+    updateScore();
+  }
+</script>
 
 <style>
   .questions {
@@ -84,28 +178,45 @@ const rendered = await Promise.all(
     margin-top: 0;
     font-weight: 600;
   }
-  .options {
-    list-style: none;
+  fieldset {
+    border: none;
     padding: 0;
     margin: 0.75rem 0;
   }
-  .options li {
-    padding: 0.2rem 0;
+  .option {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 0.4rem 0.75rem;
+    margin: 0.4rem 0;
   }
-  .marker {
+  .option label {
+    display: flex;
+    gap: 0.6rem;
+    align-items: baseline;
+    cursor: pointer;
+  }
+  .option.is-correct {
+    border-color: var(--ok);
+    background: color-mix(in srgb, var(--ok) 8%, transparent);
+  }
+  .option.is-wrong {
+    border-color: var(--bad);
+    background: color-mix(in srgb, var(--bad) 8%, transparent);
+  }
+  .option-explain {
+    margin: 0.35rem 0 0 1.6rem;
+    font-size: 0.92rem;
     color: var(--fg-muted);
-    margin-right: 0.5rem;
   }
-  .answers {
-    padding-left: 1.25rem;
+  .verdict {
+    font-weight: 600;
   }
-  .answers li {
-    margin: 0.35rem 0;
+  .question-actions {
+    display: flex;
+    gap: 0.5rem;
   }
-  .correct strong {
-    color: var(--ok);
-  }
-  .wrong strong {
-    color: var(--bad);
+  .small {
+    font-size: 0.85rem;
+    margin: 0 0 0.25rem;
   }
 </style>

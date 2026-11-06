@@ -1,9 +1,11 @@
 ---
 // Страница урока. Порядок блоков — «Анатомия урока» из плана.
-// Песочница (п. 4) и визуализатор (п. 5) подключаются на этапах 3–4.
+// Визуализатор (п. 5) подключается на этапе 4.
 import AnnotatedExample from "../../components/AnnotatedExample.astro";
 import CSharpBridge from "../../components/CSharpBridge.astro";
 import LessonHeader from "../../components/LessonHeader.astro";
+import LessonStatus from "../../components/LessonStatus.astro";
+import Playground from "../../components/Playground.astro";
 import Quiz from "../../components/Quiz.astro";
 import TaskBlock from "../../components/TaskBlock.astro";
 import Base from "../../layouts/Base.astro";
@@ -36,6 +38,8 @@ const sections = await renderLessonBody(lesson.body);
 
     {sections.csharp && <CSharpBridge differences={sections.csharp} files={lesson.csharp} />}
 
+    <Playground lesson={lesson.id} code={lesson.example.source} race={lesson.meta.runner?.race} />
+
     {
       sections.internals && (
         <section aria-label="Под капотом">
@@ -59,9 +63,11 @@ const sections = await renderLessonBody(lesson.body);
       )
     }
 
-    <Quiz questions={lesson.quiz} />
+    <Quiz lesson={lesson.id} questions={lesson.quiz} />
 
-    {lesson.task && sections.task && <TaskBlock statement={sections.task} task={lesson.task} />}
+    {lesson.task && sections.task && <TaskBlock lesson={lesson.id} statement={sections.task} task={lesson.task} />}
+
+    <LessonStatus lesson={lesson.id} quizIds={lesson.quiz.map((q) => q.id)} hasTask={!!lesson.task} />
 
     <footer class="lesson-footer">
       {

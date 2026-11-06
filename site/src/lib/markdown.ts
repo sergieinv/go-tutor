@@ -92,3 +92,8 @@ const escapeHtml = (s: string) =>
 export function inlineMarkdown(s: string): string {
   return escapeHtml(s).replace(/`([^`]+)`/g, "<code>$1</code>");
 }
+
+/** JSON для <script type="application/json">: `<` экранируется, чтобы код с `</script>` не закрыл тег. */
+export function scriptJSON(value: unknown): string {
+  return JSON.stringify(value).replace(/</g, "\\u003c");
+}

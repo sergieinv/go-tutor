@@ -23,6 +23,9 @@ type Lesson struct {
 	Flags  sandbox.Flags
 	Tests  sandbox.Files   // task_test.go и hidden_test.go
 	Hidden map[string]bool // имена тестов из hidden_test.go
+	// Solution — эталон. Сайт показывает его после успеха или трёх попыток;
+	// в статическую сборку он не попадает.
+	Solution string
 }
 
 var dirName = regexp.MustCompile(`^\d{2}-[a-z0-9-]+$`)
@@ -80,6 +83,11 @@ func loadLesson(dir string) (*Lesson, error) {
 			return nil, err
 		}
 		l.Tests[name] = string(b)
+	}
+	if b, err := os.ReadFile(filepath.Join(dir, "task", "solution.go")); err == nil {
+		l.Solution = string(b)
+	} else if !os.IsNotExist(err) {
+		return nil, err
 	}
 	if hidden, ok := l.Tests["hidden_test.go"]; ok {
 		f, err := parser.ParseFile(token.NewFileSet(), "hidden_test.go", hidden, parser.SkipObjectResolution)

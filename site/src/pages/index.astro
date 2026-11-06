@@ -23,7 +23,8 @@ const modules = loadCourse();
           {m.lessons.length > 0 ? (
             <ol class="lessons">
               {m.lessons.map((l) => (
-                <li>
+                <li data-lesson-id={l.id}>
+                  <span class="lesson-mark" aria-hidden="true" />
                   <a href={lessonUrl(l)}>{l.meta.title}</a>
                   <span class="muted"> — {l.meta.summary}</span>
                 </li>
@@ -36,7 +37,67 @@ const modules = loadCourse();
       ))
     }
   </ol>
+
+  <section class="progress-io card" aria-label="Перенос прогресса">
+    <h2>Прогресс</h2>
+    <p class="muted">
+      Прогресс хранится в этом браузере: <span data-summary>—</span>. Чтобы перенести его на другую машину, сохраните файл
+      и загрузите его там.
+    </p>
+    <div class="toolbar">
+      <button type="button" data-export>Экспорт в JSON</button>
+      <label class="button">
+        Импорт из JSON
+        <input type="file" accept="application/json,.json" data-import hidden />
+      </label>
+      <span class="toolbar-note muted" data-io-note aria-live="polite"></span>
+    </div>
+  </section>
 </Base>
+
+<script>
+  import { exportJSON, importJSON, load, status, storage } from "../lib/client/progress.ts";
+
+  const kv = storage();
+  const labels = { done: "пройден", started: "начат", none: "" };
+
+  function paint() {
+    const p = load(kv);
+    const items = [...document.querySelectorAll<HTMLElement>("[data-lesson-id]")];
+    let done = 0;
+    for (const li of items) {
+      const st = status(p.lessons[li.dataset.lessonId!]);
+      li.dataset.status = st;
+      li.querySelector(".lesson-mark")!.setAttribute("title", labels[st]);
+      if (st === "done") done++;
+    }
+    document.querySelector("[data-summary]")!.textContent = `пройдено уроков — ${done} из ${items.length}`;
+  }
+
+  const note = document.querySelector<HTMLElement>("[data-io-note]")!;
+  document.querySelector("[data-export]")!.addEventListener("click", () => {
+    const blob = new Blob([exportJSON(kv)], { type: "application/json" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `go-tutor-progress-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  });
+  document.querySelector<HTMLInputElement>("[data-import]")!.addEventListener("change", async (e) => {
+    const input = e.target as HTMLInputElement;
+    const file = input.files?.[0];
+    if (!file) return;
+    try {
+      const n = importJSON(kv, await file.text());
+      note.textContent = `Импортировано уроков: ${n}.`;
+      paint();
+    } catch (err) {
+      note.textContent = err instanceof Error ? err.message : String(err);
+    }
+    input.value = "";
+  });
+  paint();
+</script>
 
 <style>
   .lead {
@@ -59,9 +120,34 @@ const modules = loadCourse();
     margin-right: 0.25rem;
   }
   .lessons {
-    padding-left: 1.25rem;
+    list-style: none;
+    padding-left: 0;
   }
   .lessons li {
     margin: 0.25rem 0;
+  }
+  .lesson-mark {
+    display: inline-block;
+    width: 0.75rem;
+    height: 0.75rem;
+    margin-right: 0.5rem;
+    border-radius: 50%;
+    border: 2px solid var(--border);
+    vertical-align: -0.05rem;
+  }
+  [data-status="started"] .lesson-mark {
+    border-color: var(--accent);
+    background: linear-gradient(90deg, var(--accent) 50%, transparent 50%);
+  }
+  [data-status="done"] .lesson-mark {
+    border-color: var(--ok);
+    background: var(--ok);
+  }
+  .progress-io {
+    margin-top: 2rem;
+  }
+  .progress-io h2 {
+    margin-top: 0;
+    border: none;
   }
 </style>

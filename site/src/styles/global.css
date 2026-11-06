@@ -13,6 +13,14 @@
   --radius: 8px;
   --mono: ui-monospace, SFMono-Regular, "JetBrains Mono", Menlo, Consolas, monospace;
   --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  /* Подсветка в редакторе — те же цвета, что у Shiki github-light/dark */
+  --syn-keyword: #cf222e;
+  --syn-string: #0a3069;
+  --syn-constant: #0550ae;
+  --syn-comment: #6e7781;
+  --syn-type: #953800;
+  --syn-function: #8250df;
+  --syn-definition: #24292f;
   color-scheme: light dark;
 }
 
@@ -28,6 +36,13 @@
     --warn-border: #9e6a03;
     --ok: #3fb950;
     --bad: #f85149;
+    --syn-keyword: #ff7b72;
+    --syn-string: #a5d6ff;
+    --syn-constant: #79c0ff;
+    --syn-comment: #8b949e;
+    --syn-type: #ffa657;
+    --syn-function: #d2a8ff;
+    --syn-definition: #e6edf3;
   }
   .shiki,
   .shiki span {
@@ -139,4 +154,167 @@ details > summary {
 
 .pitfall h3 {
   margin: 0.25rem 0 0.5rem;
+}
+
+/* Кнопки и панели действий */
+button,
+.button {
+  font: inherit;
+  font-size: 0.92rem;
+  padding: 0.4rem 0.9rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-soft);
+  color: var(--fg);
+  cursor: pointer;
+}
+
+button:hover:not(:disabled),
+.button:hover {
+  border-color: var(--accent);
+}
+
+button:focus-visible,
+.button:focus-within {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+button.primary {
+  background: var(--accent-strong);
+  border-color: var(--accent-strong);
+  color: #fff;
+}
+
+@media (prefers-color-scheme: dark) {
+  button.primary {
+    color: #0d1117;
+  }
+}
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0.75rem 0;
+}
+
+.toolbar-note {
+  font-size: 0.9rem;
+}
+
+kbd {
+  font-family: var(--mono);
+  font-size: 0.8em;
+  border: 1px solid var(--border);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  padding: 0 0.3em;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* Результаты запуска и тестов */
+.result:empty {
+  display: none;
+}
+
+.status {
+  font-weight: 600;
+  margin: 0.5rem 0;
+}
+
+.status-ok {
+  color: var(--ok);
+}
+
+.status-bad {
+  color: var(--bad);
+}
+
+.status-warn {
+  color: var(--fg-muted);
+}
+
+.stream {
+  margin: 0.5rem 0;
+}
+
+.stream-label {
+  font-size: 0.8rem;
+  color: var(--fg-muted);
+  font-family: var(--mono);
+}
+
+.stream pre {
+  max-height: 24rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.stream-err pre {
+  border-color: color-mix(in srgb, var(--bad) 50%, var(--border));
+}
+
+.tests {
+  list-style: none;
+  padding: 0;
+  margin: 0.5rem 0;
+}
+
+.test {
+  border-bottom: 1px solid var(--border);
+  padding: 0.35rem 0;
+}
+
+.test-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+
+.test-mark {
+  font-weight: 700;
+  width: 1rem;
+}
+
+.test-pass .test-mark {
+  color: var(--ok);
+}
+
+.test-fail .test-mark {
+  color: var(--bad);
+}
+
+.test pre {
+  margin: 0.35rem 0 0.25rem 1.5rem;
+  white-space: pre-wrap;
+}
+
+.badge {
+  font-size: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0 0.5rem;
+  color: var(--fg-muted);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+    animation: none !important;
+  }
 }
