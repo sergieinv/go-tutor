@@ -1,0 +1,117 @@
+questions:
+  - id: count-leaked
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"runtime"
+      )
+
+      func main() {
+      	base := runtime.NumGoroutine()
+      	for range 5 {
+      		ch := make(chan int)
+      		go func() {
+      			ch <- 1
+      		}()
+      	}
+      	fmt.Println(runtime.NumGoroutine() - base)
+      }
+    options:
+      - text: "5"
+        correct: true
+        explain: "Горутина считается живой с момента `go` и до возврата из функции. Все пять навсегда ждут получателя на `ch <- 1` — это пять утечек."
+      - text: "0"
+        explain: "Каналы недостижимы, но сборщик мусора не завершает заблокированные горутины: они остаются в `NumGoroutine`."
+      - text: "fatal error: all goroutines are asleep - deadlock!"
+        explain: "Детектор дедлока срабатывает, только когда спят все горутины. `main` не заблокирована и спокойно завершается, а утечка остаётся незамеченной."
+
+  - id: range-without-close
+    kind: single
+    prompt: Отправитель забыл `close`. Что произойдёт?
+    code: |
+      package main
+
+      import "fmt"
+
+      func main() {
+      	ch := make(chan int)
+      	go func() {
+      		for i := range 3 {
+      			ch <- i
+      		}
+      	}()
+      	for v := range ch {
+      		fmt.Println(v)
+      	}
+      }
+    options:
+      - text: "Напечатает 0, 1, 2 и упадёт с fatal error: all goroutines are asleep - deadlock!"
+        correct: true
+        explain: "После третьего значения `range` ждёт четвёртое. Отправитель завершился, других горутин нет — рантайм видит, что спят все, и аварийно завершает программу. Если бы `range` крутился не в `main`, а в горутине, никакой ошибки бы не было — только тихая утечка."
+      - text: Напечатает 0, 1, 2 и завершится нормально
+        explain: "`range` по каналу заканчивается только после `close`. Завершение отправителя канал не закрывает."
+      - text: "Напечатает 0, 1, 2 и паникует с send on closed channel"
+        explain: Канал никто не закрывал, а паника при отправке бывает только в закрытый канал.
+
+  - id: buffered-send-finishes
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"sync"
+      )
+
+      func main() {
+      	ch := make(chan int, 1)
+      	var wg sync.WaitGroup
+      	wg.Go(func() {
+      		ch <- 1
+      	})
+      	wg.Wait()
+      	fmt.Println("готово", len(ch))
+      }
+    options:
+      - text: готово 1
+        correct: true
+        explain: "Отправка в буфер со свободным местом не ждёт получателя: горутина кладёт значение и завершается. Поэтому буфер на одно значение и чинит утечку «результат после таймаута»."
+      - text: "fatal error: all goroutines are asleep - deadlock!"
+        explain: "Так было бы с `make(chan int)`: отправка ждала бы получателя, а `main` ждала бы `wg.Wait()`."
+      - text: готово 0
+        explain: "Значение никто не прочитал, оно лежит в буфере — `len(ch)` равен 1."
+
+  - id: timeout-fix
+    kind: single
+    prompt: "Функция запускает горутину с `ch <- result` и ждёт `select { case r := <-ch: ... case <-time.After(d): return errTimeout }`. Как проще всего убрать утечку после таймаута?"
+    options:
+      - text: "Создать канал с буфером 1: `make(chan T, 1)`"
+        correct: true
+        explain: Отправка пройдёт и без получателя, горутина завершится, а канал со значением соберёт сборщик мусора.
+      - text: "Закрыть `ch` в ветке таймаута"
+        explain: "Горутина потом запаникует на отправке в закрытый канал — это хуже утечки."
+      - text: "Увеличить таймаут"
+        explain: Утечка станет реже, но не исчезнет — любой медленный ответ снова оставит горутину висеть.
+      - text: "Вызвать `runtime.GC()` после таймаута"
+        explain: Сборщик мусора не завершает горутины — ни заблокированные, ни работающие.
+
+  - id: find-leaks
+    kind: multiple
+    prompt: Чем можно обнаружить утечку горутин?
+    options:
+      - text: "`runtime.NumGoroutine()` до и после операции"
+        correct: true
+        explain: "Самый простой счётчик. В тестах сравнивают с базой, давая горутинам время завершиться."
+      - text: Профиль `goroutine` из `net/http/pprof` или `runtime/pprof`
+        correct: true
+        explain: "Показывает стеки всех горутин, сгруппированные по месту, — тысячи одинаковых стеков на `chan send` сразу выдают утечку."
+      - text: "`go.uber.org/goleak` в тестах"
+        correct: true
+        explain: "`goleak.VerifyNone(t)` или `VerifyTestMain` проверяют, что после теста не осталось лишних горутин."
+      - text: Детектор гонок `-race`
+        explain: Он ищет несинхронизированный доступ к памяти, а заблокированные горутины гонок не создают.

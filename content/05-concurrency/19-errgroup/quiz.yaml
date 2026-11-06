@@ -1,0 +1,131 @@
+questions:
+  - id: first-error
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"context"
+      	"errors"
+      	"fmt"
+
+      	"golang.org/x/sync/errgroup"
+      )
+
+      func main() {
+      	g, ctx := errgroup.WithContext(context.Background())
+      	g.Go(func() error {
+      		<-ctx.Done()
+      		return ctx.Err()
+      	})
+      	g.Go(func() error {
+      		return errors.New("disk full")
+      	})
+      	fmt.Println(g.Wait())
+      }
+    options:
+      - text: disk full
+        correct: true
+        explain: "Первой вернула ошибку вторая задача — она и запомнена, а контекст отменён. Первая задача проснулась уже после этого, её `context.Canceled` в `Wait` не попадает."
+      - text: context canceled
+        explain: "`Wait` возвращает первую ошибку по времени. `Canceled` появилась только как следствие ошибки «disk full»."
+      - text: "context canceled\ndisk full"
+        explain: "`Wait` возвращает одну ошибку, а не объединение всех."
+      - text: deadlock
+        explain: Ошибка второй задачи отменяет контекст группы, и первая задача выходит из ожидания.
+
+  - id: zero-group-waits-all
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"errors"
+      	"fmt"
+      	"time"
+
+      	"golang.org/x/sync/errgroup"
+      )
+
+      func main() {
+      	var g errgroup.Group
+      	finished := false
+      	g.Go(func() error { return errors.New("boom") })
+      	g.Go(func() error {
+      		time.Sleep(20 * time.Millisecond)
+      		finished = true
+      		return nil
+      	})
+      	err := g.Wait()
+      	fmt.Println(err, finished)
+      }
+    options:
+      - text: boom true
+        correct: true
+        explain: "`Wait` всегда ждёт все задачи, даже после ошибки. Нулевой `Group` никого не отменяет — отменять нечем. Чтение `finished` после `Wait` безопасно: `Wait` синхронизирует с завершением горутин."
+      - text: boom false
+        explain: "`Wait` не возвращается досрочно при первой ошибке — он ждёт каждую запущенную функцию."
+      - text: <nil> true
+        explain: Ошибка первой задачи сохраняется и возвращается из `Wait`.
+
+  - id: ctx-after-wait
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"context"
+      	"fmt"
+
+      	"golang.org/x/sync/errgroup"
+      )
+
+      func main() {
+      	g, ctx := errgroup.WithContext(context.Background())
+      	g.Go(func() error { return nil })
+      	err := g.Wait()
+      	fmt.Println(err, ctx.Err())
+      }
+    options:
+      - text: <nil> context canceled
+        correct: true
+        explain: "Контекст группы отменяется при первой ошибке или когда `Wait` вернётся — даже при успехе. Использовать его после `Wait` нельзя."
+      - text: <nil> <nil>
+        explain: "Ошибок не было, но `Wait` всё равно отменяет контекст группы при возврате."
+      - text: context canceled context canceled
+        explain: "Отмена контекста после успешного `Wait` — не ошибка группы: `Wait` возвращает `nil`."
+
+  - id: go-signature
+    kind: compile
+    prompt: Скомпилируется ли программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+
+      	"golang.org/x/sync/errgroup"
+      )
+
+      func main() {
+      	var g errgroup.Group
+      	g.Go(func() { fmt.Println("работаю") })
+      	g.Wait()
+      }
+    compiles: false
+    explain: "`Group.Go` принимает `func() error`, а передана `func()`. Даже если ошибок не бывает, функция должна вернуть `nil`."
+
+  - id: set-limit-zero
+    kind: single
+    prompt: "Что произойдёт после `g.SetLimit(0)` и вызова `g.Go(f)`?"
+    options:
+      - text: Ограничения нет, `f` запустится сразу
+        explain: Без ограничения — это отрицательный лимит или отсутствие вызова `SetLimit`.
+      - text: "`Go` заблокируется навсегда"
+        correct: true
+        explain: "Лимит 0 — семафор без единого места: `Go` ждёт свободного места, которого никогда не будет. `TryGo` в этой ситуации вернул бы `false`."
+      - text: "`SetLimit` запаникует"
+        explain: "`SetLimit` паникует, только если в группе ещё работают горутины."

@@ -1,0 +1,116 @@
+questions:
+  - id: drain-then-zero
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func main() {
+      	ch := make(chan int, 2)
+      	ch <- 1
+      	close(ch)
+      	v1, ok1 := <-ch
+      	v2, ok2 := <-ch
+      	fmt.Println(v1, ok1, v2, ok2)
+      }
+    options:
+      - text: "1 true 0 false"
+        correct: true
+        explain: Закрытие не стирает буфер. Первое получение отдаёт оставшуюся единицу с `ok == true`, второе — нулевое значение с `ok == false`.
+      - text: "0 false 0 false"
+        explain: Значения, отправленные до `close`, сохраняются — получатель дочитает их первыми.
+      - text: panic
+        explain: Паникуют отправка в закрытый канал и повторный `close`. Получение из закрытого канала безопасно всегда.
+
+  - id: range-closed-buffer
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func main() {
+      	ch := make(chan string, 3)
+      	ch <- "a"
+      	ch <- "b"
+      	close(ch)
+      	fmt.Println(len(ch))
+      	for s := range ch {
+      		fmt.Print(s)
+      	}
+      	fmt.Println()
+      }
+    options:
+      - text: |
+          2
+          ab
+        correct: true
+        explain: "`len` закрытого канала — по-прежнему число значений в буфере. `range` дочитывает их и выходит, увидев, что канал закрыт и пуст."
+      - text: |
+          0
+          ab
+        explain: Закрытие не очищает буфер, и `len` это показывает.
+      - text: |
+          2
+          ab и deadlock
+        explain: "`range` по закрытому каналу не ждёт — после двух значений цикл заканчивается."
+
+  - id: double-close
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func main() {
+      	defer func() { fmt.Println(recover()) }()
+      	ch := make(chan int)
+      	close(ch)
+      	close(ch)
+      	fmt.Println("не дойдём")
+      }
+    options:
+      - text: close of closed channel
+        correct: true
+        explain: Повторный `close` — паника. Отложенная функция перехватывает её через `recover` и печатает значение паники.
+      - text: не дойдём
+        explain: Второй `close` паникует, и до печати выполнение не доходит.
+      - text: "<nil>"
+        explain: "`recover` вернул бы `nil`, только если бы паники не было. Повторное закрытие канала паникует."
+
+  - id: range-two-vars
+    kind: compile
+    prompt: Скомпилируется ли программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func main() {
+      	ch := make(chan int, 1)
+      	ch <- 1
+      	close(ch)
+      	for v, ok := range ch {
+      		fmt.Println(v, ok)
+      	}
+      }
+    compiles: false
+    explain: "`range` по каналу даёт одну переменную — значение. Признак `ok` ему не нужен: цикл сам заканчивается на закрытии. Форма `v, ok := <-ch` есть только у одиночного получения."
+
+  - id: who-closes
+    kind: single
+    prompt: В канал пишут пять горутин, читает одна — через `for range`. Кто должен закрыть канал?
+    options:
+      - text: Каждый отправитель после своей последней отправки
+        explain: Первый же закрывший уронит остальных паникой `send on closed channel`, а повторный `close` — ещё одной.
+      - text: Получатель, когда решит, что данных достаточно
+        explain: Отправители об этом не узнают и запаникуют на следующей отправке. Получатель останавливает отправителей другим сигналом — через `context` или отдельный канал `done`.
+      - text: Отдельная горутина, которая дождётся всех отправителей через `WaitGroup` и закроет канал
+        correct: true
+        explain: Закрыть можно только тогда, когда отправок точно больше не будет. Это знает тот, кто ждёт всех отправителей.
+      - text: Никто — канал закроется сам, когда отправители завершатся
+        explain: Каналы не закрываются автоматически. `range` в получателе будет ждать вечно.

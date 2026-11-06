@@ -1,0 +1,15 @@
+Join: data/reports/q1.tar.gz
+Dir: data/reports
+Base: q1.tar.gz
+Ext: .gz
+Clean: a/b/d
+Rel: ../docs/readme.md
+IsAbs: false true
+Separator: '/'
+FromSlash: cfg/app.yaml
+IsLocal("img/a.png") = true
+IsLocal("../etc/passwd") = false
+IsLocal("a/../../b") = false
+Match: true false
+Glob: [logs/app.log logs/db.log]
+path.Join: /api/v1/users/42

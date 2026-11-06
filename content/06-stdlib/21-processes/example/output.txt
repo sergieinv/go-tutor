@@ -1,0 +1,10 @@
+echo: $HOME * a b
+sh: 42
+combined: "out\nerr\n"
+код выхода: 3
+не найдена: true
+upper: ПРИВЕТ, ПРОЦЕСС
+получено: строка 1
+получено: строка 2
+получено: строка 3
+таймаут: signal: killed | ctx: context deadline exceeded

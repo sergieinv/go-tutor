@@ -6,9 +6,11 @@ import { highlight, scriptJSON } from "../lib/markdown";
 interface Props {
   lesson: string;
   code: string;
+  /** Файлы рядом с main.go: уходят в runner как есть, в редакторе не меняются. */
+  files?: Record<string, string>;
   race?: boolean;
 }
-const { lesson, code, race } = Astro.props;
+const { lesson, code, files = {}, race } = Astro.props;
 const fallback = await highlight(code.trimEnd(), "go");
 ---
 
@@ -20,9 +22,25 @@ const fallback = await highlight(code.trimEnd(), "go");
     {race && <> Код собирается с детектором гонок <code>-race</code>.</>}
   </p>
   <script type="application/json" data-initial set:html={scriptJSON(code)} />
+  <script type="application/json" data-files set:html={scriptJSON(files)} />
   <div class="editor" data-editor>
     <Fragment set:html={fallback} />
   </div>
+  {
+    Object.keys(files).length > 0 && (
+      <details class="extra-files">
+        <summary>
+          Файлы рядом с <code>main.go</code>: {Object.keys(files).map((f, i) => <>{i > 0 && ", "}<code>{f}</code></>)}
+        </summary>
+        {Object.entries(files).map(([name, src]) => (
+          <figure>
+            <figcaption><code>{name}</code></figcaption>
+            <pre class="plain">{src}</pre>
+          </figure>
+        ))}
+      </details>
+    )
+  }
   <div class="toolbar" role="toolbar" aria-label="Действия с кодом">
     <button type="button" class="primary" data-action="run" disabled>Запустить</button>
     <button type="button" data-action="format" disabled>Формат</button>
@@ -45,6 +63,7 @@ const fallback = await highlight(code.trimEnd(), "go");
   for (const root of document.querySelectorAll<HTMLElement>("[data-playground]")) {
     const lesson = root.dataset.lesson!;
     const initial: string = JSON.parse(root.querySelector("[data-initial]")!.textContent!);
+    const extra: Record<string, string> = JSON.parse(root.querySelector("[data-files]")!.textContent!);
     const host = root.querySelector<HTMLElement>("[data-editor]")!;
     const result = root.querySelector<HTMLElement>("[data-result]")!;
     const note = root.querySelector<HTMLElement>("[data-note]")!;
@@ -70,7 +89,7 @@ const fallback = await highlight(code.trimEnd(), "go");
       button("run").disabled = true;
       showPending(result, "Сборка и запуск…");
       try {
-        showRun(result, await run({ "main.go": getDoc(editor) }, lesson));
+        showRun(result, await run({ ...extra, "main.go": getDoc(editor) }, lesson));
       } catch (e) {
         showError(result, e instanceof RunnerError ? e.message : String(e));
       } finally {
@@ -113,6 +132,20 @@ const fallback = await highlight(code.trimEnd(), "go");
   .hint {
     margin-top: -0.5rem;
     font-size: 0.9rem;
+  }
+  .extra-files {
+    margin: 0.5rem 0;
+    font-size: 0.9rem;
+  }
+  .extra-files pre {
+    margin: 0.25rem 0 0.5rem;
+    padding: 0.5rem 0.75rem;
+    background: var(--bg-soft);
+    border-radius: var(--radius);
+    overflow-x: auto;
+  }
+  .extra-files figure {
+    margin: 0.5rem 0 0;
   }
   .editor :global(.cm-editor) {
     max-height: 32rem;

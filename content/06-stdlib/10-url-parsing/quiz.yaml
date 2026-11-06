@@ -1,0 +1,110 @@
+questions:
+  - id: query-copy
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"net/url"
+      )
+
+      func main() {
+      	u, _ := url.Parse("https://ex.com/s?q=go")
+      	u.Query().Set("page", "2")
+      	q := u.Query()
+      	q.Add("q", "c#")
+      	fmt.Println(u.RawQuery, "|", q.Encode())
+      }
+    options:
+      - text: "q=go | q=go&q=c%23"
+        correct: true
+        explain: "`Query()` каждый раз разбирает `RawQuery` в новую map — изменения в ней на URL не влияют. `Add` добавляет второе значение ключа, `Encode` экранирует `#`."
+      - text: "page=2&q=go | page=2&q=go&q=c%23"
+        explain: "`u.Query().Set(...)` меняет временную копию, которая сразу выбрасывается."
+      - text: "q=go | q=c#"
+        explain: "`Add` не заменяет, а добавляет значение; `Set` заменил бы. И `#` в значении экранируется как `%23`."
+
+  - id: host-port
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"net/url"
+      )
+
+      func main() {
+      	u, _ := url.Parse("HTTPS://Ex.COM/path")
+      	fmt.Printf("%s %s %q\n", u.Scheme, u.Host, u.Port())
+      }
+    options:
+      - text: "https Ex.COM \"\""
+        correct: true
+        explain: "`url.Parse` приводит схему к нижнему регистру, а хост оставляет как есть. Порт по умолчанию не подставляется: если его нет в строке, `Port()` пустой."
+      - text: "https ex.com \"443\""
+        explain: "Так ведёт себя `System.Uri`. `net/url` не нормализует хост и не знает портов по умолчанию."
+      - text: "HTTPS Ex.COM \"\""
+        explain: "Схему `url.Parse` всё же приводит к нижнему регистру."
+
+  - id: no-scheme
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"net/url"
+      )
+
+      func main() {
+      	u, err := url.Parse("example.com/a")
+      	fmt.Printf("%q %q %q %v\n", u.Scheme, u.Host, u.Path, err)
+      }
+    options:
+      - text: "\"\" \"\" \"example.com/a\" <nil>"
+        correct: true
+        explain: "Без `scheme://` это относительная ссылка: хоста нет, вся строка — путь. Ошибки нет."
+      - text: "\"\" \"example.com\" \"/a\" <nil>"
+        explain: "Хост распознаётся только после `//`. Без него `example.com` — часть пути."
+      - text: "\"\" \"\" \"\" missing protocol scheme"
+        explain: "Ошибка `missing protocol scheme` возникает, когда строка начинается с `:`. Строка без схемы — допустимая относительная ссылка."
+
+  - id: escape-kinds
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"net/url"
+      )
+
+      func main() {
+      	fmt.Println(url.QueryEscape("a b+c"), url.PathEscape("a b+c"))
+      }
+    options:
+      - text: "a+b%2Bc a%20b+c"
+        correct: true
+        explain: "В значениях запроса пробел кодируется как `+`, поэтому сам `+` приходится экранировать. В пути `+` — обычный символ, а пробел — `%20`."
+      - text: "a%20b%2Bc a%20b%2Bc"
+        explain: "`QueryEscape` использует форму `application/x-www-form-urlencoded`: пробел → `+`. А `PathEscape` не трогает `+`."
+      - text: "a+b+c a b+c"
+        explain: "Без экранирования `+` в запросе превратился бы в пробел при разборе — `QueryEscape` его кодирует."
+
+  - id: resolve
+    kind: single
+    prompt: "Чему равен `base.ResolveReference(ref)` для базы `https://ex.com/a/b` и ссылки `c`?"
+    options:
+      - text: "`https://ex.com/a/c`"
+        correct: true
+        explain: "Как в браузере: относительный путь заменяет последний сегмент базы (`b`). Чтобы получилось `/a/b/c`, база должна оканчиваться на `/`."
+      - text: "`https://ex.com/a/b/c`"
+        explain: "Последний сегмент базы без завершающего `/` считается «файлом» и заменяется."
+      - text: "`https://ex.com/c`"
+        explain: "Так было бы со ссылкой `/c` — абсолютный путь от корня."

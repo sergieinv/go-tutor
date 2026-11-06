@@ -1,0 +1,115 @@
+questions:
+  - id: range-clamp
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"errors"
+      	"fmt"
+      	"strconv"
+      )
+
+      func main() {
+      	v, err := strconv.ParseInt("-200", 10, 8)
+      	fmt.Println(v, errors.Is(err, strconv.ErrRange))
+      }
+    options:
+      - text: "-128 true"
+        correct: true
+        explain: "-200 не помещается в 8 бит. `ParseInt` возвращает ошибку `ErrRange` и ближайшую границу диапазона `int8` — -128."
+      - text: "0 true"
+        explain: "При `ErrRange` значение не обнуляется, а прижимается к границе типа. Ноль возвращается при `ErrSyntax`."
+      - text: "-200 false"
+        explain: "`bitSize = 8` требует, чтобы значение поместилось в `int8`, иначе ошибка."
+      - text: "56 true"
+        explain: "Go не обрезает старшие биты при разборе — возвращается граница диапазона."
+
+  - id: base-zero
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"strconv"
+      )
+
+      func main() {
+      	a, _ := strconv.ParseInt("010", 0, 64)
+      	b, _ := strconv.ParseInt("010", 10, 64)
+      	c, err := strconv.ParseInt("0x10", 16, 64)
+      	fmt.Println(a, b, c, err != nil)
+      }
+    options:
+      - text: "8 10 0 true"
+        correct: true
+        explain: "При `base = 0` ведущий ноль означает восьмеричную систему. Префикс `0x` разрешён только при `base = 0`; с `base = 16` строка `0x10` — синтаксическая ошибка."
+      - text: "10 10 16 false"
+        explain: "`base = 0` разбирает строку как литерал Go: `010` — восьмеричное 8. А `0x` при явном основании 16 не допускается."
+      - text: "8 10 16 false"
+        explain: "Префикс системы счисления понимается только при `base = 0`."
+
+  - id: parse-uint-sign
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"strconv"
+      )
+
+      func main() {
+      	_, e1 := strconv.Atoi("+5")
+      	_, e2 := strconv.ParseUint("+5", 10, 64)
+      	_, e3 := strconv.ParseBool("yes")
+      	fmt.Println(e1 == nil, e2 == nil, e3 == nil)
+      }
+    options:
+      - text: "true false false"
+        correct: true
+        explain: "Знаковый разбор принимает `+` и `-`, а `ParseUint` не принимает никакого знака. `ParseBool` знает только `1/t/T/TRUE/true/True` и их ложные пары — `yes` не из них."
+      - text: "true true false"
+        explain: "`ParseUint` отвергает даже `+`: у беззнакового числа знака нет."
+      - text: "false false true"
+        explain: "`Atoi` знак `+` допускает, а `ParseBool` не понимает `yes`."
+
+  - id: bitsize-type
+    kind: compile
+    prompt: Скомпилируется ли программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"strconv"
+      )
+
+      func main() {
+      	v, err := strconv.ParseInt("42", 10, 8)
+      	if err != nil {
+      		return
+      	}
+      	var b int8 = v
+      	fmt.Println(b)
+      }
+    compiles: false
+    explain: "`ParseInt` всегда возвращает `int64`, `bitSize` только проверяет диапазон. Присвоить `int64` в `int8` без приведения нельзя — нужно `int8(v)`, и после проверки ошибки оно безопасно."
+
+  - id: num-error
+    kind: single
+    prompt: "Как правильно проверить, что `strconv.ParseInt` вернул ошибку переполнения?"
+    options:
+      - text: "`errors.Is(err, strconv.ErrRange)`"
+        correct: true
+        explain: "`*NumError` реализует `Unwrap`, возвращая причину, поэтому `errors.Is` находит `ErrRange` внутри."
+      - text: "`err == strconv.ErrRange`"
+        explain: "Возвращается не сам `ErrRange`, а `*NumError`, который его оборачивает. Сравнение `==` даст `false`."
+      - text: "`strings.Contains(err.Error(), \"out of range\")`"
+        explain: "Текст ошибки — для людей, а не для программ. Для проверки причины есть sentinel-ошибки."
+      - text: "`err.(*strconv.NumError) != nil`"
+        explain: "Так узнаем только, что это ошибка разбора числа, — а это верно и для `ErrSyntax`. Причина — в поле `Err`."

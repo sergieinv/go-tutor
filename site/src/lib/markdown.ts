@@ -93,9 +93,16 @@ export function highlight(code: string, lang: "go" | "csharp" | "text"): Promise
 const escapeHtml = (s: string) =>
   s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
-/** Минимальный inline-markdown для коротких строк: только `код`. */
+/**
+ * Минимальный inline-markdown для коротких строк: только код в обратных
+ * кавычках. Как в CommonMark, код с ` внутри пишут в двойных: ``a `b` c``,
+ * по одному пробелу у краёв срезается.
+ */
 export function inlineMarkdown(s: string): string {
-  return escapeHtml(s).replace(/`([^`]+)`/g, "<code>$1</code>");
+  return escapeHtml(s).replace(/(`+)(.+?)\1(?!`)/g, (_, _ticks, code: string) => {
+    const inner = code.length > 2 && code.startsWith(" ") && code.endsWith(" ") ? code.slice(1, -1) : code;
+    return `<code>${inner}</code>`;
+  });
 }
 
 /** JSON для <script type="application/json">: `<` экранируется, чтобы код с `</script>` не закрыл тег. */

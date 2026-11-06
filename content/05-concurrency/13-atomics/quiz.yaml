@@ -1,0 +1,91 @@
+questions:
+  - id: atomic-add
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"sync"
+      	"sync/atomic"
+      )
+
+      func main() {
+      	var n atomic.Int64
+      	var wg sync.WaitGroup
+      	for range 100 {
+      		wg.Go(func() { n.Add(2) })
+      	}
+      	wg.Wait()
+      	fmt.Println(n.Load())
+      }
+    options:
+      - text: "200"
+        correct: true
+        explain: "`Add` неделим, ни одно увеличение не теряется, а `Wait` дожидается всех горутин."
+      - text: Меньше 200, каждый раз по-разному
+        explain: Так было бы с обычным `n += 2` без синхронизации. Атомарное сложение не теряет обновления.
+      - text: "100"
+        explain: Каждая горутина прибавляет 2, а не 1.
+
+  - id: cas-result
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"sync/atomic"
+      )
+
+      func main() {
+      	var x atomic.Int32
+      	x.Store(5)
+      	a := x.CompareAndSwap(4, 10)
+      	b := x.CompareAndSwap(5, 7)
+      	fmt.Println(a, b, x.Load())
+      }
+    options:
+      - text: false true 7
+        correct: true
+        explain: Первый CAS ожидает 4, а там 5 — значение не меняется. Второй ожидает 5 и записывает 7.
+      - text: false true 10
+        explain: Первый CAS не сработал, 10 не записано. Записано 7 вторым вызовом.
+      - text: true true 7
+        explain: "`CompareAndSwap` меняет значение, только если текущее равно первому аргументу — 4 не равно 5."
+
+  - id: plus-plus
+    kind: compile
+    prompt: Скомпилируется ли программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"sync/atomic"
+      )
+
+      func main() {
+      	var n atomic.Int64
+      	n++
+      	fmt.Println(n.Load())
+      }
+    compiles: false
+    explain: "`atomic.Int64` — структура, а не число: операторы к ней не применяются, только методы `Add`, `Load`, `Store` и другие. Так тип защищает от случайного неатомарного доступа."
+
+  - id: when-mutex
+    kind: multiple
+    prompt: В каких случаях atomic-полей недостаточно и нужен мьютекс?
+    options:
+      - text: "Нужно обновлять `count` и `sum` вместе, чтобы считать среднее"
+        correct: true
+        explain: Инвариант связывает два поля. Отдельные атомарные операции не помешают читателю увидеть одно поле обновлённым, а другое — нет.
+      - text: "Переводы между счетами в `map[string]int` с проверкой остатка"
+        correct: true
+        explain: Здесь и map, которую нельзя менять конкурентно, и проверка с изменением нескольких значений — это работа для мьютекса.
+      - text: Счётчик обработанных запросов
+        explain: Одно число, которое только увеличивается, — идеальный случай для `atomic.Int64`.
+      - text: Флаг «сервис останавливается», который проверяют многие горутины
+        explain: "Одно логическое значение — `atomic.Bool` подходит; для «установить только один раз» есть `CompareAndSwap(false, true)`."

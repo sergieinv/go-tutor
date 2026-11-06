@@ -142,3 +142,32 @@ test("слайды: стрелки листают шаги визуализат�
   await page.reload();
   await expect(deck).toHaveText(`5 / ${slides}`);
 });
+
+test("живой визуализатор утечек показывает не завершившиеся горутины", async ({ page }) => {
+  await page.goto("/05-concurrency/21-goroutine-leaks/");
+  const viz = page.locator("[data-viz]");
+  await buildLive(page, viz);
+  await viz.locator("[data-act=seek]").press("End");
+  await expect(viz.locator("[data-note]")).toContainText("Не завершились к выходу из main");
+  await expect(viz.locator('svg [data-id="grp0:box"]')).toHaveCount(1);
+  await expect(viz.locator(".cm-viz-line")).not.toHaveCount(0);
+});
+
+test("живой визуализатор гонок строит шаги по отчёту -race, после исправления гонок нет", async ({ page }) => {
+  await page.goto("/05-concurrency/22-data-races/");
+  const viz = page.locator("[data-viz]");
+  await buildLive(page, viz);
+  await expect(viz.locator("[data-note]")).toContainText("Детектор нашёл");
+  await next(viz).click();
+  await next(viz).click();
+  await next(viz).click();
+  await expect(viz.locator('svg [data-id="acc1:box"]')).toHaveCount(1);
+
+  // Программа без гонок — один понятный шаг.
+  await viz.locator("[data-editor] .cm-content").click();
+  await page.keyboard.press("ControlOrMeta+a");
+  await page.keyboard.insertText('package main\n\nimport "fmt"\n\nfunc main() {\n\tfmt.Println("ok")\n}\n');
+  await buildLive(page, viz);
+  await expect(counter(viz)).toHaveText("Шаг 1 из 1");
+  await expect(viz.locator("[data-note]")).toContainText("ничего не нашёл");
+});

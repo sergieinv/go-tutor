@@ -1,0 +1,3 @@
+[GO CHANNEL SELECT MUTEX]
+[2 7 6 5]
+[0 1 4]

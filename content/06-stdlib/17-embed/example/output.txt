@@ -1,0 +1,6 @@
+string: Привет из встроенного файла!
+[]byte: 37 байт, {Name:demo Port:8080}
+FS: greeting.txt → "Привет из встроенного файла!"
+FS: help.txt → "usage: app [-v] <command>"
+config.json в texts: open config.json: file does not exist
+файлов по *.txt: [greeting.txt help.txt]

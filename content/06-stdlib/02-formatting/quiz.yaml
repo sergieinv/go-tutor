@@ -1,0 +1,112 @@
+questions:
+  - id: verbs-struct
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      type pair struct {
+      	K string
+      	V int
+      }
+
+      func main() {
+      	p := pair{"a", 1}
+      	fmt.Printf("%v %+v %T\n", p, p, p)
+      }
+    options:
+      - text: "{a 1} {K:a V:1} main.pair"
+        correct: true
+        explain: "`%v` печатает значения полей, `%+v` добавляет имена полей, `%T` — тип с именем пакета."
+      - text: "{K:a V:1} {a 1} pair"
+        explain: Имена полей добавляет `%+v`, а не `%v`. `%T` печатает тип вместе с пакетом — `main.pair`.
+      - text: "main.pair{K:\"a\", V:1} {K:a V:1} main.pair"
+        explain: Так выглядит `%#v` — синтаксис Go с кавычками у строк. `%v` проще.
+
+  - id: pointer-stringer
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      type id int
+
+      func (i *id) String() string { return fmt.Sprintf("ID-%d", int(*i)) }
+
+      func main() {
+      	x := id(7)
+      	fmt.Println(x, &x)
+      }
+    options:
+      - text: "7 ID-7"
+        correct: true
+        explain: "Метод `String` объявлен на `*id`, поэтому `fmt.Stringer` реализует только указатель. Значение `x` печатается как обычное число."
+      - text: "ID-7 ID-7"
+        explain: "Для значения `x` метод с получателем-указателем недоступен через интерфейс: `id` не реализует `fmt.Stringer`."
+      - text: "7 0xc000012345"
+        explain: "`*id` реализует `Stringer`, поэтому `fmt` вызывает `String`, а не печатает адрес."
+
+  - id: width-precision
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func main() {
+      	fmt.Printf("[%6.2f][%-4d][%04d][%3s]\n", 3.14159, 7, -7, "длинно")
+      }
+    options:
+      - text: "[  3.14][7   ][-007][длинно]"
+        correct: true
+        explain: "`%6.2f` — 6 символов и 2 знака после точки; `%-4d` — выравнивание влево; `%04d` дополняет нулями после знака; ширина — минимум, длинная строка не обрезается."
+      - text: "[3.14  ][   7][00-7][дли]"
+        explain: "Числа по умолчанию выравниваются вправо, минус перед нулями, а ширина не обрезает строку — обрезает точность `%.3s`."
+      - text: "[  3.14][7   ][-007][дл]"
+        explain: Ширина считается в рунах, а не в байтах, и строку она не обрезает.
+
+  - id: bad-verb
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func main() {
+      	s := fmt.Sprintf("%d-%d", "x")
+      	fmt.Println(s)
+      }
+    options:
+      - text: "%!d(string=x)-%!d(MISSING)"
+        correct: true
+        explain: "`fmt` не паникует и не возвращает ошибку: несоответствие типа и нехватка аргумента помечаются прямо в строке. `go vet` предупредит о таком вызове."
+      - text: "x-"
+        explain: "`%d` не умеет печатать строку — `fmt` вставит пометку об ошибке, а не значение."
+      - text: Программа запаникует
+        explain: В отличие от `string.Format` в C#, `fmt` не бросает ошибок времени выполнения из-за формата.
+
+  - id: sprint-spaces
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func main() {
+      	fmt.Print("a", 1, 2, "b", "c", 3, "\n")
+      }
+    options:
+      - text: "a1 2bc3"
+        correct: true
+        explain: "`Print` добавляет пробел только между соседними операндами, если ни один из них не строка: между `1` и `2`."
+      - text: "a 1 2 b c 3"
+        explain: Так печатает `Println` — он ставит пробел между всеми операндами.
+      - text: "a12bc3"
+        explain: Между двумя соседними нестроковыми операндами `Print` всё же ставит пробел.

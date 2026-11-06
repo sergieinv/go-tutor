@@ -19,6 +19,12 @@ ENV GOTOOLCHAIN=local \
 # Прогрев: стандартная библиотека в обычной и race-сборке и test2json,
 # чтобы первый запуск урока укладывался в 1–2 секунды.
 RUN go build std && go build -race std && go tool test2json < /dev/null
+# Сторонние модули уроков (sandbox/deps.mod): скачиваем, пока сеть есть, и
+# прогреваем их сборку. GOFLAGS=-mod=mod не даёт go build тронуть go.mod.
+COPY runner/sandbox/deps.mod /tmp/deps/go.mod
+COPY runner/sandbox/deps.sum /tmp/deps/go.sum
+RUN cd /tmp/deps && GOPROXY=https://proxy.golang.org GOFLAGS= go mod download all \
+    && GOFLAGS= go build golang.org/x/sync/... && rm -rf /tmp/deps
 COPY --from=build /out/runner /usr/local/bin/runner
 COPY content /content
 EXPOSE 8081

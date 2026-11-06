@@ -1,0 +1,105 @@
+questions:
+  - id: scanner-crlf
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"bufio"
+      	"fmt"
+      	"strings"
+      )
+
+      func main() {
+      	sc := bufio.NewScanner(strings.NewReader("a\r\nb\n\nc"))
+      	n := 0
+      	for sc.Scan() {
+      		n++
+      		fmt.Printf("%q ", sc.Text())
+      	}
+      	fmt.Println(n)
+      }
+    options:
+      - text: '"a" "b" "" "c" 4'
+        correct: true
+        explain: "`ScanLines` отрезает `\\n` и `\\r` перед ним, пустая строка — тоже строка, а последняя строка без перевода строки всё равно возвращается."
+      - text: '"a\r" "b" "" "c" 4'
+        explain: "`bufio.ScanLines` убирает завершающий `\\r`, поэтому файлы с Windows-окончаниями читаются без сюрпризов."
+      - text: '"a" "b" "c" 3'
+        explain: Пустые строки не пропускаются — сканер возвращает их как `""`.
+      - text: '"a" "b" "" 3'
+        explain: Последняя строка без `\n` в конце не теряется.
+
+  - id: too-long
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"bufio"
+      	"fmt"
+      	"strings"
+      )
+
+      func main() {
+      	in := "ok\n" + strings.Repeat("x", 70_000) + "\nlast\n"
+      	sc := bufio.NewScanner(strings.NewReader(in))
+      	n := 0
+      	for sc.Scan() {
+      		n++
+      	}
+      	fmt.Println(n, sc.Err() != nil)
+      }
+    options:
+      - text: "3 false"
+        explain: Строка в 70 000 байт больше лимита по умолчанию — 64 КБ.
+      - text: "1 true"
+        correct: true
+        explain: "Первая строка прочитана, на второй буфер переполнился: `Scan` вернул `false`, `Err` — `bufio.ErrTooLong`. Строка `last` так и не прочитана."
+      - text: "2 true"
+        explain: Сканер не пропускает длинную строку, а прекращает чтение целиком.
+      - text: "1 false"
+        explain: "Остановка из-за длины — ошибка: `sc.Err()` вернёт `bufio.ErrTooLong`."
+
+  - id: read-string-delim
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"bufio"
+      	"fmt"
+      	"strings"
+      )
+
+      func main() {
+      	r := bufio.NewReader(strings.NewReader("k=v\nend"))
+      	a, err1 := r.ReadString('\n')
+      	b, err2 := r.ReadString('\n')
+      	fmt.Printf("%q %v %q %v\n", a, err1, b, err2)
+      }
+    options:
+      - text: '"k=v" <nil> "end" EOF'
+        explain: "`ReadString` оставляет разделитель в результате, в отличие от `Scanner`."
+      - text: '"k=v\n" <nil> "end" EOF'
+        correct: true
+        explain: "Первый вызов вернул строку вместе с `\\n`. Второй дошёл до конца потока, не найдя разделителя: вернул прочитанное `end` и `io.EOF` одновременно."
+      - text: '"k=v\n" <nil> "" EOF'
+        explain: Данные перед концом потока не теряются — они возвращаются вместе с `io.EOF`.
+
+  - id: reader-param
+    kind: single
+    prompt: "Функция считает строки в CSV. Какой тип параметра лучше выбрать?"
+    options:
+      - text: "`path string`"
+        explain: Функция сама открывает файл — её нельзя вызвать для данных из памяти или сети, а в тестах придётся создавать файлы.
+      - text: "`f *os.File`"
+        explain: Привязка к конкретному типу без нужды. Тестам пришлось бы создавать временный файл вместо `strings.NewReader`.
+      - text: "`r io.Reader`"
+        correct: true
+        explain: "Принимайте интерфейс: подойдут файл, `strings.Reader`, `bytes.Buffer`, тело HTTP-ответа, распакованный gzip-поток."
+      - text: "`data []byte`"
+        explain: Работает, но требует прочитать весь файл в память — для больших файлов это лишнее.

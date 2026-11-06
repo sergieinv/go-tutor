@@ -1,0 +1,107 @@
+questions:
+  - id: bufio-flush
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"bufio"
+      	"fmt"
+      	"strings"
+      )
+
+      func main() {
+      	var sb strings.Builder
+      	w := bufio.NewWriter(&sb)
+      	fmt.Fprint(w, "hello")
+      	fmt.Print(sb.Len(), " ")
+      	w.Flush()
+      	fmt.Println(sb.Len())
+      }
+    options:
+      - text: "5 5"
+        explain: "`bufio.Writer` не передаёт данные дальше сразу — они ждут в буфере."
+      - text: "0 5"
+        correct: true
+        explain: Пять байт поместились в буфер на 4 КБ и попали в `strings.Builder` только после `Flush`. С файлом то же самое — без `Flush` хвост данных пропадёт.
+      - text: "0 0"
+        explain: "`Flush` как раз и переносит накопленное во внутренний `io.Writer`."
+
+  - id: overwrite-no-trunc
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"os"
+      )
+
+      func main() {
+      	os.WriteFile("f.txt", []byte("hello"), 0o644)
+      	f, _ := os.OpenFile("f.txt", os.O_WRONLY, 0)
+      	f.WriteString("HE")
+      	f.Close()
+      	b, _ := os.ReadFile("f.txt")
+      	fmt.Println(string(b))
+      }
+    options:
+      - text: "HE"
+        explain: Без `O_TRUNC` файл не обрезается при открытии — это делают `os.Create` и `os.WriteFile`.
+      - text: "HEllo"
+        correct: true
+        explain: Файл открыт на запись с позиции 0 без `O_TRUNC` и без `O_APPEND`, поэтому два байта перезаписали начало, остальное осталось.
+      - text: "helloHE"
+        explain: Дописывание в конец включает флаг `O_APPEND`, здесь его нет.
+
+  - id: open-no-create
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"errors"
+      	"fmt"
+      	"io/fs"
+      	"os"
+      )
+
+      func main() {
+      	_, err := os.OpenFile("missing.txt", os.O_WRONLY|os.O_APPEND, 0o644)
+      	fmt.Println(errors.Is(err, fs.ErrNotExist))
+      }
+    options:
+      - text: "true"
+        correct: true
+        explain: "Без `O_CREATE` файл не создаётся, а права `0o644` используются только при создании. Ошибка `*fs.PathError` оборачивает `ENOENT`, и `errors.Is` находит `fs.ErrNotExist`."
+      - text: "false"
+        explain: "`O_APPEND` не подразумевает создания файла — для этого нужен `O_CREATE`."
+
+  - id: write-string
+    kind: compile
+    prompt: Скомпилируется ли программа?
+    code: |
+      package main
+
+      import "os"
+
+      func main() {
+      	os.WriteFile("a.txt", "text", 0o644)
+      }
+    compiles: false
+    explain: "`os.WriteFile` принимает `[]byte`, а строка в срез байт неявно не превращается. Нужно `[]byte(\"text\")`."
+
+  - id: tmp-same-dir
+    kind: single
+    prompt: Почему при атомарной записи временный файл создают в каталоге целевого, а не в `os.TempDir()`?
+    options:
+      - text: Так быстрее записываются данные
+        explain: Скорость записи от каталога не зависит.
+      - text: "`os.Rename` атомарен только в пределах одной файловой системы"
+        correct: true
+        explain: "`/tmp` часто находится на другом разделе или в tmpfs. Тогда `Rename` вернёт ошибку (`EXDEV`, invalid cross-device link), а копирование вместо переименования уже не атомарно."
+      - text: "`os.CreateTemp` не умеет создавать файлы в `os.TempDir()`"
+        explain: "Умеет — пустой первый аргумент как раз означает `os.TempDir()`."

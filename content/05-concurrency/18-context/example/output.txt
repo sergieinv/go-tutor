@@ -1,0 +1,8 @@
+медленный запрос: context deadline exceeded
+это дедлайн: true
+после отмены sibling: <nil> <nil>
+после отмены parent: context canceled
+request id: req-42
+context canceled / клиент отключился
+AfterFunc: закрываем соединение
+sibling.Done() закрыт

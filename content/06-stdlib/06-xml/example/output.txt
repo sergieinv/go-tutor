@@ -1,0 +1,11 @@
+<book id="go-1">
+  <title>Go &amp; C#</title>
+  <authors>
+    <author>Анна</author>
+    <author>Иван</author>
+  </authors>
+  <!-- черновик -->
+</book> <nil>
+b2 ru true "Шаблоны " [Вера] <nil>
+Шаблоны <i>Go</i>
+expected element type <book> but have <film>

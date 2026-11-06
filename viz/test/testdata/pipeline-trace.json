@@ -1,0 +1,568 @@
+{
+  "buildFailed": false,
+  "stdout": "140\n",
+  "stderr": "",
+  "exitCode": 0,
+  "timedOut": false,
+  "truncated": false,
+  "durationMs": 306,
+  "trace": {
+    "goroutines": [
+      {
+        "id": 1,
+        "func": "main.main"
+      },
+      {
+        "id": 38,
+        "func": "main.gen.func1",
+        "file": "main.go",
+        "line": 11
+      },
+      {
+        "id": 39,
+        "func": "main.square.func1",
+        "file": "main.go",
+        "line": 22
+      },
+      {
+        "id": 49,
+        "func": "main.main.func1",
+        "file": "main.go",
+        "line": 40
+      },
+      {
+        "id": 50,
+        "func": "main.main.func1",
+        "file": "main.go",
+        "line": 40
+      },
+      {
+        "id": 51,
+        "func": "main.main.func1",
+        "file": "main.go",
+        "line": 40
+      }
+    ],
+    "selects": [],
+    "events": [
+      {
+        "t": 0,
+        "g": 1,
+        "kind": "go",
+        "file": "main.go",
+        "line": 11,
+        "target": 38,
+        "case": 0
+      },
+      {
+        "t": 0,
+        "g": 1,
+        "kind": "go",
+        "file": "main.go",
+        "line": 22,
+        "target": 39,
+        "case": 0
+      },
+      {
+        "t": 1,
+        "g": 1,
+        "kind": "block",
+        "file": "main.go",
+        "line": 34,
+        "reason": "chan receive",
+        "case": 0
+      },
+      {
+        "t": 6,
+        "g": 39,
+        "kind": "block",
+        "file": "main.go",
+        "line": 24,
+        "reason": "chan receive",
+        "case": 0
+      },
+      {
+        "t": 7,
+        "g": 38,
+        "kind": "unblock",
+        "file": "main.go",
+        "line": 14,
+        "target": 39,
+        "case": 0
+      },
+      {
+        "t": 7,
+        "g": 38,
+        "kind": "block",
+        "file": "main.go",
+        "line": 14,
+        "reason": "chan send",
+        "case": 0
+      },
+      {
+        "t": 9,
+        "g": 39,
+        "kind": "block",
+        "file": "main.go",
+        "line": 25,
+        "reason": "sleep",
+        "case": 0
+      },
+      {
+        "t": 1141,
+        "g": 0,
+        "kind": "unblock",
+        "target": 39,
+        "case": 0
+      },
+      {
+        "t": 1145,
+        "g": 39,
+        "kind": "unblock",
+        "file": "main.go",
+        "line": 26,
+        "target": 1,
+        "case": 0
+      },
+      {
+        "t": 1145,
+        "g": 39,
+        "kind": "unblock",
+        "file": "main.go",
+        "line": 24,
+        "target": 38,
+        "case": 0
+      },
+      {
+        "t": 1146,
+        "g": 39,
+        "kind": "block",
+        "file": "main.go",
+        "line": 25,
+        "reason": "sleep",
+        "case": 0
+      },
+      {
+        "t": 1149,
+        "g": 38,
+        "kind": "block",
+        "file": "main.go",
+        "line": 14,
+        "reason": "chan send",
+        "case": 0
+      },
+      {
+        "t": 1149,
+        "g": 1,
+        "kind": "block",
+        "file": "main.go",
+        "line": 34,
+        "reason": "chan receive",
+        "case": 0
+      },
+      {
+        "t": 2276,
+        "g": 0,
+        "kind": "unblock",
+        "target": 39,
+        "case": 0
+      },
+      {
+        "t": 2277,
+        "g": 39,
+        "kind": "unblock",
+        "file": "main.go",
+        "line": 26,
+        "target": 1,
+        "case": 0
+      },
+      {
+        "t": 2278,
+        "g": 39,
+        "kind": "unblock",
+        "file": "main.go",
+        "line": 24,
+        "target": 38,
+        "case": 0
+      },
+      {
+        "t": 2278,
+        "g": 39,
+        "kind": "block",
+        "file": "main.go",
+        "line": 25,
+        "reason": "sleep",
+        "case": 0
+      },
+      {
+        "t": 2284,
+        "g": 1,
+        "kind": "block",
+        "file": "main.go",
+        "line": 34,
+        "reason": "chan receive",
+        "case": 0
+      },
+      {
+        "t": 2290,
+        "g": 38,
+        "kind": "block",
+        "file": "main.go",
+        "line": 14,
+        "reason": "chan send",
+        "case": 0
+      },
+      {
+        "t": 3407,
+        "g": 0,
+        "kind": "unblock",
+        "target": 39,
+        "case": 0
+      },
+      {
+        "t": 3409,
+        "g": 39,
+        "kind": "unblock",
+        "file": "main.go",
+        "line": 26,
+        "target": 1,
+        "case": 0
+      },
+      {
+        "t": 3409,
+        "g": 39,
+        "kind": "unblock",
+        "file": "main.go",
+        "line": 24,
+        "target": 38,
+        "case": 0
+      },
+      {
+        "t": 3409,
+        "g": 39,
+        "kind": "block",
+        "file": "main.go",
+        "line": 25,
+        "reason": "sleep",
+        "case": 0
+      },
+      {
+        "t": 3409,
+        "g": 38,
+        "kind": "block",
+        "file": "main.go",
+        "line": 14,
+        "reason": "chan send",
+        "case": 0
+      },
+      {
+        "t": 3410,
+        "g": 1,
+        "kind": "block",
+        "file": "main.go",
+        "line": 34,
+        "reason": "chan receive",
+        "case": 0
+      },
+      {
+        "t": 4543,
+        "g": 0,
+        "kind": "unblock",
+        "target": 39,
+        "case": 0
+      },
+      {
+        "t": 4547,
+        "g": 39,
+        "kind": "unblock",
+        "file": "main.go",
+        "line": 26,
+        "target": 1,
+        "case": 0
+      },
+      {
+        "t": 4548,
+        "g": 39,
+        "kind": "unblock",
+        "file": "main.go",
+        "line": 24,
+        "target": 38,
+        "case": 0
+      },
+      {
+        "t": 4548,
+        "g": 39,
+        "kind": "block",
+        "file": "main.go",
+        "line": 25,
+        "reason": "sleep",
+        "case": 0
+      },
+      {
+        "t": 4549,
+        "g": 38,
+        "kind": "block",
+        "file": "main.go",
+        "line": 14,
+        "reason": "chan send",
+        "case": 0
+      },
+      {
+        "t": 4550,
+        "g": 1,
+        "kind": "block",
+        "file": "main.go",
+        "line": 34,
+        "reason": "chan receive",
+        "case": 0
+      },
+      {
+        "t": 5681,
+        "g": 0,
+        "kind": "unblock",
+        "target": 39,
+        "case": 0
+      },
+      {
+        "t": 5683,
+        "g": 39,
+        "kind": "unblock",
+        "file": "main.go",
+        "line": 26,
+        "target": 1,
+        "case": 0
+      },
+      {
+        "t": 5684,
+        "g": 39,
+        "kind": "unblock",
+        "file": "main.go",
+        "line": 24,
+        "target": 38,
+        "case": 0
+      },
+      {
+        "t": 5684,
+        "g": 39,
+        "kind": "block",
+        "file": "main.go",
+        "line": 25,
+        "reason": "sleep",
+        "case": 0
+      },
+      {
+        "t": 5684,
+        "g": 38,
+        "kind": "block",
+        "file": "main.go",
+        "line": 14,
+        "reason": "chan send",
+        "case": 0
+      },
+      {
+        "t": 5685,
+        "g": 1,
+        "kind": "block",
+        "file": "main.go",
+        "line": 34,
+        "reason": "chan receive",
+        "case": 0
+      },
+      {
+        "t": 6813,
+        "g": 0,
+        "kind": "unblock",
+        "target": 39,
+        "case": 0
+      },
+      {
+        "t": 6815,
+        "g": 39,
+        "kind": "unblock",
+        "file": "main.go",
+        "line": 26,
+        "target": 1,
+        "case": 0
+      },
+      {
+        "t": 6815,
+        "g": 39,
+        "kind": "unblock",
+        "file": "main.go",
+        "line": 24,
+        "target": 38,
+        "case": 0
+      },
+      {
+        "t": 6815,
+        "g": 39,
+        "kind": "block",
+        "file": "main.go",
+        "line": 25,
+        "reason": "sleep",
+        "case": 0
+      },
+      {
+        "t": 6816,
+        "g": 38,
+        "kind": "block",
+        "file": "main.go",
+        "line": 14,
+        "reason": "chan send",
+        "case": 0
+      },
+      {
+        "t": 6816,
+        "g": 1,
+        "kind": "block",
+        "file": "main.go",
+        "line": 34,
+        "reason": "chan receive",
+        "case": 0
+      },
+      {
+        "t": 7944,
+        "g": 0,
+        "kind": "unblock",
+        "target": 39,
+        "case": 0
+      },
+      {
+        "t": 7946,
+        "g": 39,
+        "kind": "unblock",
+        "file": "main.go",
+        "line": 26,
+        "target": 1,
+        "case": 0
+      },
+      {
+        "t": 7946,
+        "g": 39,
+        "kind": "unblock",
+        "file": "main.go",
+        "line": 24,
+        "target": 38,
+        "case": 0
+      },
+      {
+        "t": 7946,
+        "g": 39,
+        "kind": "block",
+        "file": "main.go",
+        "line": 25,
+        "reason": "sleep",
+        "case": 0
+      },
+      {
+        "t": 7947,
+        "g": 38,
+        "kind": "end",
+        "case": 0
+      },
+      {
+        "t": 7948,
+        "g": 1,
+        "kind": "block",
+        "file": "main.go",
+        "line": 34,
+        "reason": "chan receive",
+        "case": 0
+      },
+      {
+        "t": 9079,
+        "g": 0,
+        "kind": "unblock",
+        "target": 39,
+        "case": 0
+      },
+      {
+        "t": 9081,
+        "g": 39,
+        "kind": "unblock",
+        "file": "main.go",
+        "line": 26,
+        "target": 1,
+        "case": 0
+      },
+      {
+        "t": 9082,
+        "g": 39,
+        "kind": "end",
+        "case": 0
+      },
+      {
+        "t": 9140,
+        "g": 1,
+        "kind": "go",
+        "file": "main.go",
+        "line": 40,
+        "target": 49,
+        "case": 0
+      },
+      {
+        "t": 9145,
+        "g": 1,
+        "kind": "go",
+        "file": "main.go",
+        "line": 40,
+        "target": 50,
+        "case": 0
+      },
+      {
+        "t": 9145,
+        "g": 1,
+        "kind": "go",
+        "file": "main.go",
+        "line": 40,
+        "target": 51,
+        "case": 0
+      },
+      {
+        "t": 9146,
+        "g": 1,
+        "kind": "block",
+        "file": "main.go",
+        "line": 45,
+        "reason": "sleep",
+        "case": 0
+      },
+      {
+        "t": 9152,
+        "g": 51,
+        "kind": "block",
+        "file": "main.go",
+        "line": 42,
+        "reason": "chan send",
+        "case": 0
+      },
+      {
+        "t": 9153,
+        "g": 50,
+        "kind": "block",
+        "file": "main.go",
+        "line": 42,
+        "reason": "chan send",
+        "case": 0
+      },
+      {
+        "t": 9157,
+        "g": 49,
+        "kind": "block",
+        "file": "main.go",
+        "line": 42,
+        "reason": "chan send",
+        "case": 0
+      },
+      {
+        "t": 14785,
+        "g": 0,
+        "kind": "unblock",
+        "target": 1,
+        "case": 0
+      }
+    ],
+    "total": 60,
+    "durationUs": 14785
+  }
+}

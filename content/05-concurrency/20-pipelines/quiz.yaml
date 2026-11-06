@@ -1,0 +1,140 @@
+questions:
+  - id: chain-sum
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func gen(n int) <-chan int {
+      	out := make(chan int)
+      	go func() {
+      		defer close(out)
+      		for i := range n {
+      			out <- i
+      		}
+      	}()
+      	return out
+      }
+
+      func add(in <-chan int, d int) <-chan int {
+      	out := make(chan int)
+      	go func() {
+      		defer close(out)
+      		for v := range in {
+      			out <- v + d
+      		}
+      	}()
+      	return out
+      }
+
+      func main() {
+      	sum := 0
+      	for v := range add(add(gen(4), 10), 100) {
+      		sum += v
+      	}
+      	fmt.Println(sum)
+      }
+    options:
+      - text: "446"
+        correct: true
+        explain: "Генератор отдаёт 0, 1, 2, 3 (сумма 6), каждое значение проходит обе стадии и получает +110: 6 + 4·110 = 446. Закрытие идёт по цепочке, поэтому `range` в `main` заканчивается."
+      - text: "116"
+        explain: "Так было бы, если бы через pipeline прошло одно значение. Стадии обрабатывают поток — все четыре значения."
+      - text: "fatal error: all goroutines are asleep - deadlock!"
+        explain: "Каждая стадия закрывает свой выход через `defer close(out)`, когда её вход исчерпан, — `range` в `main` завершается."
+
+  - id: fan-out-not-broadcast
+    kind: output
+    prompt: Три воркера читают один канал. Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"sync"
+      )
+
+      func main() {
+      	jobs := make(chan int)
+      	go func() {
+      		defer close(jobs)
+      		for i := 1; i <= 6; i++ {
+      			jobs <- i
+      		}
+      	}()
+
+      	var mu sync.Mutex
+      	count, sum := 0, 0
+      	var wg sync.WaitGroup
+      	for range 3 {
+      		wg.Go(func() {
+      			for v := range jobs {
+      				mu.Lock()
+      				count++
+      				sum += v
+      				mu.Unlock()
+      			}
+      		})
+      	}
+      	wg.Wait()
+      	fmt.Println(count, sum)
+      }
+    options:
+      - text: "6 21"
+        correct: true
+        explain: "Канал — очередь, а не рассылка: каждое значение получает ровно один из читателей. Шесть значений, сумма 1+…+6 = 21, как бы они ни распределились между воркерами."
+      - text: "18 63"
+        explain: "Так было бы при широковещательной рассылке каждому воркеру. Получение из канала забирает значение — другим оно не достанется."
+      - text: Зависит от планировщика
+        explain: "От планировщика зависит, какой воркер что обработал, но не итог: все значения обработаны ровно по разу."
+
+  - id: close-input
+    kind: compile
+    prompt: Стадия решила закрыть свой вход после обработки. Скомпилируется ли программа?
+    code: |
+      package main
+
+      func stage(in <-chan int) {
+      	for range in {
+      	}
+      	close(in)
+      }
+
+      func main() {
+      	ch := make(chan int)
+      	close(ch)
+      	stage(ch)
+      }
+    compiles: false
+    explain: "`close` для канала только на чтение (`<-chan int`) — ошибка компиляции. Закрывает канал отправитель, и направленные типы каналов заставляют это правило соблюдать."
+
+  - id: early-break
+    kind: single
+    prompt: "Стадии написаны без `ctx` и `done`: `for v := range square(gen(1000)) { if v > 10 { break } }`. Что будет с горутинами `gen` и `square` после `break`?"
+    options:
+      - text: Навсегда заблокируются на отправке — это утечка
+        correct: true
+        explain: "`square` ждёт, пока кто-нибудь прочтёт её выход, `gen` — пока прочтёт `square`. Читателей больше не будет, а сборщик мусора заблокированные горутины не собирает."
+      - text: Завершатся, когда сборщик мусора увидит, что канал никому не нужен
+        explain: "Горутины не собираются сборщиком мусора, даже если ждут на недостижимом канале."
+      - text: Запаникуют с send on closed channel
+        explain: "Никто не закрывал их выходные каналы — горутины просто ждут."
+      - text: Доработают до конца, потому что каналы буферизуются автоматически
+        explain: "`make(chan int)` без ёмкости — небуферизованный канал; отправка ждёт получателя."
+
+  - id: buffer-effect
+    kind: multiple
+    prompt: "Между стадиями поставили буфер: `make(chan int, 100)`. Что это даёт?"
+    options:
+      - text: Быстрая стадия может уйти вперёд медленной на 100 значений, не блокируясь
+        correct: true
+        explain: Отправка блокируется только при полном буфере.
+      - text: Сглаживаются кратковременные рывки скорости стадий
+        correct: true
+        explain: Буфер поглощает временную разницу в темпе, пока средняя скорость стадий одинакова.
+      - text: Pipeline станет работать быстрее самой медленной стадии
+        explain: "Пропускную способность задаёт самая медленная стадия. Когда буфер заполнится, быстрая снова будет ждать — это backpressure."
+      - text: Ранний выход потребителя больше не приведёт к утечке
+        explain: "Буфер лишь откладывает блокировку: производитель заполнит его и повиснет на 101-й отправке. От утечки спасает отмена через `ctx`."

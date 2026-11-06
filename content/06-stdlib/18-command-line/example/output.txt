@@ -1,0 +1,23 @@
+os.Args[1:] пуст: true
+$ app serve -port 9000 --host=0.0.0.0 -v -tag api -tag v2 a.txt b.txt
+serve 0.0.0.0:9000 v=true timeout=30s tags=[api v2] files=["a.txt" "b.txt"]
+$ app serve -timeout 1m30s -- -not-a-flag
+serve localhost:8080 v=false timeout=1m30s tags=[] files=["-not-a-flag"]
+$ app serve x.txt -v
+serve localhost:8080 v=false timeout=30s tags=[] files=["x.txt" "-v"]
+$ app migrate -steps=abc
+ошибка: invalid value "abc" for flag -steps: parse error
+$ app deploy
+ошибка: неизвестная команда "deploy"
+$ app serve -h
+Usage of serve:
+  -host string
+    	адрес (default "localhost")
+  -port int
+    	порт HTTP-сервера (default 8080)
+  -tag value
+    	метка (можно повторять)
+  -timeout duration
+    	таймаут запроса (default 30s)
+  -v	подробный лог
+ошибка: flag: help requested

@@ -82,3 +82,7 @@ export const solution = (lesson: string) => post<{ files: Files }>("solution", {
 /** Запуск с runtime/trace для живой визуализации; тип ответа — viz/src/live/trace.ts. */
 export const trace = <T>(files: Files, lesson?: string, flags?: Flags) =>
   post<T>("trace", { files, lesson, flags });
+
+/** Запуск с -race для визуализатора гонок; тип ответа — viz/src/live/race.ts. */
+export const race = <T>(files: Files, lesson?: string, flags?: Flags) =>
+  post<T>("race", { files, lesson, flags });

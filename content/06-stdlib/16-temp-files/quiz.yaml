@@ -1,0 +1,89 @@
+questions:
+  - id: pattern-star
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"os"
+      	"path/filepath"
+      	"strings"
+      )
+
+      func main() {
+      	f, _ := os.CreateTemp("", "report-*.json")
+      	defer os.Remove(f.Name())
+      	defer f.Close()
+      	base := filepath.Base(f.Name())
+      	fmt.Println(strings.HasPrefix(base, "report-"), filepath.Ext(base))
+      }
+    options:
+      - text: "true .json"
+        correct: true
+        explain: "Последняя `*` заменяется случайной строкой, части шаблона до и после неё сохраняются — расширение остаётся на месте."
+      - text: "true .tmp"
+        explain: "`CreateTemp` не добавляет своё расширение — суффикс берётся из шаблона."
+      - text: "false .json"
+        explain: Префикс до звёздочки сохраняется дословно.
+      - text: "true \"\""
+        explain: "Случайная строка подставляется на место `*`, а не дописывается в конец, если звёздочка есть."
+
+  - id: defer-order
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"errors"
+      	"fmt"
+      	"io/fs"
+      	"os"
+      )
+
+      func work() string {
+      	dir, _ := os.MkdirTemp("", "w-")
+      	defer os.RemoveAll(dir)
+      	os.WriteFile(dir+"/a.txt", []byte("x"), 0o644)
+      	return dir
+      }
+
+      func main() {
+      	dir := work()
+      	_, err := os.Stat(dir)
+      	fmt.Println(errors.Is(err, fs.ErrNotExist))
+      }
+    options:
+      - text: "true"
+        correct: true
+        explain: "`defer os.RemoveAll(dir)` выполнился при выходе из `work` — каталог удалён вместе с файлом, хотя путь к нему ещё возвращён."
+      - text: "false"
+        explain: "`RemoveAll` удаляет и непустой каталог; отложенный вызов выполняется до того, как `main` получит результат."
+
+  - id: tempdir-cleanup
+    kind: single
+    prompt: Что делает `t.TempDir()` в тесте?
+    options:
+      - text: Возвращает `os.TempDir()` — общий каталог временных файлов
+        explain: "Общий каталог пришлось бы чистить вручную, а параллельные тесты мешали бы друг другу."
+      - text: Создаёт новый уникальный каталог и удаляет его со всем содержимым после завершения теста
+        correct: true
+        explain: "Удаление регистрируется через `t.Cleanup`. Каждый вызов `t.TempDir()` даёт новый каталог."
+      - text: Создаёт каталог, который нужно удалить через `defer os.RemoveAll`
+        explain: "Удалять не нужно — тестовый фреймворк сделает это сам и даже упадёт, если удаление не удалось."
+      - text: Создаёт каталог только в памяти
+        explain: Это обычный каталог на диске — с ним работают `os.WriteFile`, `exec.Command` и любой другой код.
+
+  - id: fatal-skips-defer
+    kind: single
+    prompt: "`main` создаёт каталог через `os.MkdirTemp`, откладывает `os.RemoveAll(dir)`, а при ошибке вызывает `log.Fatal(err)`. Что будет с каталогом при ошибке?"
+    options:
+      - text: Удалится — `defer` выполняется при любом выходе
+        explain: "`defer` выполняется при `return` и панике, но не при `os.Exit`."
+      - text: Останется на диске
+        correct: true
+        explain: "`log.Fatal` печатает сообщение и вызывает `os.Exit(1)`, а `os.Exit` завершает процесс сразу, не выполняя отложенные вызовы."
+      - text: Его удалит операционная система при завершении процесса
+        explain: ОС не знает, что каталог временный. Он останется, пока его не удалит кто-то другой.

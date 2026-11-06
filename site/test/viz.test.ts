@@ -7,6 +7,9 @@ import { pathToFileURL } from "node:url";
 import { ARROW_HEAD, arrow, type Side, validate } from "../../viz/src/index.ts";
 import { selectHeight, selectSteps, SELECT_WIDTH } from "../../viz/src/live/select.ts";
 import type { TraceResult } from "../../viz/src/live/trace.ts";
+import { GOROUTINES_WIDTH, goroutinesHeight, goroutinesSteps, MAX_FRAMES } from "../../viz/src/live/goroutines.ts";
+import { builders } from "../../viz/src/live/index.ts";
+import { raceSteps, type RaceResult } from "../../viz/src/live/race.ts";
 import { type Clock, Player } from "../../viz/src/player.ts";
 import type { Step, Viz } from "../../viz/src/types.ts";
 
@@ -173,4 +176,51 @@ test("стрелка входит в цель перпендикулярно с�
   assert.deepEqual(down.slice(-2), [100, 200 - ARROW_HEAD]);
   const level = nums((arrow("c", { x: 0, y: 50 }, { x: 100, y: 55 }) as { d: string }).d);
   assert.deepEqual(level.slice(-2), [100 - ARROW_HEAD, 55]);
+});
+
+const readFixture = (name: string) => JSON.parse(fs.readFileSync(path.join(root, "viz/test/testdata", name), "utf8"));
+
+test("горутины: стадии pipeline, передачи между ними и утечка в итоге", () => {
+  const t = (readFixture("pipeline-trace.json") as TraceResult).trace!;
+  const s = goroutinesSteps(t);
+  assert.ok(s.length >= 3 && s.length <= MAX_FRAMES + 2);
+  // Стадии сгруппированы по функции и строке go: gen, square и три одинаковые утечки — одна стадия.
+  const titles = s[s.length - 1].scene.filter((x) => x.type === "text" && x.id.endsWith(":title") && x.id.startsWith("grp")).map((x) => (x as { text: string }).text);
+  assert.deepEqual(titles, ["main", "go func в gen", "go func в square", "go func в main"]);
+  // Передачи gen → square видны в тексте шагов и стрелками.
+  assert.ok(s.some((x) => /go func в (gen \(стр\. 11\) будит go func в square \(стр\. 22\)|square \(стр\. 22\) будит go func в gen \(стр\. 11\))/.test(x.note)));
+  assert.ok(s.some((x) => x.scene.some((sh) => sh.id === "edge:1>2")));
+  // Итог: три горутины не завершились, ждут отправки на стр. 43.
+  const last = s[s.length - 1];
+  assert.match(last.note, /go func в main \(стр\. 40\): 3 — ждут отправки на стр\. 42/);
+  assert.deepEqual(last.lines, [42]);
+  const h = goroutinesHeight(t);
+  for (const step of s)
+    for (const sh of step.scene) {
+      if (sh.type === "path") continue;
+      const right = sh.type === "rect" ? sh.x + sh.w : sh.x;
+      const bottom = sh.type === "rect" ? sh.y + sh.h : sh.y;
+      assert.ok(right <= GOROUTINES_WIDTH && bottom <= h, `${sh.id}: ${right}×${bottom}`);
+    }
+});
+
+test("гонка: три шага на отчёт со строками доступов, без гонок — понятный шаг", () => {
+  const r: RaceResult = readFixture("race.json");
+  const s = raceSteps(r);
+  // Отчёты с одной и той же парой строк схлопываются.
+  assert.equal(s.length, 1 + 3);
+  assert.match(s[0].note, /Детектор нашёл/);
+  assert.deepEqual(s[3].lines, [16, 16]);
+  assert.match(s[3].note, /sync\.Mutex/);
+  assert.ok(s[3].scene.some((x) => x.id === "acc1:box"));
+  assert.ok(!s[1].scene.some((x) => x.id === "acc0:box"));
+  const clean = raceSteps({ ...r, races: [], exitCode: 0 });
+  assert.equal(clean.length, 1);
+  assert.match(clean[0].note, /ничего не нашёл/);
+});
+
+test("все живые построители зарегистрированы", () => {
+  for (const name of ["select", "goroutines", "race"]) assert.ok(builders[name], name);
+  assert.equal(typeof builders.select.build({ buildFailed: true }), "string");
+  assert.equal(typeof builders.goroutines.build({ buildFailed: false, traceError: "нет" }), "string");
 });

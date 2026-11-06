@@ -91,8 +91,8 @@
           }
         ],
         "counts": [
-          5,
-          5
+          6,
+          4
         ]
       }
     ],
@@ -125,7 +125,7 @@
         "case": 0
       },
       {
-        "t": 10,
+        "t": 14,
         "g": 22,
         "kind": "block",
         "file": "main.go",
@@ -134,7 +134,7 @@
         "case": 0
       },
       {
-        "t": 23,
+        "t": 24,
         "g": 1,
         "kind": "block",
         "file": "main.go",
@@ -143,7 +143,7 @@
         "case": 0
       },
       {
-        "t": 24,
+        "t": 25,
         "g": 23,
         "kind": "block",
         "file": "main.go",
@@ -152,14 +152,14 @@
         "case": 0
       },
       {
-        "t": 11056,
+        "t": 11035,
         "g": 0,
         "kind": "unblock",
         "target": 22,
         "case": 0
       },
       {
-        "t": 11066,
+        "t": 11045,
         "g": 22,
         "kind": "unblock",
         "file": "main.go",
@@ -168,13 +168,13 @@
         "case": 0
       },
       {
-        "t": 11066,
+        "t": 11045,
         "g": 22,
         "kind": "end",
         "case": 0
       },
       {
-        "t": 11076,
+        "t": 11058,
         "g": 1,
         "kind": "case",
         "file": "main.go",
@@ -183,7 +183,7 @@
         "case": 0
       },
       {
-        "t": 11201,
+        "t": 11129,
         "g": 1,
         "kind": "select",
         "file": "main.go",
@@ -192,7 +192,7 @@
         "case": 0
       },
       {
-        "t": 11210,
+        "t": 11165,
         "g": 1,
         "kind": "block",
         "file": "main.go",
@@ -201,14 +201,14 @@
         "case": 0
       },
       {
-        "t": 41992,
+        "t": 41261,
         "g": 0,
         "kind": "unblock",
         "target": 1,
         "case": 0
       },
       {
-        "t": 42015,
+        "t": 41272,
         "g": 1,
         "kind": "case",
         "file": "main.go",
@@ -217,7 +217,7 @@
         "case": 2
       },
       {
-        "t": 42031,
+        "t": 41293,
         "g": 1,
         "kind": "select",
         "file": "main.go",
@@ -226,7 +226,7 @@
         "case": 0
       },
       {
-        "t": 42032,
+        "t": 41293,
         "g": 1,
         "kind": "case",
         "file": "main.go",
@@ -235,7 +235,7 @@
         "case": 1
       },
       {
-        "t": 42051,
+        "t": 41303,
         "g": 1,
         "kind": "select",
         "file": "main.go",
@@ -244,43 +244,7 @@
         "case": 0
       },
       {
-        "t": 42052,
-        "g": 1,
-        "kind": "case",
-        "file": "main.go",
-        "line": 54,
-        "select": 3,
-        "case": 1
-      },
-      {
-        "t": 42052,
-        "g": 1,
-        "kind": "select",
-        "file": "main.go",
-        "line": 51,
-        "select": 3,
-        "case": 0
-      },
-      {
-        "t": 42053,
-        "g": 1,
-        "kind": "case",
-        "file": "main.go",
-        "line": 54,
-        "select": 3,
-        "case": 1
-      },
-      {
-        "t": 42053,
-        "g": 1,
-        "kind": "select",
-        "file": "main.go",
-        "line": 51,
-        "select": 3,
-        "case": 0
-      },
-      {
-        "t": 42054,
+        "t": 41304,
         "g": 1,
         "kind": "case",
         "file": "main.go",
@@ -289,7 +253,7 @@
         "case": 0
       },
       {
-        "t": 42054,
+        "t": 41304,
         "g": 1,
         "kind": "select",
         "file": "main.go",
@@ -298,7 +262,43 @@
         "case": 0
       },
       {
-        "t": 42055,
+        "t": 41305,
+        "g": 1,
+        "kind": "case",
+        "file": "main.go",
+        "line": 52,
+        "select": 3,
+        "case": 0
+      },
+      {
+        "t": 41305,
+        "g": 1,
+        "kind": "select",
+        "file": "main.go",
+        "line": 51,
+        "select": 3,
+        "case": 0
+      },
+      {
+        "t": 41305,
+        "g": 1,
+        "kind": "case",
+        "file": "main.go",
+        "line": 52,
+        "select": 3,
+        "case": 0
+      },
+      {
+        "t": 41305,
+        "g": 1,
+        "kind": "select",
+        "file": "main.go",
+        "line": 51,
+        "select": 3,
+        "case": 0
+      },
+      {
+        "t": 41305,
         "g": 1,
         "kind": "case",
         "file": "main.go",
@@ -307,7 +307,7 @@
         "case": 1
       },
       {
-        "t": 42055,
+        "t": 41306,
         "g": 1,
         "kind": "select",
         "file": "main.go",
@@ -316,7 +316,43 @@
         "case": 0
       },
       {
-        "t": 42056,
+        "t": 41306,
+        "g": 1,
+        "kind": "case",
+        "file": "main.go",
+        "line": 52,
+        "select": 3,
+        "case": 0
+      },
+      {
+        "t": 41306,
+        "g": 1,
+        "kind": "select",
+        "file": "main.go",
+        "line": 51,
+        "select": 3,
+        "case": 0
+      },
+      {
+        "t": 41306,
+        "g": 1,
+        "kind": "case",
+        "file": "main.go",
+        "line": 52,
+        "select": 3,
+        "case": 0
+      },
+      {
+        "t": 41306,
+        "g": 1,
+        "kind": "select",
+        "file": "main.go",
+        "line": 51,
+        "select": 3,
+        "case": 0
+      },
+      {
+        "t": 41307,
         "g": 1,
         "kind": "case",
         "file": "main.go",
@@ -325,7 +361,7 @@
         "case": 1
       },
       {
-        "t": 42056,
+        "t": 41307,
         "g": 1,
         "kind": "select",
         "file": "main.go",
@@ -334,25 +370,7 @@
         "case": 0
       },
       {
-        "t": 42056,
-        "g": 1,
-        "kind": "case",
-        "file": "main.go",
-        "line": 52,
-        "select": 3,
-        "case": 0
-      },
-      {
-        "t": 42057,
-        "g": 1,
-        "kind": "select",
-        "file": "main.go",
-        "line": 51,
-        "select": 3,
-        "case": 0
-      },
-      {
-        "t": 42057,
+        "t": 41307,
         "g": 1,
         "kind": "case",
         "file": "main.go",
@@ -361,7 +379,7 @@
         "case": 1
       },
       {
-        "t": 42057,
+        "t": 41308,
         "g": 1,
         "kind": "select",
         "file": "main.go",
@@ -370,7 +388,7 @@
         "case": 0
       },
       {
-        "t": 42058,
+        "t": 41312,
         "g": 1,
         "kind": "case",
         "file": "main.go",
@@ -379,7 +397,7 @@
         "case": 0
       },
       {
-        "t": 42058,
+        "t": 41312,
         "g": 1,
         "kind": "select",
         "file": "main.go",
@@ -388,34 +406,16 @@
         "case": 0
       },
       {
-        "t": 42058,
+        "t": 41312,
         "g": 1,
         "kind": "case",
         "file": "main.go",
-        "line": 52,
+        "line": 54,
         "select": 3,
-        "case": 0
-      },
-      {
-        "t": 42059,
-        "g": 1,
-        "kind": "select",
-        "file": "main.go",
-        "line": 51,
-        "select": 3,
-        "case": 0
-      },
-      {
-        "t": 42059,
-        "g": 1,
-        "kind": "case",
-        "file": "main.go",
-        "line": 52,
-        "select": 3,
-        "case": 0
+        "case": 1
       }
     ],
     "total": 36,
-    "durationUs": 42059
+    "durationUs": 41312
   }
 }

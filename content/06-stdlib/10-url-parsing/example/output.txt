@@ -1,0 +1,12 @@
+https Shop.example.com:8443 Shop.example.com 8443
+/каталог/a b | /%D0%BA%D0%B0%D1%82%D0%B0%D0%BB%D0%BE%D0%B3/a%20b
+q=go+lang&tag=x&tag=y | reviews | anna
+go lang [x y] true true
+https://Shop.example.com:8443/%D0%BA%D0%B0%D1%82%D0%B0%D0%BB%D0%BE%D0%B3/a%20b?page=2&q=go+lang
+a+b%2Fc%26d a%20b%2Fc&d
+https://api.example.com/users/%D0%90%D0%BD%D0%BD%D0%B0%20%D0%9A?v=1+2
+https://api.example.com/v1/users/a%20b
+https://example.com/docs/guide/setup
+https://example.com/docs/api
+https://example.com/about
+https://example.com/docs/guide/intro?page=2

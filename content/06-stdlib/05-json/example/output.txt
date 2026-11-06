@@ -1,0 +1,10 @@
+{"id":"42","name":"Анна"}
+{ID:7 Name:Иван Email: Tags:[] Birthday:0001-01-01 00:00:00 +0000 UTC Password: note:} <nil>
+float64 9007199254740992 bool
+user {"name":"Олег"}
+json: unknown field "age"
+{
+  "anna": "active",
+  "ivan": "blocked"
+}
+"a<b"

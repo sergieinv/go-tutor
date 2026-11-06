@@ -282,3 +282,7 @@
 .viz [data-editor] .cm-scroller {
   overflow: auto;
 }
+
+.v-muted-box {
+  opacity: 0.55;
+}

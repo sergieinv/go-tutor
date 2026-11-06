@@ -11,7 +11,9 @@ export function segments(source: string): Segment[] {
   let cur = { doc: [[]] as string[][], code: [] as string[] };
   for (const line of source.replace(/\n$/, "").split("\n")) {
     const trimmed = line.trim();
-    if (trimmed.startsWith("//")) {
+    // Директивы (//go:embed, //go:generate, //line) — код, а не пояснение.
+    const directive = /^\/\/(go:|line )/.test(trimmed);
+    if (trimmed.startsWith("//") && !directive) {
       if (cur.code.some((l) => l.trim() !== "")) {
         out.push(cur);
         cur = { doc: [[]], code: [] };

@@ -1,0 +1,10 @@
+Заказ №42 для АННА
+1. Кофе — 3.50 [горячее]
+2. Круассан — 2.25
+Позиций: 2
+Заказ №7 для ИВАН
+пусто
+Примечание: срочно
+Позиций: 0
+template: bad:1:2: executing "bad" at <.Phone>: can't evaluate field Phone in type main.order
+<p title="&lt;script&gt;&#34;x&#34;&lt;/script&gt;">&lt;script&gt;&#34;x&#34;&lt;/script&gt;</p>

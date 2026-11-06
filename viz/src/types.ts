@@ -73,8 +73,12 @@ export interface Scenario {
 export interface LiveSpec {
   kind: "live";
   title: string;
-  /** Построитель шагов из трассы: см. viz/src/live. */
-  builder: "select";
+  /**
+   * Построитель шагов (viz/src/live/index.ts):
+   * select — операторы select по трассе; goroutines — стадии и передачи между
+   * горутинами, утечки (pipeline, fan-in/out); race — отчёт детектора гонок.
+   */
+  builder: "select" | "goroutines" | "race";
   /** Программа относительно папки урока; её проверяет lessonlint. */
   file: string;
   /** Варианты GOMAXPROCS в интерфейсе; пусто — без выбора. */

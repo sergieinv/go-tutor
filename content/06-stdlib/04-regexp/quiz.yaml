@@ -1,0 +1,111 @@
+questions:
+  - id: dollar-name
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"regexp"
+      )
+
+      func main() {
+      	re := regexp.MustCompile(`(\w+)@(\w+)`)
+      	fmt.Printf("%q\n", re.ReplaceAllString("ann@mail bob@corp", "$1_$2"))
+      }
+    options:
+      - text: "\"mail corp\""
+        correct: true
+        explain: "После `$` берётся самое длинное имя из букв, цифр и `_`: `$1_` — ссылка на несуществующую группу `1_`, она даёт пустую строку. Остаётся только `$2`. Правильно — `${1}_$2`."
+      - text: "\"ann_mail bob_corp\""
+        explain: "Так было бы с `${1}_$2`. Без скобок `_` считается частью имени группы."
+      - text: "\"$1_mail $1_corp\""
+        explain: "Неизвестная группа не остаётся текстом — она заменяется пустой строкой."
+
+  - id: greedy
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"regexp"
+      )
+
+      func main() {
+      	s := "<a><b>"
+      	fmt.Println(regexp.MustCompile(`<.+>`).FindString(s), regexp.MustCompile(`<.+?>`).FindString(s))
+      }
+    options:
+      - text: "<a><b> <a>"
+        correct: true
+        explain: "`.+` жадный и захватывает как можно больше, `.+?` — ленивый и останавливается на первой `>`. Ленивые квантификаторы в RE2 есть, нет только lookaround и обратных ссылок."
+      - text: "<a> <a>"
+        explain: "Без `?` квантификатор жадный: совпадение тянется до последней `>`."
+      - text: "<a><b> <a><b>"
+        explain: "RE2 поддерживает ленивые квантификаторы `+?`, `*?`, `??`."
+
+  - id: lookbehind
+    kind: single
+    prompt: "Что вернёт `regexp.Compile(`(?<=\\$)\\d+`)`?"
+    options:
+      - text: Ошибку разбора — lookbehind в RE2 не поддерживается
+        correct: true
+        explain: "RE2 гарантирует линейное время и поэтому не поддерживает lookaround и обратные ссылки. Вместо lookbehind захватите число группой: `\\$(\\d+)` и берите `m[1]`."
+      - text: Выражение, которое находит числа после `$`
+        explain: Так работает .NET с движком по умолчанию. В Go `Compile` вернёт ошибку.
+      - text: Выражение, которое находит числа, а условие `(?<=…)` игнорируется
+        explain: Неподдерживаемый синтаксис не игнорируется молча — это ошибка разбора.
+      - text: Панику
+        explain: "Паникует `MustCompile`. `Compile` возвращает ошибку вторым результатом."
+
+  - id: find-all-n
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"regexp"
+      )
+
+      func main() {
+      	re := regexp.MustCompile(`\d+`)
+      	fmt.Println(re.FindAllString("a1b22c333", 2), re.FindAllString("abc", -1) == nil)
+      }
+    options:
+      - text: "[1 22] true"
+        correct: true
+        explain: "Второй аргумент ограничивает число совпадений: `2` — не больше двух, `-1` — все. Без совпадений возвращается `nil`."
+      - text: "[1 22 333] false"
+        explain: "`n = 2` ограничивает результат двумя совпадениями. Пустой результат — `nil`, а не пустой срез."
+      - text: "[22] true"
+        explain: "Второй аргумент — это количество совпадений, а не индекс."
+
+  - id: match-anywhere
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"regexp"
+      )
+
+      var digits = regexp.MustCompile(`[0-9]+`)
+
+      func main() {
+      	fmt.Println(digits.MatchString("id-42"), regexp.MustCompile(`^[0-9]+$`).MatchString("42\n"))
+      }
+    options:
+      - text: "true false"
+        correct: true
+        explain: "`MatchString` ищет совпадение в любом месте строки. С якорями `^…$` проверяется вся строка, а без флага `(?m)` `$` — строго конец текста, и `\\n` в конце мешает."
+      - text: "false true"
+        explain: "Без якорей совпадение ищется где угодно, а `$` в RE2 не пропускает завершающий `\\n` (в отличие от .NET, где `$` совпадает и перед последним `\\n`)."
+      - text: "true true"
+        explain: "В Go `$` без `(?m)` совпадает только в самом конце текста, перевод строки после `42` не пропускается."

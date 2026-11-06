@@ -1,0 +1,113 @@
+questions:
+  - id: default-level
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"log/slog"
+      	"os"
+      )
+
+      func main() {
+      	h := slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
+      		ReplaceAttr: func(g []string, a slog.Attr) slog.Attr {
+      			if a.Key == slog.TimeKey {
+      				return slog.Attr{}
+      			}
+      			return a
+      		},
+      	})
+      	log := slog.New(h)
+      	log.Debug("a")
+      	log.Info("b", "n", 1)
+      	log.Info("c", "k")
+      }
+    options:
+      - text: "level=INFO msg=b n=1\nlevel=INFO msg=c !BADKEY=k"
+        correct: true
+        explain: "Уровень по умолчанию — `Info`, поэтому `Debug` отсечён. Ключ без значения slog выводит как `!BADKEY=k` — компилятор такую ошибку не ловит, только `go vet`."
+      - text: "level=DEBUG msg=a\nlevel=INFO msg=b n=1\nlevel=INFO msg=c k="
+        explain: "Без `HandlerOptions.Level` минимальный уровень — `Info`, `Debug` не выводится."
+      - text: "level=INFO msg=b n=1\nlevel=INFO msg=c k=<nil>"
+        explain: Нечётный аргумент не становится ключом с пустым значением — он помечается как `!BADKEY`.
+
+  - id: with-group
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"log/slog"
+      	"os"
+      )
+
+      func main() {
+      	h := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+      		ReplaceAttr: func(g []string, a slog.Attr) slog.Attr {
+      			if a.Key == slog.TimeKey && len(g) == 0 {
+      				return slog.Attr{}
+      			}
+      			return a
+      		},
+      	})
+      	log := slog.New(h).With("app", "shop").WithGroup("req")
+      	log.Info("ok", "id", 5)
+      }
+    options:
+      - text: '{"level":"INFO","msg":"ok","app":"shop","req":{"id":5}}'
+        correct: true
+        explain: "Атрибуты, добавленные `With` до `WithGroup`, остаются на верхнем уровне. Всё, что добавлено после `WithGroup`, — включая атрибуты вызова — попадает в группу `req`."
+      - text: '{"level":"INFO","msg":"ok","req":{"app":"shop","id":5}}'
+        explain: "`WithGroup` влияет только на атрибуты, добавленные после него, а `app` добавлен раньше."
+      - text: '{"level":"INFO","msg":"ok","app":"shop","id":5}'
+        explain: "`WithGroup(\"req\")` вкладывает последующие атрибуты в объект `req`."
+
+  - id: log-valuer
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"log/slog"
+      	"os"
+      )
+
+      type Token string
+
+      func (Token) LogValue() slog.Value { return slog.StringValue("***") }
+
+      func main() {
+      	h := slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
+      		ReplaceAttr: func(g []string, a slog.Attr) slog.Attr {
+      			if a.Key == slog.TimeKey {
+      				return slog.Attr{}
+      			}
+      			return a
+      		},
+      	})
+      	slog.New(h).Info("auth", "token", Token("abc123"))
+      }
+    options:
+      - text: "level=INFO msg=auth token=abc123"
+        explain: "`Token` реализует `slog.LogValuer` — при выводе используется результат `LogValue`."
+      - text: "level=INFO msg=auth token=***"
+        correct: true
+        explain: "Обработчик вызывает `LogValue` у значений, реализующих `slog.LogValuer`. Так прячут секреты и откладывают дорогие вычисления до реального вывода."
+      - text: 'level=INFO msg=auth token="***"'
+        explain: "`TextHandler` берёт значение в кавычки, только если в нём есть пробелы, `=` или спецсимволы; `***` выводится как есть."
+
+  - id: with-attrs-wrapper
+    kind: single
+    prompt: "Своя обёртка над `slog.Handler` в `WithAttrs` возвращает `h.next.WithAttrs(attrs)`. Что сломается?"
+    options:
+      - text: Ничего — атрибуты всё равно попадут в вывод
+        explain: Атрибуты попадут, но логика обёртки — нет.
+      - text: После `logger.With(...)` записи пойдут в `next` в обход обёртки
+        correct: true
+        explain: "`Logger.With` заменяет обработчик тем, что вернул `WithAttrs`. Нужно возвращать новую обёртку вокруг `h.next.WithAttrs(attrs)`."
+      - text: Атрибуты из `With` выведутся дважды
+        explain: "Дублирования нет: `next.WithAttrs` один раз запоминает атрибуты. Проблема в том, что обёртка выпадает из цепочки."

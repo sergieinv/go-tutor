@@ -1,0 +1,114 @@
+questions:
+  - id: pipeline-order
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"os"
+      	"text/template"
+      )
+
+      func main() {
+      	t := template.Must(template.New("").Parse(`{{"a" | printf "%s-%s" "b"}}`))
+      	t.Execute(os.Stdout, nil)
+      }
+    options:
+      - text: "b-a"
+        correct: true
+        explain: "Конвейер передаёт значение слева **последним** аргументом: `printf \"%s-%s\" \"b\" \"a\"`."
+      - text: "a-b"
+        explain: "Так было бы, если бы значение подставлялось первым аргументом, как в методах-расширениях C#. В шаблонах Go — последним."
+      - text: "%s-%s b a"
+        explain: "`printf` в шаблонах — это `fmt.Sprintf`, он подставит аргументы в формат."
+
+  - id: truthiness
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"os"
+      	"text/template"
+      )
+
+      func main() {
+      	t := template.Must(template.New("").Parse(`{{if .}}да{{else}}нет{{end}} `))
+      	for _, v := range []any{0, "0", []int{}, map[string]int{"a": 1}} {
+      		t.Execute(os.Stdout, v)
+      	}
+      }
+    options:
+      - text: "нет да нет да"
+        correct: true
+        explain: "Ложь в шаблонах — нулевое значение или пустая коллекция: `0`, `\"\"`, `nil`, пустые срез и map. Строка `\"0\"` непустая — значит, истина."
+      - text: "нет нет нет да"
+        explain: "Строка `\"0\"` не пустая, а шаблоны не преобразуют строки в числа."
+      - text: "да да да да"
+        explain: "`if` проверяет не «не nil», а «не нулевое и не пустое»: `0` и пустой срез — ложь."
+
+  - id: trim-markers
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"os"
+      	"text/template"
+      )
+
+      func main() {
+      	t := template.Must(template.New("").Parse("[\n  {{- range .}}\n  {{.}}\n  {{- end}}\n]"))
+      	t.Execute(os.Stdout, []int{1, 2})
+      }
+    options:
+      - text: "[\n  1\n  2\n]"
+        correct: true
+        explain: "`{{-` съедает все пробельные символы слева, включая перевод строки. Внутри `range` остаётся `\\n  {{.}}`, а пробелы перед `{{- end}}` и `{{- range}}` удалены."
+      - text: "[12]"
+        explain: "Маркер `-` есть только с левой стороны действий: текст `\\n  ` перед `{{.}}` остаётся."
+      - text: "[\n  \n  1\n  \n  2\n]"
+        explain: "`{{-` удаляет пробелы и переводы строк перед действием, поэтому пустых строк не будет."
+
+  - id: unexported
+    kind: single
+    prompt: "Данные — `struct{ name string }{\"Анна\"}`, шаблон — `Привет, {{.name}}!`. Что произойдёт?"
+    options:
+      - text: "`Execute` вернёт ошибку: поле неэкспортируемое"
+        correct: true
+        explain: "Шаблоны работают через рефлексию и видят только экспортируемые поля и методы. Ошибка: `name is an unexported field`. До ошибки в writer уже записано `Привет, `."
+      - text: "Будет выведено `Привет, Анна!`"
+        explain: "Регистр первой буквы определяет видимость и для `text/template`: `name` недоступно вне пакета."
+      - text: "Будет выведено `Привет, <no value>!`"
+        explain: "`<no value>` печатается для отсутствующего ключа map. Для поля структуры — ошибка."
+      - text: Ошибка в `Parse`
+        explain: "`Parse` не знает типа данных — проверка полей происходит только при `Execute`."
+
+  - id: missing-key
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"os"
+      	"text/template"
+      )
+
+      func main() {
+      	t := template.Must(template.New("t").Parse("[{{.user}}]"))
+      	err := t.Execute(os.Stdout, map[string]string{"name": "x"})
+      	fmt.Println(err == nil)
+      }
+    options:
+      - text: "[<no value>]true"
+        correct: true
+        explain: "По умолчанию отсутствующий ключ map — не ошибка, а пустое значение, которое печатается как `<no value>`. Строгий режим — `Option(\"missingkey=error\")`."
+      - text: "[]true"
+        explain: "Пустую строку печатает `missingkey=zero` для `map[string]string`. По умолчанию — `<no value>`."
+      - text: "[false"
+        explain: "Это поведение `missingkey=error`. По умолчанию исполнение продолжается."

@@ -1,0 +1,143 @@
+questions:
+  - id: tags-and-export
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"encoding/json"
+      	"fmt"
+      )
+
+      type item struct {
+      	Name  string `json:"name"`
+      	Price int    `json:"price,omitempty"`
+      	Note  string `json:"-"`
+      	qty   int
+      }
+
+      func main() {
+      	b, _ := json.Marshal(item{Name: "кофе", Note: "x", qty: 2})
+      	fmt.Println(string(b))
+      }
+    options:
+      - text: "{\"name\":\"кофе\"}"
+        correct: true
+        explain: "`Price` равен 0 и пропущен из-за `omitempty`, `Note` исключён тегом `-`, а `qty` неэкспортируемое — пакет `json` его не видит."
+      - text: "{\"name\":\"кофе\",\"price\":0,\"qty\":2}"
+        explain: "`omitempty` пропускает нулевое число, а неэкспортируемые поля не сериализуются никогда."
+      - text: "{\"name\":\"кофе\",\"Note\":\"x\"}"
+        explain: "Тег `json:\"-\"` полностью исключает поле из JSON."
+
+  - id: unmarshal-merge
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"encoding/json"
+      	"fmt"
+      )
+
+      type T struct {
+      	A int
+      	B int
+      }
+
+      func main() {
+      	t := T{A: 1, B: 2}
+      	err := json.Unmarshal([]byte(`{"a": 5}`), &t)
+      	fmt.Println(t, err)
+      }
+    options:
+      - text: "{5 2} <nil>"
+        correct: true
+        explain: "`Unmarshal` не обнуляет значение заранее: заполняет только поля, ключи которых есть в JSON. Ключ `a` совпал с полем `A` без учёта регистра."
+      - text: "{5 0} <nil>"
+        explain: "Поля без ключа в JSON не трогаются — `B` сохранит старое значение 2."
+      - text: "{1 2} <nil>"
+        explain: "Сопоставление ключей с полями не учитывает регистр: `a` попадёт в `A`."
+      - text: "{1 2} json: unknown field \"a\""
+        explain: "Неизвестные ключи — ошибка только в `Decoder` с `DisallowUnknownFields`. И `a` здесь не неизвестный: он совпал с `A`."
+
+  - id: nil-vs-empty
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"encoding/json"
+      	"fmt"
+      )
+
+      func main() {
+      	var a []int
+      	b := []int{}
+      	x, _ := json.Marshal(a)
+      	y, _ := json.Marshal(b)
+      	fmt.Println(string(x), string(y))
+      }
+    options:
+      - text: "null []"
+        correct: true
+        explain: "`nil`-срез кодируется как `null`, пустой — как `[]`. Если клиент API ждёт массив, инициализируйте срез: `[]int{}`."
+      - text: "[] []"
+        explain: "`encoding/json` различает `nil` и пустой срез. `null` для `nil` — частая неожиданность для фронтенда."
+      - text: "null null"
+        explain: "Пустой, но не `nil` срез кодируется как `[]`."
+
+  - id: any-types
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"encoding/json"
+      	"fmt"
+      )
+
+      func main() {
+      	var v any
+      	json.Unmarshal([]byte(`{"n": 1, "s": "2"}`), &v)
+      	m := v.(map[string]any)
+      	fmt.Printf("%T %T\n", m["n"], m["s"])
+      }
+    options:
+      - text: "float64 string"
+        correct: true
+        explain: "В `any` числа JSON всегда разбираются как `float64` — у JSON нет отдельного целого типа. Сохранить число как есть — `Decoder.UseNumber()`."
+      - text: "int string"
+        explain: "Без подсказки в виде типа поля пакет не знает, что число целое, и выбирает `float64`."
+      - text: "int64 string"
+        explain: "`int64` получится только при разборе в поле типа `int64`. В `any` — `float64`."
+
+  - id: non-pointer
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"encoding/json"
+      	"fmt"
+      )
+
+      type T struct{ A int }
+
+      func main() {
+      	var t T
+      	err := json.Unmarshal([]byte(`{"A": 1}`), t)
+      	fmt.Println(t.A, err)
+      }
+    options:
+      - text: "0 json: Unmarshal(non-pointer main.T)"
+        correct: true
+        explain: "Аргумент `any` компилятор пропускает, но `Unmarshal` нужен указатель, чтобы записать результат. Без него — ошибка времени выполнения, `t` не меняется."
+      - text: "1 <nil>"
+        explain: "Значение передано копией — даже если бы разбор прошёл, `t` в `main` не изменилась бы. Пакет это проверяет и возвращает ошибку."
+      - text: Программа не скомпилируется
+        explain: "Параметр `Unmarshal` имеет тип `any` — подойдёт что угодно. Ошибка появится только при выполнении."

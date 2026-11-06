@@ -1,12 +1,11 @@
 // Плеер визуализаций на странице: сценарный режим листает шаги из JSON,
 // собранного при сборке; живой — запускает код в runner и строит шаги из трассы.
 import type { EditorView } from "@codemirror/view";
-import type { Trace, TraceResult } from "../../../../viz/src/live/trace.ts";
-import { SELECT_WIDTH, selectHeight, selectSteps } from "../../../../viz/src/live/select.ts";
+import { builders } from "../../../../viz/src/live/index.ts";
 import { Player } from "../../../../viz/src/player.ts";
 import { createSurface, renderScene, type Surface } from "../../../../viz/src/render.ts";
 import type { Step } from "../../../../viz/src/types.ts";
-import { trace, RunnerError } from "./api.ts";
+import { race, trace, RunnerError } from "./api.ts";
 import { createEditor, getDoc, highlightLines, setDoc } from "./editor.ts";
 import { loadDraft, saveDraft, storage } from "./progress.ts";
 import { showError, showPending, showRun } from "./render.ts";
@@ -120,7 +119,7 @@ function mountLive(root: HTMLElement) {
   const runBtn = root.querySelector<HTMLButtonElement>("[data-act=trace]")!;
   const kv = storage();
 
-  const ui = bindUi(root, SELECT_WIDTH, 200);
+  const ui = bindUi(root, 680, 200);
   const player = new Player([]);
   host.replaceChildren();
   let busy = false;
@@ -132,36 +131,38 @@ function mountLive(root: HTMLElement) {
   });
   bindPlayer(ui, player, (lines) => highlightLines(editor, lines));
 
+  const builder = builders[root.dataset.builder!];
+
   async function build() {
     if (busy) return;
     busy = true;
     runBtn.disabled = true;
     player.pause();
-    showPending(result, "Запуск с трассировкой…");
+    showPending(result, builder.endpoint === "race" ? "Запуск с детектором гонок…" : "Запуск с трассировкой…");
     try {
       const flags = procs?.value ? { gomaxprocs: Number(procs.value) } : undefined;
-      const r = await trace<TraceResult>({ "main.go": getDoc(editor) }, lesson, flags);
+      const call = builder.endpoint === "race" ? race : trace;
+      const r = await call<Parameters<typeof showRun>[1]>({ "main.go": getDoc(editor) }, lesson, flags);
       showRun(result, r);
-      if (r.trace) show(r.trace);
-      else if (!r.buildFailed) {
-        const p = document.createElement("p");
-        p.className = "status status-bad";
-        p.textContent = r.traceError ?? "Трассы нет.";
-        result.prepend(p);
+      const built = builder.build(r);
+      if (typeof built === "string") {
+        if (!r.buildFailed) {
+          const p = document.createElement("p");
+          p.className = "status status-bad";
+          p.textContent = built;
+          result.prepend(p);
+        }
+        return;
       }
+      ui.surface.svg.setAttribute("viewBox", `0 0 ${built.width} ${built.height}`);
+      fillList(ui.list, built.steps);
+      player.load(built.steps);
     } catch (e) {
       showError(result, e instanceof RunnerError ? e.message : String(e));
     } finally {
       busy = false;
       runBtn.disabled = false;
     }
-  }
-
-  function show(t: Trace) {
-    const steps = selectSteps(t);
-    ui.surface.svg.setAttribute("viewBox", `0 0 ${SELECT_WIDTH} ${selectHeight(t)}`);
-    fillList(ui.list, steps);
-    player.load(steps);
   }
 
   runBtn.addEventListener("click", build);

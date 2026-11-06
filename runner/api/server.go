@@ -1,4 +1,4 @@
-// Package api — HTTP-интерфейс runner: /api/run, /api/test, /api/fmt, /api/trace.
+// Package api — HTTP-интерфейс runner: /api/run, /api/test, /api/fmt, /api/trace, /api/race.
 package api
 
 import (
@@ -42,6 +42,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/fmt", s.handleFmt)
 	mux.HandleFunc("POST /api/solution", s.handleSolution)
 	mux.HandleFunc("POST /api/trace", s.handleTrace)
+	mux.HandleFunc("POST /api/race", s.handleRace)
 	mux.HandleFunc("GET /api/health", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "lessons": len(s.lessons)})
 	})
@@ -117,6 +118,28 @@ func (s *Server) handleTrace(w http.ResponseWriter, r *http.Request) {
 	}
 	s.log.Info("trace", "lesson", req.Lesson, "ms", res.DurationMs, "exit", res.ExitCode,
 		"buildFailed", res.BuildFailed, "events", events, "traceError", res.TraceError)
+	writeJSON(w, http.StatusOK, res)
+}
+
+// handleRace запускает программу с -race и отдаёт разобранные отчёты детектора
+// для живого визуализатора гонок.
+func (s *Server) handleRace(w http.ResponseWriter, r *http.Request) {
+	var req runRequest
+	if !decode(w, r, &req) {
+		return
+	}
+	flags, ok := s.runFlags(w, req)
+	if !ok {
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), s.queueTimeout)
+	defer cancel()
+	res, err := livetrace.RunRace(ctx, s.exec, req.Files, flags)
+	if s.fail(w, r, err) {
+		return
+	}
+	s.log.Info("race", "lesson", req.Lesson, "ms", res.DurationMs, "exit", res.ExitCode,
+		"buildFailed", res.BuildFailed, "races", len(res.Races))
 	writeJSON(w, http.StatusOK, res)
 }
 

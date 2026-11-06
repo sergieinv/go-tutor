@@ -1,0 +1,7 @@
+[1 2 5 8] [Cherry apple banana]
+[{Олег ops 41} {Анна dev 29} {Вера ops 29} {Иван dev 25}]
+[{Иван dev 25} {Анна dev 29} {Вера ops 29} {Олег ops 41}]
+[{Анна dev 29} {Иван dev 25} {Вера ops 29} {Олег ops 41}]
+2 true 3 false
+true 8
+[1 2 3]

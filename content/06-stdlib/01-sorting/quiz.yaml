@@ -1,0 +1,126 @@
+questions:
+  - id: byte-order
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"slices"
+      )
+
+      func main() {
+      	s := []string{"b", "B", "a", "_"}
+      	slices.Sort(s)
+      	fmt.Println(s)
+      }
+    options:
+      - text: "[B _ a b]"
+        correct: true
+        explain: "Строки сравниваются побайтно: `B` = 0x42, `_` = 0x5F, `a` = 0x61, `b` = 0x62. Никакой культуры и регистронезависимости — как `StringComparer.Ordinal`."
+      - text: "[_ a b B]"
+        explain: Знак подчёркивания (0x5F) идёт после заглавных букв (0x41–0x5A) в таблице ASCII.
+      - text: "[a b B _]"
+        explain: Заглавные латинские буквы в UTF-8 имеют меньшие коды, чем строчные, и идут раньше.
+      - text: "[_ a B b]"
+        explain: Так сортировал бы культурно-зависимый компаратор. `slices.Sort` сравнивает байты.
+
+  - id: binary-search-missing
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"slices"
+      )
+
+      func main() {
+      	s := []int{10, 20, 30}
+      	fmt.Println(slices.BinarySearch(s, 25))
+      	fmt.Println(slices.BinarySearch(s, 99))
+      }
+    options:
+      - text: "2 false\n3 false"
+        correct: true
+        explain: "Если элемента нет, `BinarySearch` возвращает позицию, куда его надо вставить, чтобы сохранить порядок: 25 встанет на место 2, а 99 — в конец, на позицию `len(s)`."
+      - text: "-1 false\n-1 false"
+        explain: "Go не кодирует «не найдено» отрицательным индексом — для этого есть второй результат `bool`."
+      - text: "-3 false\n-4 false"
+        explain: Так возвращает `List<T>.BinarySearch` в .NET (`~index`). В Go позиция вставки возвращается как есть.
+      - text: "1 false\n2 false"
+        explain: Возвращается позиция вставки, а не индекс ближайшего меньшего элемента.
+
+  - id: cmp-or
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"cmp"
+      	"fmt"
+      )
+
+      func main() {
+      	fmt.Println(cmp.Or(0, -1, 5), cmp.Or("", "x"), cmp.Or(0, 0))
+      }
+    options:
+      - text: "-1 x 0"
+        correct: true
+        explain: "`cmp.Or` возвращает первый аргумент, не равный нулевому значению своего типа, а если таких нет — нулевое значение. На этом и строится сортировка по нескольким ключам: первый ненулевой результат сравнения решает."
+      - text: "5 x 0"
+        explain: "`cmp.Or` не ищет максимум — он берёт первый ненулевой аргумент, а `-1` не ноль."
+      - text: "true true false"
+        explain: "Это не логическое «или»: `cmp.Or` возвращает само значение, а не `bool`."
+
+  - id: less-func
+    kind: compile
+    prompt: Скомпилируется ли программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"slices"
+      )
+
+      func main() {
+      	s := []int{3, 1, 2}
+      	slices.SortFunc(s, func(a, b int) bool { return a < b })
+      	fmt.Println(s)
+      }
+    compiles: false
+    explain: "`slices.SortFunc` ждёт функцию `func(a, b E) int` — трёхзначное сравнение, как `IComparer`. Функция «меньше» с результатом `bool` — это стиль старого `sort.Slice`; для `SortFunc` её надо переписать через `cmp.Compare(a, b)`."
+
+  - id: sort-in-place
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"slices"
+      )
+
+      func sorted(s []int) []int {
+      	slices.Sort(s)
+      	return s
+      }
+
+      func main() {
+      	orig := []int{3, 1, 2}
+      	res := sorted(orig[:2])
+      	fmt.Println(res, orig)
+      }
+    options:
+      - text: "[1 3] [1 3 2]"
+        correct: true
+        explain: "`orig[:2]` разделяет массив с `orig`. Сортировка на месте переставила первые два элемента общего массива, третий не тронут."
+      - text: "[1 3] [3 1 2]"
+        explain: "`slices.Sort` не создаёт копию — в отличие от `OrderBy`. Нужна копия — `slices.Clone`."
+      - text: "[1 2] [3 1 2]"
+        explain: "Сортируется только подсрез из двух элементов `[3 1]`; элемент `2` в него не входит."

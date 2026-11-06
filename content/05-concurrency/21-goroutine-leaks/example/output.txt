@@ -1,0 +1,5 @@
+fetch без буфера, утекло: 3
+fetch с буфером 1, утекло: 0
+range без close, утекло: 1
+range с close, утекло ещё: 0
+poll после cancel, утекло: 0

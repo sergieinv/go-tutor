@@ -20,7 +20,7 @@ const codeHtml = await highlight((viz.kind === "scenario" ? viz.code : liveCode)
 const steps = viz.kind === "scenario" ? viz.steps : [];
 ---
 
-<figure class="viz" data-viz data-kind={viz.kind} data-lesson={lesson.id} tabindex="-1" aria-label={`Визуализация: ${viz.title}`}>
+<figure class="viz" data-viz data-kind={viz.kind} data-builder={viz.kind === "live" ? viz.builder : undefined} data-lesson={lesson.id} tabindex="-1" aria-label={`Визуализация: ${viz.title}`}>
   <figcaption class="viz-title">
     {viz.title}
     {viz.kind === "live" && <span class="badge">живая</span>}
@@ -73,7 +73,9 @@ const steps = viz.kind === "scenario" ? viz.steps : [];
   <p class="viz-note" data-note aria-live="polite">
     {
       viz.kind === "live"
-        ? "Нажмите «Запустить и построить»: код выполнится в runner с трассировкой, и шаги построятся по тому, что произошло на самом деле."
+        ? viz.builder === "race"
+          ? "Нажмите «Запустить и построить»: код выполнится в runner с детектором гонок (-race), и шаги построятся по его отчёту."
+          : "Нажмите «Запустить и построить»: код выполнится в runner с трассировкой, и шаги построятся по тому, что произошло на самом деле."
         : ""
     }
   </p>

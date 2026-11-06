@@ -1,0 +1,95 @@
+questions:
+  - id: bool-space
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"flag"
+      	"fmt"
+      )
+
+      func main() {
+      	fs := flag.NewFlagSet("app", flag.ContinueOnError)
+      	v := fs.Bool("v", false, "verbose")
+      	n := fs.Int("n", 1, "count")
+      	fs.Parse([]string{"-v", "false", "-n", "5"})
+      	fmt.Println(*v, *n, fs.Args())
+      }
+    options:
+      - text: "false 5 []"
+        explain: "Булев флаг не берёт значение через пробел — для этого нужно `-v=false`."
+      - text: "true 1 [false -n 5]"
+        correct: true
+        explain: "`-v` означает `true`, а `false` — первый позиционный аргумент. На нём разбор флагов останавливается, поэтому `-n 5` тоже попадает в `Args()`, а `n` остаётся по умолчанию."
+      - text: "true 5 [false]"
+        explain: "`flag` не ищет флаги после позиционных аргументов — разбор заканчивается на `false`."
+
+  - id: double-dash
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"flag"
+      	"fmt"
+      )
+
+      func main() {
+      	fs := flag.NewFlagSet("app", flag.ContinueOnError)
+      	name := fs.String("name", "anon", "")
+      	fs.Parse([]string{"--name=go", "--", "-x", "file"})
+      	fmt.Println(*name, fs.NArg(), fs.Arg(0))
+      }
+    options:
+      - text: "go 2 -x"
+        correct: true
+        explain: "Две черты в `--name` равноправны с одной. Отдельный `--` завершает флаги и сам в `Args()` не попадает, поэтому `-x` — позиционный аргумент."
+      - text: "go 3 --"
+        explain: "Терминатор `--` поглощается при разборе и в позиционные аргументы не входит."
+      - text: "anon 4 --name=go"
+        explain: "`--name=go` — корректная запись флага: `flag` принимает и одну, и две черты."
+
+  - id: help-error
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"errors"
+      	"flag"
+      	"fmt"
+      	"io"
+      )
+
+      func main() {
+      	fs := flag.NewFlagSet("app", flag.ContinueOnError)
+      	fs.SetOutput(io.Discard)
+      	fs.Int("port", 80, "")
+      	err1 := fs.Parse([]string{"-h"})
+      	err2 := fs.Parse([]string{"-port", "http"})
+      	fmt.Println(errors.Is(err1, flag.ErrHelp), err2 != nil)
+      }
+    options:
+      - text: "true true"
+        correct: true
+        explain: "Флаг `-h` (если вы не объявили свой) превращается в `flag.ErrHelp`. Нечисловое значение `-port` — ошибка разбора. С `ContinueOnError` обе возвращаются, процесс не завершается."
+      - text: "false true"
+        explain: "`-h` и `-help` пакет обрабатывает сам и возвращает `flag.ErrHelp`."
+      - text: Программа завершится с кодом 2 после первого Parse
+        explain: Так ведёт себя `ExitOnError`. Здесь `ContinueOnError` — ошибки возвращаются вызывающему.
+
+  - id: flag-value-iface
+    kind: single
+    prompt: Что нужно, чтобы свой тип можно было передать в `fs.Var`?
+    options:
+      - text: "Методы `String() string` и `Set(string) error`"
+        correct: true
+        explain: "Это интерфейс `flag.Value`. `Set` вызывается для каждого вхождения флага — так делают повторяемые флаги и флаги со своим форматом."
+      - text: "Метод `Parse(string) (T, error)`"
+        explain: "`flag` не использует дженерики и такой метод не ищет — нужен интерфейс `flag.Value`."
+      - text: Атрибут-тег у поля структуры
+        explain: "Пакет `flag` не разбирает теги структур — флаги объявляются вызовами функций."

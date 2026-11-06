@@ -1,0 +1,91 @@
+questions:
+  - id: burst-prefilled
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func main() {
+      	tokens := make(chan struct{}, 3)
+      	for range 3 {
+      		tokens <- struct{}{}
+      	}
+      	passed := 0
+      	for range 5 {
+      		select {
+      		case <-tokens:
+      			passed++
+      		default:
+      		}
+      	}
+      	fmt.Println(passed)
+      }
+    options:
+      - text: "3"
+        correct: true
+        explain: В ведре три токена, пополнения нет. Первые три попытки забирают их, две последние уходят в `default`.
+      - text: "5"
+        explain: Токенов всего три, а `select` с `default` не ждёт новых.
+      - text: "0"
+        explain: Ведро заполнено заранее — первые запросы проходят сразу, в этом и смысл burst.
+      - text: deadlock
+        explain: "`default` делает получение неблокирующим, программа не зависает."
+
+  - id: drop-extra
+    kind: output
+    prompt: Пополнение ведра выполнили пять раз. Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func main() {
+      	tokens := make(chan struct{}, 2)
+      	refill := func() {
+      		select {
+      		case tokens <- struct{}{}:
+      		default:
+      		}
+      	}
+      	for range 5 {
+      		refill()
+      	}
+      	fmt.Println(len(tokens))
+      }
+    options:
+      - text: "2"
+        correct: true
+        explain: "Ёмкость ведра — 2. Три лишних пополнения ушли в `default`: запас не копится сверх `burst`."
+      - text: "5"
+        explain: Буферизованный канал не растёт сверх своей ёмкости.
+      - text: deadlock
+        explain: Блокирующая отправка в полный канал зависла бы, но здесь она в `select` с `default`.
+
+  - id: tick-in-loop
+    kind: single
+    prompt: "Что не так с кодом `for req := range reqs { <-time.Tick(time.Second); handle(req) }`?"
+    options:
+      - text: Ничего — запросы идут не чаще раза в секунду
+        explain: Частота действительно не выше раза в секунду, но причина в другом — см. правильный ответ.
+      - text: На каждой итерации создаётся новый тикер, и каждый запрос просто ждёт секунду
+        correct: true
+        explain: "Тикер не переиспользуется: если запросы приходят редко, каждый всё равно ждёт целую секунду, вместо того чтобы пройти сразу. Тикер создают один раз до цикла."
+      - text: Не скомпилируется — `time.Tick` возвращает `*Ticker`
+        explain: "`time.Tick` возвращает канал `<-chan time.Time`, код компилируется."
+
+  - id: bucket-vs-ticker
+    kind: multiple
+    prompt: Чем модель token bucket отличается от «ждать тик перед каждым запросом»? Выберите все верные утверждения.
+    options:
+      - text: После простоя пропускает сразу до burst запросов
+        correct: true
+        explain: Токены накопились в ведре, пока запросов не было.
+      - text: В среднем пропускает больше одного запроса за interval
+        explain: Долгосрочная частота та же — один токен за interval. Различается только допустимый всплеск.
+      - text: При burst = 1 ведёт себя почти как тикер
+        correct: true
+        explain: Ведро на один токен не позволяет всплесков — запросы идут не чаще раза в interval.
+      - text: Требует отдельной горутины
+        explain: "Токены можно досчитывать по прошедшему времени при каждом запросе — так делает `golang.org/x/time/rate`."

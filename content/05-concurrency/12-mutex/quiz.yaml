@@ -1,0 +1,117 @@
+questions:
+  - id: counter
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"sync"
+      )
+
+      type Counter struct {
+      	mu sync.Mutex
+      	n  int
+      }
+
+      func (c *Counter) Inc() {
+      	c.mu.Lock()
+      	defer c.mu.Unlock()
+      	c.n++
+      }
+
+      func main() {
+      	var c Counter
+      	var wg sync.WaitGroup
+      	for range 1000 {
+      		wg.Go(c.Inc)
+      	}
+      	wg.Wait()
+      	fmt.Println(c.n)
+      }
+    options:
+      - text: "1000"
+        correct: true
+        explain: "Каждое увеличение идёт под замком, а `Wait` дожидается всех горутин. Метод-значение `c.Inc` с указателем-получателем захватывает `&c`, так что все работают с одним счётчиком."
+      - text: Меньше 1000, каждый раз по-разному
+        explain: Так было бы без мьютекса — `c.n++` не атомарен. Здесь все увеличения последовательны.
+      - text: "0"
+        explain: "Получатель — указатель, поэтому `c.Inc` меняет исходную `c`, а не копию."
+
+  - id: value-receiver
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"sync"
+      )
+
+      type Counter struct {
+      	mu sync.Mutex
+      	n  int
+      }
+
+      func (c Counter) Inc() {
+      	c.mu.Lock()
+      	defer c.mu.Unlock()
+      	c.n++
+      }
+
+      func main() {
+      	var c Counter
+      	for range 3 {
+      		c.Inc()
+      	}
+      	fmt.Println(c.n)
+      }
+    options:
+      - text: "0"
+        correct: true
+        explain: "Получатель-значение: каждый вызов работает с копией структуры — и копией мьютекса. Исходная `c.n` не меняется. `go vet` предупредит: `Inc passes lock by value`."
+      - text: "3"
+        explain: Так было бы с `func (c *Counter) Inc()`. С получателем-значением меняется копия.
+      - text: deadlock
+        explain: Каждый вызов берёт замок своей копии и отпускает его — блокировки нет.
+
+  - id: reentrant
+    kind: single
+    prompt: "Метод `Put` держит `s.mu` и вызывает метод `Len`, который тоже делает `s.mu.Lock()`. Что произойдёт?"
+    options:
+      - text: Горутина заблокируется навсегда
+        correct: true
+        explain: Мьютекс Go не реентерабелен и не знает владельца. Второй `Lock` ждёт, пока замок отпустят, а отпустить его некому — это сделала бы та же горутина.
+      - text: Второй `Lock` пройдёт, как вложенный `lock` в C#
+        explain: Так ведёт себя `Monitor` в .NET. В Go реентерабельных мьютексов в стандартной библиотеке нет.
+      - text: "Паника `sync: reentrant lock`"
+        explain: Такой проверки нет — мьютекс не хранит, какая горутина его держит.
+
+  - id: trylock
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"sync"
+      )
+
+      func main() {
+      	var mu sync.RWMutex
+      	mu.RLock()
+      	r := mu.TryRLock()
+      	w := mu.TryLock()
+      	fmt.Println(r, w)
+      }
+    options:
+      - text: true false
+        correct: true
+        explain: Читателей может быть сколько угодно, поэтому второй `RLock` проходит. Писателю нужен замок без читателей, а их двое — `TryLock` не ждёт и возвращает `false`.
+      - text: false false
+        explain: "`RWMutex` пускает несколько читателей одновременно — для этого он и нужен."
+      - text: true true
+        explain: Писатель исключает читателей. Пока держат `RLock`, `Lock` не пройдёт.

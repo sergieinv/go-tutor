@@ -1,0 +1,6 @@
+[<html>a.com <html>b.com <html>c.com]
+ошибка: fetch bad.com: 500
+отменено задач: 2
+причина отмены: fetch bad.com: 500
+больше двух одновременно: false
+TryGo при занятом месте: false

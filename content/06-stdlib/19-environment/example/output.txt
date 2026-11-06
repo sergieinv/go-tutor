@@ -1,0 +1,9 @@
+Getenv: "" ""
+LookupEnv: true false
+Environ: [APP_DEBUG= APP_PORT=9000]
+addr=:9000
+addr=localhost:9000
+port: 9000 <nil>
+timeout: 5s <nil>
+debug: strconv.ParseBool: parsing "": invalid syntax
+после Setenv: 9100

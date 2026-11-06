@@ -1,0 +1,11 @@
+размер struct{}: 0
+worker 0: готово
+worker 1: готово
+worker 2: готово
+ping 1
+pong 2
+ping 3
+pong 4
+ping 5
+pong 6
+игра окончена на 6

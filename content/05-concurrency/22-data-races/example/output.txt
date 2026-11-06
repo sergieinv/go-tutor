@@ -1,0 +1,5 @@
+мьютекс: 100
+канал: prod
+WaitGroup: [0 1 4 9 16]
+Once: 1 lazy
+CAS: 1000

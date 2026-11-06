@@ -24,8 +24,10 @@ type Trace struct {
 
 // Goroutine — горутина из кода ученика (main или go-вызов).
 type Goroutine struct {
-	ID   int64  `json:"id"`
-	Func string `json:"func"` // main.main, main.main.func1, main.worker
+	ID int64 `json:"id"`
+	// Func — стартовая функция: main.main, main.worker, main.main.func1 или
+	// библиотечная, если горутину запустил wg.Go / errgroup.Go.
+	Func string `json:"func"`
 	// File:Line — где стоит оператор go; у main пусто.
 	File string `json:"file,omitempty"`
 	Line int    `json:"line,omitempty"`
@@ -52,7 +54,7 @@ type Event struct {
 }
 
 // MaxEvents — сколько событий отдаём клиенту; счётчики веток считаются по всем.
-const MaxEvents = 2000
+const MaxEvents = 5000
 
 // ErrNoTrace — программа не записала трассу: os.Exit, паника в горутине,
 // deadlock или таймаут обрывают её раньше, чем trace.Stop допишет файл.
@@ -158,13 +160,21 @@ func (p *traceParser) transition(ev trace.Event) {
 	actor := ev.Goroutine()
 	switch {
 	case from == trace.GoNotExist && to == trace.GoRunnable:
-		// Горутина ученика — та, что стартует в функции пакета main.
-		fn, _, _ := userFrame(st.Stack)
-		if fn == "" || !p.user[actor] {
+		// Горутина ученика — та, что создана кодом ученика: оператором go
+		// в пакете main или через wg.Go / errgroup.Go (тогда стартовая функция
+		// из библиотеки). Служебные горутины рантайма (GC и т.п.) пропускаем.
+		_, file, line := userFrame(ev.Stack())
+		if !p.user[actor] || line == 0 {
 			return
 		}
+		fn, _, _ := userFrame(st.Stack)
+		if fn == "" {
+			fn = topFunc(st.Stack)
+			if fn == "" || strings.HasPrefix(fn, "runtime.") {
+				return
+			}
+		}
 		p.user[g] = true
-		_, file, line := userFrame(ev.Stack())
 		p.t.Goroutines = append(p.t.Goroutines, Goroutine{ID: int64(g), Func: fn, File: file, Line: line})
 		p.add(ev, Event{G: int64(actor), Kind: "go", Target: int64(g), File: file, Line: line})
 	case !p.user[g]:
@@ -194,6 +204,14 @@ func (p *traceParser) add(ev trace.Event, e Event) {
 	}
 	e.T = max(ev.Time().Sub(p.start).Microseconds(), 0)
 	p.t.Events = append(p.t.Events, e)
+}
+
+// topFunc — функция верхнего кадра стека.
+func topFunc(s trace.Stack) string {
+	for f := range s.Frames() {
+		return f.Func
+	}
+	return ""
 }
 
 // userFrame — верхний кадр стека из пакета main. gotutorMain показываем как main.

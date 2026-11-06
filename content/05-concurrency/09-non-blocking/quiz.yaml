@@ -1,0 +1,102 @@
+questions:
+  - id: unbuffered-try-send
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func main() {
+      	ch := make(chan int)
+      	select {
+      	case ch <- 1:
+      		fmt.Println("sent")
+      	default:
+      		fmt.Println("dropped")
+      	}
+      }
+    options:
+      - text: dropped
+        correct: true
+        explain: Отправка в небуферизованный канал готова, только если получатель уже ждёт. Получателя нет, поэтому выполняется `default`.
+      - text: sent
+        explain: У канала нет буфера, и значение некуда положить — нужен ожидающий получатель.
+      - text: deadlock
+        explain: "`default` делает `select` неблокирующим: ждать он не будет."
+
+  - id: drop-count
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func main() {
+      	ch := make(chan int, 2)
+      	sent, dropped := 0, 0
+      	for i := range 5 {
+      		select {
+      		case ch <- i:
+      			sent++
+      		default:
+      			dropped++
+      		}
+      	}
+      	fmt.Println(sent, dropped, <-ch)
+      }
+    options:
+      - text: 2 3 0
+        correct: true
+        explain: В буфер помещаются первые два значения, 0 и 1, остальные три отбрасываются. Первым из канала выходит самое старое — 0.
+      - text: 2 3 4
+        explain: Неблокирующая отправка отбрасывает новые значения, а не вытесняет старые. В буфере остались 0 и 1.
+      - text: 5 0 0
+        explain: Ёмкость канала — два значения. Третья отправка уже не готова, читателя нет.
+
+  - id: drain-loop
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func main() {
+      	ch := make(chan int, 5)
+      	for i := range 3 {
+      		ch <- i
+      	}
+      	n := 0
+      	for {
+      		select {
+      		case <-ch:
+      			n++
+      			continue
+      		default:
+      		}
+      		break
+      	}
+      	fmt.Println(n, len(ch))
+      }
+    options:
+      - text: 3 0
+        correct: true
+        explain: Цикл забирает значения, пока они есть, а на пустом канале попадает в `default` и выходит. Новых значений он не ждёт.
+      - text: 3 3
+        explain: Получение забирает значение из буфера, `len(ch)` после этого уменьшается.
+      - text: deadlock
+        explain: Ветка `default` не даёт `select` заблокироваться на пустом канале.
+
+  - id: busy-loop
+    kind: single
+    prompt: "Горутина обрабатывает задания в цикле `for { select { case j := <-jobs: handle(j); default: } }`. Заданий нет. Что происходит?"
+    options:
+      - text: Горутина крутится вхолостую и занимает ядро процессора на 100%
+        correct: true
+        explain: "`select` с `default` не ждёт, а пустой `default` сразу отправляет цикл на следующий круг. Уберите `default`, и горутина заснёт до прихода задания."
+      - text: Горутина спит, пока в `jobs` не появится задание
+        explain: Так ведёт себя `select` без `default`. Здесь `default` готов всегда.
+      - text: Рантайм обнаружит холостой цикл и приостановит горутину
+        explain: Рантайм может вытеснить горутину, чтобы дать поработать другим, но крутиться она продолжит — CPU тратится впустую.

@@ -1,0 +1,15 @@
+-255 <nil>
+10
+[31 15 15 5 1000000]
+127 strconv.ParseInt: parsing "300": value out of range
+ParseInt 300 true
+true
+strconv.ParseUint: parsing "+5": invalid syntax
+1500 <nil>
+-Inf <nil>
+0.25 <nil>
+0 strconv.ParseFloat: parsing "1,5": invalid syntax
+true strconv.ParseBool: parsing "yes": invalid syntax
+11111111 ff zz 3.14
+id=42
+"tab\t\"кавычки\"" "\u044f" tab	"кавычки"

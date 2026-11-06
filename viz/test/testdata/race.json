@@ -1,0 +1,115 @@
+{
+  "buildFailed": false,
+  "stdout": "true\n",
+  "stderr": "==================\nWARNING: DATA RACE\nRead at 0x00c000124028 by goroutine 7:\n  main.main.func1()\n      /private/var/folders/m2/7pwtyj8d5l1c85167bkhjh8r0000gn/T/TestWriteFixture2143611937/001/run-663549386/main.go:16 +0x68\n\nPrevious write at 0x00c000124028 by goroutine 8:\n  main.main.func1()\n      /private/var/folders/m2/7pwtyj8d5l1c85167bkhjh8r0000gn/T/TestWriteFixture2143611937/001/run-663549386/main.go:16 +0x78\n\nGoroutine 7 (running) created at:\n  main.main()\n      /private/var/folders/m2/7pwtyj8d5l1c85167bkhjh8r0000gn/T/TestWriteFixture2143611937/001/run-663549386/main.go:14 +0x6c\n\nGoroutine 8 (finished) created at:\n  main.main()\n      /private/var/folders/m2/7pwtyj8d5l1c85167bkhjh8r0000gn/T/TestWriteFixture2143611937/001/run-663549386/main.go:14 +0x6c\n==================\n==================\nWARNING: DATA RACE\nWrite at 0x00c000124028 by goroutine 10:\n  main.main.func1()\n      /private/var/folders/m2/7pwtyj8d5l1c85167bkhjh8r0000gn/T/TestWriteFixture2143611937/001/run-663549386/main.go:16 +0x78\n\nPrevious write at 0x00c000124028 by goroutine 7:\n  main.main.func1()\n      /private/var/folders/m2/7pwtyj8d5l1c85167bkhjh8r0000gn/T/TestWriteFixture2143611937/001/run-663549386/main.go:16 +0x78\n\nGoroutine 10 (running) created at:\n  main.main()\n      /private/var/folders/m2/7pwtyj8d5l1c85167bkhjh8r0000gn/T/TestWriteFixture2143611937/001/run-663549386/main.go:14 +0x6c\n\nGoroutine 7 (finished) created at:\n  main.main()\n      /private/var/folders/m2/7pwtyj8d5l1c85167bkhjh8r0000gn/T/TestWriteFixture2143611937/001/run-663549386/main.go:14 +0x6c\n==================\nFound 2 data race(s)\n",
+  "exitCode": 66,
+  "timedOut": false,
+  "truncated": false,
+  "durationMs": 1304,
+  "races": [
+    {
+      "accesses": [
+        {
+          "kind": "read",
+          "g": 7,
+          "addr": "0x00c000124028",
+          "stack": [
+            {
+              "func": "main.main.func1",
+              "file": "main.go",
+              "line": 16
+            }
+          ]
+        },
+        {
+          "kind": "write",
+          "g": 8,
+          "addr": "0x00c000124028",
+          "stack": [
+            {
+              "func": "main.main.func1",
+              "file": "main.go",
+              "line": 16
+            }
+          ]
+        }
+      ],
+      "goroutines": [
+        {
+          "g": 7,
+          "state": "running",
+          "created": [
+            {
+              "func": "main.main",
+              "file": "main.go",
+              "line": 14
+            }
+          ]
+        },
+        {
+          "g": 8,
+          "state": "finished",
+          "created": [
+            {
+              "func": "main.main",
+              "file": "main.go",
+              "line": 14
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "accesses": [
+        {
+          "kind": "write",
+          "g": 10,
+          "addr": "0x00c000124028",
+          "stack": [
+            {
+              "func": "main.main.func1",
+              "file": "main.go",
+              "line": 16
+            }
+          ]
+        },
+        {
+          "kind": "write",
+          "g": 7,
+          "addr": "0x00c000124028",
+          "stack": [
+            {
+              "func": "main.main.func1",
+              "file": "main.go",
+              "line": 16
+            }
+          ]
+        }
+      ],
+      "goroutines": [
+        {
+          "g": 10,
+          "state": "running",
+          "created": [
+            {
+              "func": "main.main",
+              "file": "main.go",
+              "line": 14
+            }
+          ]
+        },
+        {
+          "g": 7,
+          "state": "finished",
+          "created": [
+            {
+              "func": "main.main",
+              "file": "main.go",
+              "line": 14
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

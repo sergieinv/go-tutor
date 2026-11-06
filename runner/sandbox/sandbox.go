@@ -9,6 +9,7 @@ package sandbox
 import (
 	"bytes"
 	"context"
+	_ "embed"
 	"errors"
 	"fmt"
 	"io"
@@ -40,7 +41,6 @@ type Config struct {
 	MemoryBytes  int64         // RLIMIT_AS и GOMEMLIMIT
 	MaxProcs     int           // RLIMIT_NPROC, только вместе с UIDs
 	MaxOutput    int           // лимит stdout и stderr по отдельности
-	GoVersion    string        // версия в go.mod по умолчанию
 	// BuildEnv добавляется к окружению go build/go vet (GOPROXY, GOCACHE…).
 	BuildEnv []string
 }
@@ -55,7 +55,6 @@ func DefaultConfig() Config {
 		MemoryBytes:  256 << 20,
 		MaxProcs:     64,
 		MaxOutput:    64 << 10,
-		GoVersion:    "1.25",
 	}
 }
 
@@ -119,6 +118,16 @@ func (e *Executor) acquire(ctx context.Context) (int, error) {
 
 func (e *Executor) release(uid int) { e.slots <- uid }
 
+// go.mod и go.sum по умолчанию: версия языка курса и разрешённые сторонние
+// модули (как обновить — в комментарии в deps.mod). Образ runner держит их
+// в кеше модулей.
+//
+//go:embed deps.mod
+var depsGoMod string
+
+//go:embed deps.sum
+var depsGoSum string
+
 var fileName = regexp.MustCompile(`^[A-Za-z0-9_-][A-Za-z0-9_.-]*\.(go|mod|sum|proto|txt|json)$`)
 
 const (
@@ -170,7 +179,10 @@ func (e *Executor) newWorkspace(uid int, files Files) (*workspace, error) {
 	ws := &workspace{dir: dir, uid: uid}
 	if _, ok := files["go.mod"]; !ok {
 		files = clone(files)
-		files["go.mod"] = fmt.Sprintf("module lesson\n\ngo %s\n", e.cfg.GoVersion)
+		files["go.mod"] = depsGoMod
+		if _, ok := files["go.sum"]; !ok {
+			files["go.sum"] = depsGoSum
+		}
 	}
 	for name, src := range files {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(src), 0o644); err != nil {

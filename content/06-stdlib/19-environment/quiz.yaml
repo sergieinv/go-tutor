@@ -1,0 +1,76 @@
+questions:
+  - id: lookup-vs-get
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"os"
+      )
+
+      func main() {
+      	os.Setenv("A", "")
+      	os.Unsetenv("B")
+      	a, okA := os.LookupEnv("A")
+      	b, okB := os.LookupEnv("B")
+      	fmt.Printf("%q %v %q %v %v\n", a, okA, b, okB, os.Getenv("A") == os.Getenv("B"))
+      }
+    options:
+      - text: '"" true "" false true'
+        correct: true
+        explain: "`LookupEnv` различает пустую (`ok == true`) и незаданную (`ok == false`) переменную. `Getenv` для обеих возвращает `\"\"`."
+      - text: '"" false "" false true'
+        explain: "Переменная `A` задана — пусть и пустой строкой, поэтому `okA == true`."
+      - text: '"" true "" false false'
+        explain: "`Getenv` не умеет сообщать об отсутствии: у незаданной переменной тоже `\"\"`."
+
+  - id: expand-unset
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"os"
+      )
+
+      func main() {
+      	os.Setenv("USER_NAME", "gopher")
+      	os.Unsetenv("GREETING")
+      	fmt.Println(os.ExpandEnv("[$GREETING, ${USER_NAME}! cost: $5]"))
+      }
+    options:
+      - text: "[$GREETING, gopher! cost: $5]"
+        explain: Незаданные переменные не остаются как есть — `ExpandEnv` заменяет их пустой строкой.
+      - text: "[, gopher! cost: ]"
+        correct: true
+        explain: "`$GREETING` не задана — пустая строка. `$5` по правилам оболочки — позиционный параметр с именем `5`, он тоже не задан и пропадает. `ExpandEnv` нельзя применять к произвольному тексту с `$`."
+      - text: "[, gopher! cost: $5]"
+        explain: "`$5` — специальная переменная оболочки (позиционный параметр), `ExpandEnv` подставляет и её."
+
+  - id: setenv-child
+    kind: single
+    prompt: "Программа вызывает `os.Setenv(\"MODE\", \"prod\")`. Кто увидит новое значение?"
+    options:
+      - text: Только этот процесс и процессы, которые он запустит после вызова
+        correct: true
+        explain: "Окружение копируется в дочерний процесс при запуске. Родитель (оболочка) своё окружение не меняет."
+      - text: Оболочка, из которой запущена программа
+        explain: Процесс не может изменить окружение родителя — у каждого своя копия.
+      - text: Все процессы пользователя
+        explain: Глобального окружения в Unix нет; переменные наследуются только при запуске.
+
+  - id: t-setenv-parallel
+    kind: single
+    prompt: Что произойдёт, если в тесте вызвать `t.Parallel()`, а затем `t.Setenv("K", "v")`?
+    options:
+      - text: Тест упадёт с паникой
+        correct: true
+        explain: "Окружение — общее для всего процесса, параллельные тесты видели бы чужие значения. Поэтому `t.Setenv` паникует в параллельном тесте."
+      - text: Значение будет видно только этому тесту
+        explain: Изоляции окружения по горутинам нет — `Setenv` меняет состояние всего процесса.
+      - text: Значение не восстановится после теста
+        explain: "Восстановление `t.Setenv` делает всегда; проблема в другом — он запрещён в параллельных тестах."

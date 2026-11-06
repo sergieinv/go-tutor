@@ -1,0 +1,16 @@
+.git      dir=true
+go.mod    dir=false
+internal  dir=true
+main.go   dir=false
+WalkDir:
+  .
+  go.mod
+  internal
+  internal/db
+  internal/db/db.go
+  main.go
+fs.ReadFile: x
+fs.Glob: [main.go]
+файлов в дереве: 5
+Remove непустого: true
+после RemoveAll: true

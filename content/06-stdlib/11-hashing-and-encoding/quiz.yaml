@@ -1,0 +1,84 @@
+questions:
+  - id: sum-array
+    kind: compile
+    prompt: Скомпилируется ли программа?
+    code: |
+      package main
+
+      import (
+      	"crypto/sha256"
+      	"encoding/hex"
+      	"fmt"
+      )
+
+      func main() {
+      	sum := sha256.Sum256([]byte("go"))
+      	fmt.Println(hex.EncodeToString(sum))
+      }
+    compiles: false
+    explain: "`Sum256` возвращает массив `[32]byte`, а `EncodeToString` принимает срез `[]byte`. Массив в срез сам не превращается — нужно `sum[:]`. Зато массив можно сравнить `==` и использовать как ключ map."
+
+  - id: sum-appends
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"crypto/sha256"
+      	"fmt"
+      )
+
+      func main() {
+      	h := sha256.New()
+      	h.Write([]byte("go"))
+      	a := h.Sum([]byte("ab"))
+      	b := h.Sum(nil)
+      	fmt.Println(len(a), len(b), string(a[:2]))
+      }
+    options:
+      - text: "34 32 ab"
+        correct: true
+        explain: "`Sum(b)` дописывает 32 байта хеша к срезу `b` — получилось 2 + 32. Состояние хеша при этом не меняется, поэтому второй `Sum(nil)` вернёт те же 32 байта."
+      - text: "32 32 ab"
+        explain: "`Sum` не перезаписывает переданный срез, а добавляет хеш в конец."
+      - text: "34 0 ab"
+        explain: "`Sum` не сбрасывает хеш — его можно вызывать повторно. Для сброса есть `Reset`."
+
+  - id: base64-variants
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"encoding/base64"
+      	"fmt"
+      )
+
+      func main() {
+      	b := []byte{0xff, 0xfe}
+      	fmt.Println(base64.StdEncoding.EncodeToString(b), base64.RawURLEncoding.EncodeToString(b))
+      }
+    options:
+      - text: "//4= __4"
+        correct: true
+        explain: "Стандартный алфавит использует `/` и `+`, URL-вариант — `_` и `-`. Два байта дают три символа; стандартный вариант добивает до четырёх знаком `=`, `Raw` — нет."
+      - text: "//4= //4"
+        explain: "`RawURLEncoding` отличается не только отсутствием `=`, но и алфавитом: `/` заменяется на `_`."
+      - text: "__4= //4"
+        explain: "Наоборот: `_` и `-` — в URL-варианте, `/` и `+` — в стандартном."
+
+  - id: hmac-equal
+    kind: single
+    prompt: "Почему подпись HMAC проверяют `hmac.Equal(got, want)`, а не `bytes.Equal(got, want)`?"
+    options:
+      - text: "`hmac.Equal` сравнивает за время, не зависящее от того, где байты различаются"
+        correct: true
+        explain: "`bytes.Equal` останавливается на первом различии. Замеряя время ответа, атакующий может подобрать подпись побайтно. `hmac.Equal` использует `subtle.ConstantTimeCompare`."
+      - text: "`bytes.Equal` сравнивает только первые 32 байта"
+        explain: "`bytes.Equal` сравнивает длину и все байты. Проблема не в корректности, а во времени работы."
+      - text: "`hmac.Equal` пересчитывает HMAC сам"
+        explain: "Ключа он не получает — просто сравнивает два среза за постоянное время."
+      - text: "Разницы нет, это синонимы"
+        explain: "Результат одинаковый, но время работы `bytes.Equal` выдаёт информацию о данных."

@@ -1,0 +1,8 @@
+получен: true
+main: остановка, context canceled
+воркер: состояние сохранено
+дочерние процессы:
+  return → код 0, вывод "обычный return\ndefer выполнен\n"
+  exit   → код 3, вывод "os.Exit(3)\n"
+  fatal  → код 1, вывод "log.Fatal\n"
+  panic  → код 2, вывод "defer выполнен\n"

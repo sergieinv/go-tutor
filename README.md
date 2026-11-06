@@ -9,7 +9,7 @@
 | `content/` | Уроки: папка на урок с настоящими `.go`-файлами. Формат — [content/README.md](content/README.md) |
 | `tools/lessonlint/` | Проверка структуры и прогон каждого урока |
 | `site/` | Сайт на Astro, собирается из `content/` |
-| `runner/` | Сервис исполнения кода: `/api/run`, `/api/test`, `/api/fmt`, `/api/trace` |
+| `runner/` | Сервис исполнения кода: `/api/run`, `/api/test`, `/api/fmt`, `/api/trace`, `/api/race` |
 | `viz/` | Движок визуализаций: примитивы SVG, плеер шагов, построители шагов из трассы |
 
 ## Запуск в Docker
@@ -20,7 +20,7 @@ docker compose up --build        # учебник на http://localhost:8080
 
 - `site` — nginx со статикой Astro, `/api/*` проксируется в `runner`.
 - `runner` — Go-тулчейн с прогретым кешем сборки. Каждый запуск идёт в отдельном временном каталоге от имени отдельного uid слота с лимитами: 10 с CPU и реального времени, 256 МБ, 64 процесса, вывод до 64 КБ. После запуска все процессы слота убиваются.
-- У `runner` нет выхода в интернет (сеть `internal`); модули — только из кеша образа.
+- У `runner` нет выхода в интернет (сеть `internal`); модули — только из кеша образа. Сторонние модули, доступные урокам, перечислены в `runner/sandbox/deps.mod` (сейчас `golang.org/x/sync`).
 - В `site/package-lock.json` записаны адреса корпоративного Artifactory. Образ сайта ставит пакеты из `registry.npmjs.org`, подменяя префикс через `--replace-registry-host`; integrity-хеши проверяются как обычно. Другой реестр: `docker compose build --build-arg NPM_REGISTRY=... site`.
 - Режим `server` (runner внутри gVisor): `docker compose -f docker-compose.yml -f docker-compose.server.yml up -d`, нужен runtime `runsc`.
 
@@ -33,6 +33,7 @@ docker compose up --build        # учебник на http://localhost:8080
 | `POST /api/fmt` | `{"files": {...}}` | `files`, `errors` |
 | `POST /api/solution` | `{"lesson"}` | `files` — эталон; сайт показывает его после успеха или трёх неудачных попыток |
 | `POST /api/trace` | как у `/api/run` | поля `/api/run` плюс `trace`: горутины, операторы `select` со счётчиками веток, события; при сбое — `traceError` |
+| `POST /api/race` | как у `/api/run` | поля `/api/run` плюс `races`: отчёты `-race` — два доступа (вид, горутина, стек из пакета `main`) и где созданы горутины |
 
 Тесты для `/api/test` runner берёт из контента урока, включая `hidden_test.go`; клиент присылает только своё решение.
 
@@ -59,7 +60,7 @@ cd site && npm ci && npm run dev     # http://localhost:4321
 cd site && npm run build             # статика в site/dist
 
 # тесты сайта: прогресс, «Поделиться», движок визуализаций и все viz.ts
-# (трасса-образец для них: GOTUTOR_FIXTURE=1 go test ./runner/livetrace -run WriteFixture)
+# (образцы ответов runner для них: GOTUTOR_FIXTURE=1 go test ./runner/livetrace -run WriteFixture)
 cd site && npm test
 # e2e: уроки от начала до конца, визуализаторы и слайды — против docker compose на :8080
 cd site && npx playwright install chromium && npm run e2e

@@ -1,0 +1,98 @@
+questions:
+  - id: recv-from-send-only
+    kind: compile
+    prompt: Скомпилируется ли программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func consume(out chan<- int) {
+      	fmt.Println(<-out)
+      }
+
+      func main() {
+      	ch := make(chan int, 1)
+      	ch <- 1
+      	consume(ch)
+      }
+    compiles: false
+    explain: "Параметр `out` имеет тип `chan<- int` — только отправка. Получение из него — ошибка компиляции `cannot receive from send-only channel`. Передача `ch` в функцию тут ни при чём: двунаправленный канал сужается неявно."
+
+  - id: implicit-narrowing
+    kind: compile
+    prompt: Скомпилируется ли программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func sum(in <-chan int) int {
+      	total := 0
+      	for v := range in {
+      		total += v
+      	}
+      	return total
+      }
+
+      func main() {
+      	ch := make(chan int, 3)
+      	ch <- 1
+      	ch <- 2
+      	close(ch)
+      	fmt.Println(sum(ch))
+      }
+    compiles: true
+    explain: "`chan int` присваивается переменной типа `<-chan int` без явного преобразования — направление можно только сузить. `range` по каналу только для чтения разрешён."
+
+  - id: generator-type
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func gen() <-chan int {
+      	ch := make(chan int, 1)
+      	ch <- 7
+      	close(ch)
+      	return ch
+      }
+
+      func main() {
+      	v := gen()
+      	fmt.Printf("%T %d\n", v, <-v)
+      }
+    options:
+      - text: "<-chan int 7"
+        correct: true
+        explain: Тип переменной — тип результата функции, `<-chan int`, хотя внутри создавался `chan int`. Значение 7 лежит в буфере и читается и после закрытия.
+      - text: "chan int 7"
+        explain: Возврат сузил тип. `%T` печатает статический тип значения в интерфейсе — `<-chan int`.
+      - text: "<-chan int 0"
+        explain: Закрытие не стирает буфер — сначала получатель дочитает 7.
+
+  - id: arrow-binding
+    kind: single
+    prompt: Что означает тип `chan<- chan int`?
+    options:
+      - text: Канал только для отправки, элементы которого — двунаправленные `chan int`
+        correct: true
+        explain: Стрелка относится к самому левому `chan`. Это то же, что `chan<- (chan int)`.
+      - text: Двунаправленный канал, элементы которого — `chan<- int`
+        explain: Такой тип записывается как `chan (chan<- int)`.
+      - text: Это не тип — ошибка синтаксиса
+        explain: Запись допустима, спецификация разбирает её именно так — как `chan<- (chan int)`.
+
+  - id: why-recv-only
+    kind: single
+    prompt: Зачем генератор объявляет результат как `<-chan T`, а не `chan T`?
+    options:
+      - text: Так быстрее — однонаправленный канал устроен проще
+        explain: Канал под ними один и тот же `hchan`. Направление — свойство типа, проверяемое компилятором, во время выполнения разницы нет.
+      - text: Чтобы вызывающий не мог отправить в канал или закрыть его
+        correct: true
+        explain: Писать и закрывать канал должен только генератор. Узкий тип превращает нарушение этого правила в ошибку компиляции.
+      - text: Иначе `range` по каналу не работает
+        explain: "`range` работает и по `chan T`, и по `<-chan T`. Не работает он только по `chan<- T`."

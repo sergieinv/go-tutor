@@ -1,0 +1,105 @@
+questions:
+  - id: stop-twice
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"time"
+      )
+
+      func main() {
+      	t := time.NewTimer(time.Hour)
+      	a := t.Stop()
+      	b := t.Stop()
+      	fmt.Println(a, b)
+      }
+    options:
+      - text: true false
+        correct: true
+        explain: Первый `Stop` останавливает активный таймер и возвращает `true`. Второй видит уже остановленный таймер и возвращает `false`.
+      - text: true true
+        explain: "`Stop` возвращает `true`, только если именно этот вызов остановил таймер."
+      - text: false false
+        explain: До первого `Stop` таймер активен — до срабатывания ещё час.
+
+  - id: stale-after-reset
+    kind: output
+    prompt: Модуль собран с `go 1.25` в `go.mod`. Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"time"
+      )
+
+      func main() {
+      	t := time.NewTimer(10 * time.Millisecond)
+      	time.Sleep(50 * time.Millisecond) // таймер уже истёк, но C никто не читал
+      	t.Reset(time.Hour)
+      	select {
+      	case <-t.C:
+      		fmt.Println("старое значение")
+      	default:
+      		fmt.Println("пусто")
+      	}
+      }
+    options:
+      - text: пусто
+        correct: true
+        explain: С Go 1.23 канал таймера синхронный, и после `Reset` из `C` не придёт значение, относящееся к прошлой настройке. До 1.23 программа печатала бы «старое значение».
+      - text: старое значение
+        explain: Так было до Go 1.23, когда в буфере `C` оставалось время прошлого срабатывания. Теперь `Reset` его отбрасывает.
+      - text: deadlock
+        explain: Ветка `default` не даёт `select` заблокироваться.
+
+  - id: afterfunc-chan
+    kind: single
+    prompt: Чему равно поле `C` у таймера, который вернул `time.AfterFunc(d, f)`?
+    options:
+      - text: "`nil`"
+        correct: true
+        explain: Такой таймер вызывает `f` в своей горутине, а канал не использует. Чтение из `nil`-канала заблокируется навсегда.
+      - text: Каналу, в который придёт время после вызова `f`
+        explain: "`AfterFunc` ничего не отправляет в канал — о завершении `f` нужно сообщать самостоятельно."
+      - text: Закрытому каналу
+        explain: Канал не создаётся вовсе, документация прямо говорит, что `C` не используется и равен `nil`.
+
+  - id: ticker-dropped
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"time"
+      )
+
+      func main() {
+      	ticker := time.NewTicker(50 * time.Millisecond)
+      	defer ticker.Stop()
+      	time.Sleep(300 * time.Millisecond)
+      	n := 0
+      	for {
+      		select {
+      		case <-ticker.C:
+      			n++
+      			continue
+      		default:
+      		}
+      		break
+      	}
+      	fmt.Println(n)
+      }
+    options:
+      - text: "1"
+        correct: true
+        explain: За 300 мс прошло шесть периодов, но тикер не копит пропущенные тики — читателя ждёт не больше одного. Следующий придёт только по расписанию, а `select` с `default` ждать его не будет.
+      - text: "6"
+        explain: Тики не встают в очередь. Если читатель не успевает, лишние теряются.
+      - text: "0"
+        explain: Один тик ждёт в канале — его забирает первая итерация.

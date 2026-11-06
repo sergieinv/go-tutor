@@ -6,6 +6,7 @@ import (
 	"go/format"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"gotutor/runner/livetrace"
@@ -31,14 +32,39 @@ func (c *Checker) CheckLesson(ctx context.Context, l *Lesson, p *Problems) {
 	}
 }
 
-// checkLive запускает программу живой визуализации так же, как /api/trace:
-// она должна отработать и оставить трассу с событиями select.
+// liveBuilder — имя построителя шагов из viz.ts: builder: "select".
+var liveBuilder = regexp.MustCompile(`builder:\s*"(\w+)"`)
+
+// checkLive запускает программу живой визуализации так же, как runner
+// (/api/trace или /api/race), и проверяет, что построителю есть что показать.
 func (c *Checker) checkLive(ctx context.Context, l *Lesson, p *Problems) {
 	src, err := os.ReadFile(filepath.Join(l.Dir, "live", "main.go"))
 	if err != nil {
 		return
 	}
-	res, err := livetrace.Run(ctx, c.Exec, sandbox.Files{"main.go": string(src)}, l.Meta.Runner)
+	viz, _ := os.ReadFile(filepath.Join(l.Dir, "viz.ts"))
+	m := liveBuilder.FindSubmatch(viz)
+	if m == nil {
+		p.Errorf("viz.ts: у живого визуализатора не найден builder")
+		return
+	}
+	files := sandbox.Files{"main.go": string(src)}
+	builder := string(m[1])
+	if builder == "race" {
+		res, err := livetrace.RunRace(ctx, c.Exec, files, l.Meta.Runner)
+		switch {
+		case err != nil:
+			p.Errorf("live: %v", err)
+		case res.BuildFailed:
+			p.Errorf("live: не компилируется\n%s", indent(res.BuildOutput))
+		case res.TimedOut:
+			p.Errorf("live: таймаут")
+		case len(res.Races) == 0:
+			p.Errorf("live: детектор не нашёл гонок — визуализатору нечего показать\n%s", indent(res.Stderr))
+		}
+		return
+	}
+	res, err := livetrace.Run(ctx, c.Exec, files, l.Meta.Runner)
 	switch {
 	case err != nil:
 		p.Errorf("live: %v", err)
@@ -48,8 +74,12 @@ func (c *Checker) checkLive(ctx context.Context, l *Lesson, p *Problems) {
 		p.Errorf("live: exit=%d timedOut=%v\n%s", res.ExitCode, res.TimedOut, indent(res.Stderr))
 	case res.Trace == nil:
 		p.Errorf("live: нет трассы: %s", res.TraceError)
-	case len(res.Trace.Selects) == 0 || res.Trace.Total == 0:
+	case builder == "select" && (len(res.Trace.Selects) == 0 || res.Trace.Total == 0):
 		p.Errorf("live: в трассе нет событий select — визуализатору нечего показать")
+	case builder == "goroutines" && len(res.Trace.Goroutines) < 2:
+		p.Errorf("live: в трассе одна горутина — визуализатору нечего показать")
+	case builder != "select" && builder != "goroutines":
+		p.Errorf("viz.ts: неизвестный builder %q", builder)
 	case res.Trace.Total > livetrace.MaxEvents:
 		p.Warnf("live: %d событий, показаны будут первые %d — сократите программу", res.Trace.Total, livetrace.MaxEvents)
 	}
@@ -75,11 +105,15 @@ func (c *Checker) checkFormat(l *Lesson, p *Problems) {
 }
 
 func (c *Checker) checkExample(ctx context.Context, l *Lesson, p *Problems) {
-	src, err := os.ReadFile(filepath.Join(l.Dir, "example", "main.go"))
+	files, err := exampleFiles(l)
 	if err != nil {
+		p.Errorf("example: %v", err)
+		return
+	}
+	if _, ok := files["main.go"]; !ok {
 		return // отсутствие файла уже отмечено при загрузке
 	}
-	res, err := c.Exec.Run(ctx, sandbox.Files{"main.go": string(src)}, l.Meta.Runner)
+	res, err := c.Exec.Run(ctx, files, l.Meta.Runner)
 	if err != nil {
 		p.Errorf("example: %v", err)
 		return
@@ -106,6 +140,27 @@ func (c *Checker) checkExample(ctx context.Context, l *Lesson, p *Problems) {
 	if normalize(string(want)) != normalize(res.Stdout) {
 		p.Errorf("example: вывод не совпадает с output.txt\n--- ожидалось\n%s--- получено\n%s", indent(string(want)), indent(res.Stdout))
 	}
+}
+
+// exampleFiles — main.go и файлы рядом с ним (данные для embed и т.п.),
+// всё, кроме output.txt. Сайт отправляет в runner тот же набор.
+func exampleFiles(l *Lesson) (sandbox.Files, error) {
+	entries, err := os.ReadDir(filepath.Join(l.Dir, "example"))
+	if err != nil {
+		return nil, err
+	}
+	files := sandbox.Files{}
+	for _, e := range entries {
+		if e.IsDir() || e.Name() == "output.txt" {
+			continue
+		}
+		b, err := os.ReadFile(filepath.Join(l.Dir, "example", e.Name()))
+		if err != nil {
+			return nil, err
+		}
+		files[e.Name()] = string(b)
+	}
+	return files, files.Validate()
 }
 
 func (c *Checker) checkTask(ctx context.Context, l *Lesson, p *Problems) {

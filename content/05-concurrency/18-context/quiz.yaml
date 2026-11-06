@@ -1,0 +1,129 @@
+questions:
+  - id: child-of-canceled
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"context"
+      	"fmt"
+      	"time"
+      )
+
+      func main() {
+      	parent, cancel := context.WithCancel(context.Background())
+      	cancel()
+      	child, cancelChild := context.WithTimeout(parent, time.Hour)
+      	defer cancelChild()
+      	fmt.Println(child.Err())
+      }
+    options:
+      - text: context canceled
+        correct: true
+        explain: "Если родитель уже отменён, `propagateCancel` сразу отменяет нового потомка с той же ошибкой. Час ждать не придётся."
+      - text: <nil>
+        explain: Потомок не может пережить родителя — даже созданный после отмены.
+      - text: context deadline exceeded
+        explain: "Причину потомок наследует от родителя, а тот отменён вызовом `cancel` — это `Canceled`."
+
+  - id: cancel-child-only
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"context"
+      	"fmt"
+      )
+
+      func main() {
+      	parent, cancel := context.WithCancel(context.Background())
+      	defer cancel()
+      	a, cancelA := context.WithCancel(parent)
+      	b, cancelB := context.WithCancel(parent)
+      	defer cancelB()
+      	cancelA()
+      	fmt.Println(parent.Err(), a.Err(), b.Err())
+      }
+    options:
+      - text: <nil> context canceled <nil>
+        correct: true
+        explain: Отмена идёт только вниз по дереву. Отмена `a` не трогает ни родителя, ни соседа `b`.
+      - text: context canceled context canceled context canceled
+        explain: "В отличие от `errgroup.WithContext`, обычный `WithCancel` не отменяет родителя и соседей."
+      - text: <nil> context canceled context canceled
+        explain: "`b` — сосед `a`, а не потомок. Он отменится только вместе с `parent`."
+
+  - id: deadline-inherited
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"context"
+      	"fmt"
+      	"time"
+      )
+
+      func main() {
+      	parent, cancel := context.WithTimeout(context.Background(), time.Second)
+      	defer cancel()
+      	child, cancelChild := context.WithTimeout(parent, time.Hour)
+      	defer cancelChild()
+
+      	dp, _ := parent.Deadline()
+      	dc, _ := child.Deadline()
+      	fmt.Println(dc.Equal(dp))
+      }
+    options:
+      - text: "true"
+        correct: true
+        explain: "Дедлайн потомка не может быть позже родительского. `WithDeadline` видит более ранний срок у родителя и возвращает `WithCancel(parent)` — дедлайн у них общий."
+      - text: "false"
+        explain: Час позже секунды — такой дедлайн потомку не нужен, он всё равно отменится вместе с родителем через секунду.
+
+  - id: without-cancel
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"context"
+      	"fmt"
+      )
+
+      type key struct{}
+
+      func main() {
+      	base := context.WithValue(context.Background(), key{}, "req-7")
+      	ctx, cancel := context.WithCancel(base)
+      	detached := context.WithoutCancel(ctx)
+      	cancel()
+      	fmt.Println(ctx.Err(), detached.Err(), detached.Value(key{}))
+      }
+    options:
+      - text: context canceled <nil> req-7
+        correct: true
+        explain: "`WithoutCancel` сохраняет цепочку значений, но отвязывает от отмены: `Done()` у него `nil`, `Err()` всегда `nil`."
+      - text: context canceled context canceled req-7
+        explain: "Отмена через `WithoutCancel` не проходит — в этом его смысл."
+      - text: context canceled <nil> <nil>
+        explain: "Значения родителя `WithoutCancel` сохраняет — `Value` идёт вверх по цепочке."
+
+  - id: ctx-in-struct
+    kind: single
+    prompt: Как правильно дать методам HTTP-клиента возможность отмены?
+    options:
+      - text: Сохранить `ctx` в поле клиента в конструкторе
+        explain: "Клиент живёт дольше одного запроса, а контекст описывает именно запрос. Документация пакета `context` прямо советует не хранить контекст в структурах."
+      - text: Передавать `ctx context.Context` первым параметром каждого метода
+        correct: true
+        explain: "Это соглашение Go: `func (c *Client) Get(ctx context.Context, url string)`. Каждый вызов получает свои отмену и дедлайн."
+      - text: Передавать в методы `timeout time.Duration`
+        explain: "Таймаут — частный случай. Контекст несёт и дедлайн, и отмену извне, и значения запроса."
+      - text: Хранить `context.Background()` в глобальной переменной
+        explain: "`Background` никогда не отменяется — отменить такой вызов нельзя."

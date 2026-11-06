@@ -1,0 +1,106 @@
+questions:
+  - id: adddate-normalize
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"time"
+      )
+
+      func main() {
+      	t := time.Date(2023, time.January, 31, 0, 0, 0, 0, time.UTC)
+      	fmt.Println(t.AddDate(0, 1, 0).Format(time.DateOnly))
+      	fmt.Println(time.Date(2023, 2, 30, 0, 0, 0, 0, time.UTC).Format(time.DateOnly))
+      }
+    options:
+      - text: "2023-03-03\n2023-03-02"
+        correct: true
+        explain: "`AddDate` прибавляет к компонентам и нормализует результат: «31 февраля 2023» — это 3 марта. `time.Date` нормализует так же: 30 февраля → 2 марта. В .NET `AddMonths` прижал бы дату к 28 февраля."
+      - text: "2023-02-28\n2023-02-28"
+        explain: "Так поступает `DateTime.AddMonths` в .NET. Go не прижимает дату к концу месяца, а переносит избыток дней дальше."
+      - text: "2023-03-03\nпаника"
+        explain: "`time.Date` не проверяет диапазоны компонентов, а нормализует их: 30 февраля становится 2 марта."
+
+  - id: equal-vs-eq
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"time"
+      )
+
+      func main() {
+      	a := time.Date(2024, 1, 1, 9, 0, 0, 0, time.UTC)
+      	b := time.Date(2024, 1, 1, 12, 0, 0, 0, time.FixedZone("MSK", 3*3600))
+      	fmt.Println(a == b, a.Equal(b), b.Sub(a))
+      }
+    options:
+      - text: "false true 0s"
+        correct: true
+        explain: "12:00 MSK — тот же момент, что 09:00 UTC. `Equal` и `Sub` сравнивают моменты, а `==` — структуры целиком, вместе с поясом."
+      - text: "true true 0s"
+        explain: "`==` сравнивает и `*Location`: у `a` это UTC, у `b` — MSK, поэтому значения разные."
+      - text: "false false 3h0m0s"
+        explain: "Показания часов различаются на 3 часа, но моменты совпадают — `Sub` и `Equal` работают с моментами."
+
+  - id: duration-mul
+    kind: compile
+    prompt: Скомпилируется ли программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"time"
+      )
+
+      func main() {
+      	n := 5
+      	fmt.Println(n * time.Millisecond)
+      }
+    compiles: false
+    explain: "`n` имеет тип `int`, `time.Millisecond` — `time.Duration`; неявных преобразований нет. Нужно `time.Duration(n) * time.Millisecond`. Константа `5 * time.Millisecond` компилируется: нетипизированная константа принимает тип `Duration`."
+
+  - id: duration-print
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"time"
+      )
+
+      func main() {
+      	d := 1500 * time.Millisecond
+      	fmt.Println(d, d*60, int64(d), d.Seconds())
+      }
+    options:
+      - text: "1.5s 1m30s 1500000000 1.5"
+        correct: true
+        explain: "`Duration` печатается через свой `String()`, а внутри это наносекунды: `int64(d)` — 1,5 миллиарда. `Seconds()` возвращает `float64`."
+      - text: "1.5s 1m30s 1500 1.5"
+        explain: "`Duration` хранит наносекунды, а не миллисекунды."
+      - text: "00:00:01.5 00:01:30 15000000 1.5"
+        explain: "Так выглядел бы `TimeSpan` с тиками по 100 нс. `Duration` печатается как `1.5s` и хранит наносекунды."
+
+  - id: zero-time
+    kind: single
+    prompt: "Поле `ExpiresAt time.Time` в структуре не заполнили. Как правильно проверить, что срок не задан?"
+    options:
+      - text: "`s.ExpiresAt.IsZero()`"
+        correct: true
+        explain: "Нулевое значение `time.Time` — 1 января года 1 UTC, и `IsZero` проверяет именно его."
+      - text: "`s.ExpiresAt == nil`"
+        explain: "`time.Time` — структура-значение, а не ссылка; сравнение с `nil` не скомпилируется. Нужен «nullable» — используйте `*time.Time`."
+      - text: "`s.ExpiresAt.Before(time.Now())`"
+        explain: "Это верно и для нулевого времени, и для любого прошедшего срока — «не задано» так не отличить."
+      - text: "`s.ExpiresAt.Unix() == 0`"
+        explain: "Unix-время 0 — это 1970-01-01, а нулевое `time.Time` — год 1, его `Unix()` отрицательный."

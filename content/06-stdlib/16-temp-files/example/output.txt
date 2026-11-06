@@ -1,0 +1,6 @@
+CreateTemp: prefix=true suffix=true in TempDir=true
+после выхода удалён: true
+имена различаются: true
+в каталоге: 1 файл
+права каталога: -rwx------
+шаблон со слешем: true

@@ -1,0 +1,127 @@
+questions:
+  - id: once-two-funcs
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"sync"
+      )
+
+      func main() {
+      	var once sync.Once
+      	once.Do(func() { fmt.Println("первая") })
+      	once.Do(func() { fmt.Println("вторая") })
+      }
+    options:
+      - text: первая
+        correct: true
+        explain: "`Once` помнит не функцию, а сам факт вызова `Do`. После первого `Do` любые следующие ничего не делают, какую бы функцию им ни передали."
+      - text: "первая\nвторая"
+        explain: "Так было бы, если бы `Once` различал функции. Но у него один флаг «уже выполнено»."
+      - text: вторая
+        explain: Первый вызов `Do` выполняет свою функцию — она и побеждает.
+
+  - id: once-panic
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"sync"
+      )
+
+      func main() {
+      	var once sync.Once
+      	n := 0
+      	try := func() {
+      		defer func() { recover() }()
+      		once.Do(func() {
+      			n++
+      			panic("boom")
+      		})
+      	}
+      	try()
+      	try()
+      	fmt.Println(n)
+      }
+    options:
+      - text: "1"
+        correct: true
+        explain: "Если функция в `Do` паникует, `Once` всё равно считает её выполненной. Второй `Do` ничего не вызывает."
+      - text: "2"
+        explain: "Это поведение `PublicationOnly` из C#. `Once` повторной попытки не даёт."
+      - text: panic
+        explain: Обе паники перехвачены `recover` в отложенной функции — программа завершается нормально.
+
+  - id: oncefunc-panic
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"sync"
+      )
+
+      func main() {
+      	n := 0
+      	f := sync.OnceFunc(func() {
+      		n++
+      		panic("boom")
+      	})
+      	for range 2 {
+      		func() {
+      			defer func() { fmt.Println(recover()) }()
+      			f()
+      		}()
+      	}
+      	fmt.Println(n)
+      }
+    options:
+      - text: "boom\nboom\n1"
+        correct: true
+        explain: "`OnceFunc` вызывает функцию один раз (`n` = 1), но запоминает панику и повторяет её при каждом вызове — как `Lazy<T>` с закешированным исключением."
+      - text: "boom\n<nil>\n1"
+        explain: "Так вёл бы себя голый `Once.Do`. `OnceFunc` перевыбрасывает сохранённую панику."
+      - text: "boom\nboom\n2"
+        explain: Функция вызывается только один раз — во второй раз паника берётся из сохранённого значения.
+
+  - id: oncevalue-type
+    kind: compile
+    prompt: Скомпилируется ли программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"os"
+      	"sync"
+      )
+
+      var home = sync.OnceValue(func() (string, error) {
+      	return os.UserHomeDir()
+      })
+
+      func main() {
+      	fmt.Println(home())
+      }
+    compiles: false
+    explain: "`OnceValue` принимает функцию с одним результатом: `func() T`. Для пары «значение, ошибка» есть `sync.OnceValues`."
+
+  - id: lazy-analog
+    kind: single
+    prompt: "Какой вариант ближе всего к `new Lazy<T>(factory)` из C#?"
+    options:
+      - text: "`sync.Once` и отдельная переменная"
+        explain: Работает, но `Once.Do` не кеширует панику и не хранит значение сам — это ближе к `LazyInitializer.EnsureInitialized`.
+      - text: "`sync.OnceValue(factory)`"
+        correct: true
+        explain: "Вызывает фабрику один раз, хранит результат и, как `Lazy<T>`, повторяет сбой (панику) при каждом обращении."
+      - text: "Функция `init()` пакета"
+        explain: "`init` выполняется при старте программы, а не лениво при первом обращении."

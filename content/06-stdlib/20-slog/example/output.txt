@@ -1,0 +1,9 @@
+level=INFO msg="сервер запущен" port=8080 tls=true
+level=DEBUG msg="теперь выведется"
+level=WARN msg="медленный запрос" request_id=r-42 ms=1250
+level=INFO msg=ответ request_id=r-42 http.method=GET http.status=200
+level=ERROR msg="вход не удался" user.id=7 user.email=a@b.c
+{"level":"INFO","msg":"запрос","db":{"table":"users","rows":3}}
+{"level":"INFO","msg":"вход","user":{"id":7,"email":"a@b.c"}}
+{"level":"INFO","msg":"с контекстом"}
+level=INFO msg="через пакетную функцию"

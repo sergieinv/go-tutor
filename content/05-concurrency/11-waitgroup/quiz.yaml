@@ -1,0 +1,89 @@
+questions:
+  - id: results-by-index
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"sync"
+      )
+
+      func main() {
+      	res := make([]int, 5)
+      	var wg sync.WaitGroup
+      	for i := range 5 {
+      		wg.Go(func() {
+      			res[i] = i * 2
+      		})
+      	}
+      	wg.Wait()
+      	fmt.Println(res)
+      }
+    options:
+      - text: "[0 2 4 6 8]"
+        correct: true
+        explain: "Каждая горутина пишет в свой элемент, а `Wait` дожидается всех. С Go 1.22 у каждой итерации своя `i`, так что замыкания видят разные значения."
+      - text: "[0 0 0 0 0]"
+        explain: "`wg.Go` сам вызывает `Done` после возврата функции, а `Wait` дожидается всех пяти — к моменту печати все записи сделаны и видны."
+      - text: Порядок элементов каждый раз разный
+        explain: Горутины завершаются в произвольном порядке, но пишут по индексу — итоговый срез от порядка не зависит.
+
+  - id: wait-zero
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"sync"
+      )
+
+      func main() {
+      	var wg sync.WaitGroup
+      	wg.Wait()
+      	fmt.Println("готово")
+      }
+    options:
+      - text: готово
+        correct: true
+        explain: Нулевое значение `WaitGroup` готово к работе, счётчик равен нулю, и `Wait` сразу возвращается.
+      - text: "fatal error: all goroutines are asleep - deadlock!"
+        explain: "`Wait` блокируется, только пока счётчик больше нуля."
+      - text: panic
+        explain: "`WaitGroup` не нужно инициализировать — нулевое значение рабочее."
+
+  - id: go-signature
+    kind: compile
+    prompt: Скомпилируется ли программа?
+    code: |
+      package main
+
+      import (
+      	"errors"
+      	"sync"
+      )
+
+      func fetch() error { return errors.New("нет связи") }
+
+      func main() {
+      	var wg sync.WaitGroup
+      	wg.Go(fetch)
+      	wg.Wait()
+      }
+    compiles: false
+    explain: "`wg.Go` принимает только `func()` без результатов. Ошибку пришлось бы сохранить самостоятельно — например, `wg.Go(func() { errs[i] = fetch() })`, — либо взять `errgroup.Group`, где `Go` принимает `func() error`."
+
+  - id: copy-waitgroup
+    kind: single
+    prompt: "Функция объявлена как `func worker(wg sync.WaitGroup) { defer wg.Done(); ... }`, а `main` делает `wg.Add(1); go worker(wg); wg.Wait()`. Что произойдёт?"
+    options:
+      - text: "`wg.Wait()` никогда не вернётся, а `go vet` предупредит о копировании"
+        correct: true
+        explain: "`worker` получает копию со своим счётчиком, и `Done` уменьшает его, а не оригинал. Если других горутин нет, рантайм завершит программу с `all goroutines are asleep - deadlock!`."
+      - text: Всё работает, `WaitGroup` внутри — указатель
+        explain: "`WaitGroup` — обычная структура со счётчиком внутри, копия от оригинала не зависит."
+      - text: Ошибка компиляции
+        explain: Компилятор копирование не запрещает, его ловит `go vet` (проверка copylocks).

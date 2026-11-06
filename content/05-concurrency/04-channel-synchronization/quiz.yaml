@@ -1,0 +1,125 @@
+questions:
+  - id: handoff-order
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func main() {
+      	a, b := make(chan struct{}), make(chan struct{})
+      	go func() {
+      		<-a
+      		fmt.Print("2")
+      		b <- struct{}{}
+      	}()
+      	fmt.Print("1")
+      	a <- struct{}{}
+      	<-b
+      	fmt.Println("3")
+      }
+    options:
+      - text: "123"
+        correct: true
+        explain: Горутина печатает «2» только после сигнала из `a`, а `main` печатает «3» только после сигнала из `b`. Два канала задают полный порядок.
+      - text: "213"
+        explain: До получения из `a` горутина ничего не печатает, а `main` отправляет в `a` уже после «1».
+      - text: Порядок не определён
+        explain: Сами горутины выполняются в произвольном порядке, но каналы здесь жёстко упорядочивают все три печати.
+
+  - id: struct-size
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"unsafe"
+      )
+
+      func main() {
+      	var signals [1000]struct{}
+      	fmt.Println(unsafe.Sizeof(struct{}{}), unsafe.Sizeof(signals))
+      }
+    options:
+      - text: "0 0"
+        correct: true
+        explain: У пустой структуры нет полей, и она не занимает памяти. Массив из тысячи таких значений — тоже ноль байт.
+      - text: "1 1000"
+        explain: Так было бы в C++, где у пустого объекта размер минимум 1 байт. В Go размер `struct{}` — ноль.
+      - text: "0 1000"
+        explain: Размер массива — размер элемента, умноженный на длину, то есть 0 × 1000.
+
+  - id: struct-value
+    kind: compile
+    prompt: Скомпилируется ли программа?
+    code: |
+      package main
+
+      func main() {
+      	done := make(chan struct{}, 1)
+      	done <- struct{}
+      	<-done
+      }
+    compiles: false
+    explain: "`struct{}` — это тип. Значение этого типа записывается как `struct{}{}`: тип плюс пустой составной литерал."
+
+  - id: one-receiver
+    kind: single
+    prompt: Сколько горутин напечатает «старт»?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"time"
+      )
+
+      func main() {
+      	start := make(chan struct{})
+      	for i := range 3 {
+      		go func() {
+      			<-start
+      			fmt.Println("старт", i)
+      		}()
+      	}
+      	start <- struct{}{}
+      	time.Sleep(100 * time.Millisecond)
+      }
+    options:
+      - text: Одна
+        correct: true
+        explain: Одна отправка — одно получение. Две другие горутины так и остались ждать. Чтобы разбудить всех, канал закрывают — `close(start)`.
+      - text: Все три
+        explain: Отправка не рассылает значение всем — его забирает ровно один получатель.
+      - text: Ни одной — deadlock
+        explain: Получатели есть, так что отправка завершится. Оставшиеся заблокированные горутины не мешают `main` завершиться.
+
+  - id: signal-before-write
+    kind: single
+    prompt: Есть ли в программе гонка данных?
+    code: |
+      package main
+
+      import "fmt"
+
+      func main() {
+      	var result int
+      	done := make(chan struct{})
+      	go func() {
+      		done <- struct{}{}
+      		result = 42
+      	}()
+      	<-done
+      	fmt.Println(result)
+      }
+    options:
+      - text: Есть
+        correct: true
+        explain: Канал упорядочивает только то, что записано до отправки. Запись `result = 42` идёт после — её чтение в `main` ничем не упорядочено, `-race` это поймает.
+      - text: Нет — main ждёт сигнала
+        explain: Сигнал пришёл раньше записи. После `<-done` горутина продолжает работать одновременно с `main`.
+      - text: Нет — небуферизованный канал синхронизирует горутины целиком
+        explain: Синхронизируется только момент передачи. До него и после него горутины выполняются независимо.

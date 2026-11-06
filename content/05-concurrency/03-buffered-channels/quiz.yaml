@@ -1,0 +1,89 @@
+questions:
+  - id: len-cap
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func main() {
+      	ch := make(chan int, 3)
+      	ch <- 1
+      	ch <- 2
+      	fmt.Println(len(ch), cap(ch))
+      	<-ch
+      	fmt.Println(len(ch), cap(ch))
+      }
+    options:
+      - text: |
+          2 3
+          1 3
+        correct: true
+        explain: "`len` — сколько значений сейчас в буфере, `cap` — его ёмкость. Ёмкость задана при создании и не меняется."
+      - text: |
+          3 3
+          2 3
+        explain: Канал создан на 3 элемента, но отправлено только два. `len` считает занятые слоты.
+      - text: |
+          2 2
+          1 1
+        explain: "`cap` у канала не растёт и не уменьшается, в отличие от длины."
+
+  - id: buffer-full
+    kind: single
+    prompt: Что произойдёт при запуске?
+    code: |
+      package main
+
+      import "fmt"
+
+      func main() {
+      	ch := make(chan int, 2)
+      	for i := range 3 {
+      		ch <- i
+      	}
+      	for range 3 {
+      		fmt.Println(<-ch)
+      	}
+      }
+    options:
+      - text: Выведет 0, 1, 2
+        explain: До получения выполнение не дойдёт — третья отправка ждёт места в буфере.
+      - text: Выведет 0 и 1, затем deadlock
+        explain: Ни одного получения не произойдёт — `main` застрянет ещё в первом цикле.
+      - text: "fatal error: all goroutines are asleep - deadlock!"
+        correct: true
+        explain: Две отправки ложатся в буфер, третья блокирует `main`, а получать некому. Буфер на 3 «починил» бы этот код — до первого увеличения данных.
+      - text: panic — буфер переполнен
+        explain: Переполнение буфера не паникует — отправка просто ждёт.
+
+  - id: buffer-uses
+    kind: multiple
+    prompt: Для чего годится буфер канала? Выберите все верные варианты.
+    options:
+      - text: Сгладить всплески, когда производитель иногда опережает потребителя
+        correct: true
+        explain: Производитель может уйти вперёд на `cap` значений и не ждать каждого получения.
+      - text: Ограничить число одновременно работающих горутин
+        correct: true
+        explain: Канал `chan struct{}` ёмкостью N — семафор. Занять слот — отправить, освободить — получить.
+      - text: Исправить deadlock, когда одна горутина и отправляет, и получает
+        explain: Буфер лишь откладывает блокировку до его заполнения. Ошибка в структуре программы никуда не делась.
+      - text: Узнать, что получатель обработал значение
+        explain: Буферизованная отправка гарантирует только, что значение легло в буфер. Даже получения она не подтверждает.
+
+  - id: negative-cap
+    kind: compile
+    prompt: Скомпилируется ли программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func main() {
+      	ch := make(chan int, -1)
+      	fmt.Println(cap(ch))
+      }
+    compiles: false
+    explain: "Ёмкость-константу компилятор проверяет сразу — отрицательная запрещена. Если же передать отрицательную переменную, программа соберётся, но упадёт при запуске с `panic: makechan: size out of range`."

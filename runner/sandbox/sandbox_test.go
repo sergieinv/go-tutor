@@ -396,3 +396,16 @@ func TestRace(t *testing.T) {
 		t.Fatalf("гонка не обнаружена: %+v", res)
 	}
 }
+
+// Сторонние модули из deps.mod доступны программе без своего go.mod.
+func TestDepsAvailable(t *testing.T) {
+	e := newExecutor(t)
+	src := "package main\n\nimport (\n\t\"fmt\"\n\n\t\"golang.org/x/sync/errgroup\"\n)\n\nfunc main() {\n\tvar g errgroup.Group\n\tg.Go(func() error { return nil })\n\tfmt.Println(g.Wait())\n}\n"
+	res, err := e.Run(context.Background(), Files{"main.go": src}, Flags{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.BuildFailed || res.Stdout != "<nil>\n" {
+		t.Fatalf("res = %+v", res)
+	}
+}

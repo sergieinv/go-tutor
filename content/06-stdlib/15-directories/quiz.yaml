@@ -1,0 +1,118 @@
+questions:
+  - id: walk-order
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"io/fs"
+      	"testing/fstest"
+      )
+
+      func main() {
+      	fsys := fstest.MapFS{
+      		"b.txt":     {},
+      		"a/z.txt":   {},
+      		"a/sub/y":   {},
+      		"c/skip/x":  {},
+      	}
+      	fs.WalkDir(fsys, ".", func(p string, d fs.DirEntry, err error) error {
+      		if d.Name() == "skip" {
+      			return fs.SkipDir
+      		}
+      		if !d.IsDir() {
+      			fmt.Print(p, " ")
+      		}
+      		return nil
+      	})
+      	fmt.Println()
+      }
+    options:
+      - text: "a/sub/y a/z.txt b.txt"
+        correct: true
+        explain: "Обход в глубину, имена внутри каталога — по алфавиту: в `a` сначала каталог `sub`, потом `z.txt`. Каталог `c/skip` пропущен целиком через `SkipDir`."
+      - text: "b.txt a/z.txt a/sub/y"
+        explain: "`WalkDir` не обходит в ширину: файлы и каталоги одного уровня идут вперемешку по алфавиту, а в каждый каталог он заходит сразу."
+      - text: "a/sub/y a/z.txt b.txt c/skip/x"
+        explain: "`fs.SkipDir`, возвращённый для каталога, пропускает всё его содержимое."
+      - text: "a/z.txt a/sub/y b.txt"
+        explain: Записи каталога сортируются по имени, `sub` < `z.txt`.
+
+  - id: skipdir-on-file
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"io/fs"
+      	"testing/fstest"
+      )
+
+      func main() {
+      	fsys := fstest.MapFS{"a": {}, "b": {}, "c": {}, "d": {}}
+      	fs.WalkDir(fsys, ".", func(p string, d fs.DirEntry, err error) error {
+      		if p == "b" {
+      			return fs.SkipDir
+      		}
+      		if p != "." {
+      			fmt.Print(p)
+      		}
+      		return nil
+      	})
+      	fmt.Println()
+      }
+    options:
+      - text: "acd"
+        explain: "Так было бы с «пропусти только этот файл». Но `SkipDir` для файла означает другое."
+      - text: "a"
+        correct: true
+        explain: "`SkipDir`, возвращённый для файла, пропускает все оставшиеся записи в его каталоге: `c` и `d` тоже не будут посещены."
+      - text: "ab"
+        explain: "`b` не печатается: колбэк вернул `SkipDir` до `Print`."
+
+  - id: mkdir-vs-mkdirall
+    kind: output
+    prompt: Что выведет программа (каталога `x` ещё нет)?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"os"
+      )
+
+      func main() {
+      	err1 := os.Mkdir("x/y", 0o755)
+      	err2 := os.MkdirAll("x/y", 0o755)
+      	err3 := os.MkdirAll("x/y", 0o755)
+      	fmt.Println(err1 == nil, err2 == nil, err3 == nil)
+      	os.RemoveAll("x")
+      }
+    options:
+      - text: "false true true"
+        correct: true
+        explain: "`Mkdir` создаёт ровно один уровень — родителя `x` нет, ошибка. `MkdirAll` создаёт цепочку и не считает ошибкой уже существующий каталог."
+      - text: "false true false"
+        explain: "`MkdirAll` идемпотентен: если каталог уже есть, он возвращает `nil`."
+      - text: "true true true"
+        explain: "`os.Mkdir` не создаёт промежуточные каталоги — в отличие от `Directory.CreateDirectory`."
+
+  - id: fs-impls
+    kind: multiple
+    prompt: Какие значения можно передать в функцию с параметром `fsys fs.FS`?
+    options:
+      - text: "`os.DirFS(\"static\")`"
+        correct: true
+        explain: Каталог на диске как файловая система.
+      - text: "`embed.FS` с файлами из `//go:embed`"
+        correct: true
+        explain: "`embed.FS` реализует `fs.FS`, `fs.ReadDirFS` и `fs.ReadFileFS`."
+      - text: "`fstest.MapFS{...}`"
+        correct: true
+        explain: Файлы в памяти — удобно для тестов.
+      - text: "`\"static\"` — строка с путём"
+        explain: Строка не реализует `fs.FS`; её нужно обернуть в `os.DirFS`.

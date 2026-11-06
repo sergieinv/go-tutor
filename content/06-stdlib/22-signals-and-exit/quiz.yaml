@@ -1,0 +1,83 @@
+questions:
+  - id: exit-skips-defer
+    kind: output
+    prompt: "Что выведет программа? (Коды выхода не печатаются — только stdout.)"
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"os"
+      )
+
+      func main() {
+      	defer fmt.Println("main defer")
+      	func() {
+      		defer fmt.Println("inner defer")
+      		fmt.Println("work")
+      	}()
+      	os.Exit(0)
+      }
+    options:
+      - text: "work\ninner defer"
+        correct: true
+        explain: "Внутренняя функция вернулась обычным образом, её `defer` выполнился. `os.Exit` завершает процесс сразу — `defer` в `main` уже не выполнится, даже с кодом 0."
+      - text: "work\ninner defer\nmain defer"
+        explain: "`os.Exit` не раскручивает стек: отложенные вызовы текущих функций пропускаются."
+      - text: "work"
+        explain: "`inner defer` выполнился до `os.Exit` — анонимная функция к этому моменту уже вернулась."
+
+  - id: notify-context
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"context"
+      	"fmt"
+      	"os"
+      	"os/signal"
+      	"syscall"
+      )
+
+      func main() {
+      	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGUSR1)
+      	defer stop()
+      	fmt.Println(ctx.Err())
+      	syscall.Kill(os.Getpid(), syscall.SIGUSR1)
+      	<-ctx.Done()
+      	fmt.Println(ctx.Err())
+      }
+    options:
+      - text: "<nil>\ncontext canceled"
+        correct: true
+        explain: "До сигнала контекст жив. Сигнал отменяет его — `Err` возвращает `context.Canceled`. Процесс не завершился, потому что `SIGUSR1` перехвачен."
+      - text: "<nil>\nsignal: user defined signal 1"
+        explain: "В Go 1.25 `ctx.Err()` — всегда `context.Canceled`; сам сигнал в ошибку не попадает."
+      - text: "<nil>"
+        explain: "Без подписки `SIGUSR1` действительно завершил бы процесс. Но `NotifyContext` перехватывает его и отменяет контекст."
+
+  - id: fatal-code
+    kind: single
+    prompt: "Чем `log.Fatal(err)` отличается от `panic(err)` в `main`?"
+    options:
+      - text: Ничем — оба завершают программу с кодом 1
+        explain: "Паника даёт код 2 и печатает стек; `log.Fatal` — код 1 и одну строку."
+      - text: "`log.Fatal` вызывает `os.Exit(1)` без `defer`; паника выполняет `defer` (их можно перехватить `recover`) и завершает процесс с кодом 2"
+        correct: true
+        explain: "`log.Fatal` = печать + `os.Exit(1)`: отложенные вызовы пропускаются. Паника раскручивает стек, выполняя `defer`, и без `recover` завершает процесс с кодом 2 и трассировкой стека в stderr."
+      - text: "`log.Fatal` можно перехватить через `recover`, а панику — нет"
+        explain: Наоборот — `recover` работает только для паник, `os.Exit` перехватить нельзя.
+
+  - id: unbuffered-notify
+    kind: single
+    prompt: "Почему канал для `signal.Notify` делают буферизованным: `make(chan os.Signal, 1)`?"
+    options:
+      - text: Иначе `Notify` не скомпилируется
+        explain: "Компилируется и с небуферизованным каналом — предупреждает только `go vet`."
+      - text: "`signal` отправляет неблокирующе: если получатель не готов, сигнал теряется"
+        correct: true
+        explain: "Пакет не будет ждать вашу горутину. Буфер на один элемент гарантирует, что сигнал, пришедший до `<-ch`, не пропадёт."
+      - text: Чтобы получать несколько сигналов одновременно
+        explain: "Буфер на один элемент не про одновременность — он сохраняет сигнал, пришедший, пока никто не читает."

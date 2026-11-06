@@ -1,0 +1,74 @@
+questions:
+  - id: no-shell
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"os/exec"
+      )
+
+      func main() {
+      	out, err := exec.Command("echo", "a  b", "$USER|wc").Output()
+      	fmt.Printf("%q %v\n", out, err)
+      }
+    options:
+      - text: '"a  b $USER|wc\n" <nil>'
+        correct: true
+        explain: "Оболочки нет: каждый аргумент передаётся `echo` как есть — два пробела внутри сохраняются, `$USER` не раскрывается, `|` — просто символ."
+      - text: '"a b gopher\n" <nil>'
+        explain: "Так сработала бы оболочка. `exec.Command` запускает программу напрямую."
+      - text: '"" exec: "echo": executable file not found in $PATH'
+        explain: "`echo` есть и как отдельная программа в `PATH` (`/bin/echo`), её `exec` и находит."
+
+  - id: exit-error
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"errors"
+      	"fmt"
+      	"os/exec"
+      )
+
+      func main() {
+      	out, err := exec.Command("/bin/sh", "-c", "echo partial; exit 4").Output()
+      	var ee *exec.ExitError
+      	fmt.Printf("%q %v %d\n", out, errors.As(err, &ee), ee.ExitCode())
+      }
+    options:
+      - text: '"partial\n" true 4'
+        correct: true
+        explain: "Ненулевой код выхода — ошибка `*exec.ExitError`, но `Output` всё равно возвращает собранный stdout."
+      - text: '"" true 4'
+        explain: При ошибке `Output` не выбрасывает вывод — всё, что программа успела напечатать, возвращается.
+      - text: '"partial\n" false 0'
+        explain: "`Run`, `Output` и `CombinedOutput` превращают ненулевой код в `*exec.ExitError`."
+
+  - id: start-wait
+    kind: single
+    prompt: "Программа вызывает `cmd.StdoutPipe()`, затем `cmd.Run()`, а потом читает пайп. Что произойдёт?"
+    options:
+      - text: Всё сработает, вывод прочитается после завершения
+        explain: "`Run` = `Start` + `Wait`, а `Wait` закрывает пайп. Читать после него поздно."
+      - text: Чтение получит ошибку или ничего, а при большом выводе программа может зависнуть
+        correct: true
+        explain: "`Wait` закрывает свой конец пайпа, поэтому читать нужно между `Start` и `Wait`. А если дочерний процесс пишет больше буфера пайпа, он блокируется — `Run` никогда не вернётся. Правильно: `Start` → чтение до EOF → `Wait`."
+      - text: Компилятор запретит такой порядок вызовов
+        explain: Порядок вызовов компилятор не проверяет — ошибка проявится только при запуске.
+
+  - id: context-kill
+    kind: single
+    prompt: "`exec.CommandContext(ctx, ...)`, и `ctx` истёк по таймауту. Какую ошибку вернёт `Run`?"
+    options:
+      - text: "`context.DeadlineExceeded`"
+        explain: "Процесс убит сигналом, и `Run` сообщает именно об этом. Причину нужно взять из `ctx.Err()`."
+      - text: "`*exec.ExitError` с текстом `signal: killed`"
+        correct: true
+        explain: "По отмене контекста процесс получает `Kill`, а `Wait` возвращает ошибку убитого процесса. `errors.Is(err, context.DeadlineExceeded)` будет `false` — проверяйте `ctx.Err()`."
+      - text: "`nil` — процесс просто остановлен"
+        explain: Убийство процесса — неуспешное завершение, `Run` возвращает ошибку.

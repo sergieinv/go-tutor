@@ -163,22 +163,53 @@ func TestRunWithoutTrace(t *testing.T) {
 	}
 }
 
-// TestWriteFixture обновляет трассу-образец для тестов построителя шагов
+// TestWriteFixture обновляет образцы ответов runner для тестов построителей шагов
 // на TypeScript: GOTUTOR_FIXTURE=1 go test ./livetrace -run WriteFixture
 func TestWriteFixture(t *testing.T) {
 	if os.Getenv("GOTUTOR_FIXTURE") == "" {
 		t.Skip("GOTUTOR_FIXTURE не задан")
 	}
-	src, err := os.ReadFile("../../content/05-concurrency/07-select/live/main.go")
-	if err != nil {
-		t.Fatal(err)
+	e := newExecutor(t)
+	read := func(path string) sandbox.Files {
+		src, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return sandbox.Files{"main.go": string(src)}
 	}
-	res, err := Run(context.Background(), newExecutor(t), sandbox.Files{"main.go": string(src)}, sandbox.Flags{})
+	write := func(name string, v any) {
+		out, _ := json.MarshalIndent(v, "", "  ")
+		if err := os.WriteFile("../../viz/test/testdata/"+name, append(out, '\n'), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for name, src := range map[string]string{
+		"select-trace.json":   "../../content/05-concurrency/07-select/live/main.go",
+		"pipeline-trace.json": "testdata/pipeline.go",
+	} {
+		res, err := Run(context.Background(), e, read(src), sandbox.Flags{})
+		if err != nil || res.Trace == nil {
+			t.Fatalf("%s: err=%v res=%+v", name, err, res)
+		}
+		write(name, res)
+	}
+	res, err := RunRace(context.Background(), e, read("testdata/race.go"), sandbox.Flags{})
+	if err != nil || len(res.Races) == 0 {
+		t.Fatalf("race: err=%v res=%+v", err, res)
+	}
+	write("race.json", res)
+}
+
+// Горутины из wg.Go стартуют в пакете sync, но это горутины ученика.
+func TestRunWaitGroupGo(t *testing.T) {
+	e := newExecutor(t)
+	src := "package main\n\nimport \"sync\"\n\nfunc main() {\n\tvar wg sync.WaitGroup\n\tch := make(chan int)\n\twg.Go(func() { ch <- 1 })\n\twg.Go(func() { <-ch })\n\twg.Wait()\n}\n"
+	res, err := Run(context.Background(), e, sandbox.Files{"main.go": src}, sandbox.Flags{})
 	if err != nil || res.Trace == nil {
 		t.Fatalf("err=%v res=%+v", err, res)
 	}
-	out, _ := json.MarshalIndent(res, "", "  ")
-	if err := os.WriteFile("../../viz/test/testdata/select-trace.json", append(out, '\n'), 0o644); err != nil {
-		t.Fatal(err)
+	g := res.Trace.Goroutines
+	if len(g) != 3 || g[1].Line != 8 || g[2].Line != 9 || !strings.Contains(g[1].Func, "WaitGroup") {
+		t.Fatalf("goroutines = %+v", g)
 	}
 }

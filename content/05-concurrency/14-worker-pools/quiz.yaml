@@ -1,0 +1,109 @@
+questions:
+  - id: drain-closed
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"sync"
+      )
+
+      func main() {
+      	jobs := make(chan int, 5)
+      	for i := 1; i <= 5; i++ {
+      		jobs <- i
+      	}
+      	close(jobs)
+
+      	var wg sync.WaitGroup
+      	var mu sync.Mutex
+      	sum := 0
+      	for range 2 {
+      		wg.Go(func() {
+      			for j := range jobs {
+      				mu.Lock()
+      				sum += j
+      				mu.Unlock()
+      			}
+      		})
+      	}
+      	wg.Wait()
+      	fmt.Println(sum)
+      }
+    options:
+      - text: "15"
+        correct: true
+        explain: "Закрытие не стирает буфер: `range` отдаёт все пять значений и только потом завершается. Два воркера делят задачи между собой, сумма одна и та же."
+      - text: "0"
+        explain: "Канал закрыт до старта воркеров, но значения в буфере остаются доступны для чтения."
+      - text: "30"
+        explain: "Каждое значение из канала получает ровно один читатель — воркеры не дублируют задачи."
+      - text: panic
+        explain: Паникует отправка в закрытый канал, а чтение из него безопасно.
+
+  - id: semaphore-full
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func main() {
+      	sem := make(chan struct{}, 2)
+      	sem <- struct{}{}
+      	sem <- struct{}{}
+      	select {
+      	case sem <- struct{}{}:
+      		fmt.Println("занял")
+      	default:
+      		fmt.Println("занято", len(sem), cap(sem))
+      	}
+      }
+    options:
+      - text: занято 2 2
+        correct: true
+        explain: "Оба места семафора заняты, третья отправка заблокировалась бы, поэтому `select` уходит в `default`. `len` — сколько мест занято, `cap` — сколько всего."
+      - text: занял
+        explain: Буфер на два значения уже полон — отправка не готова.
+      - text: занято 0 2
+        explain: "`len` у буферизованного канала — число значений в буфере, здесь 2."
+      - text: deadlock
+        explain: "Внутри `select` с `default` отправка в полный канал не блокирует — выполняется `default`."
+
+  - id: send-to-receive-only
+    kind: compile
+    prompt: Скомпилируется ли программа?
+    code: |
+      package main
+
+      func worker(jobs <-chan int, results <-chan int) {
+      	for j := range jobs {
+      		results <- j * 2
+      	}
+      }
+
+      func main() {
+      	jobs := make(chan int)
+      	results := make(chan int)
+      	close(jobs)
+      	worker(jobs, results)
+      }
+    compiles: false
+    explain: "`results` объявлен как `<-chan int` — только для чтения. Канал результатов воркеру нужен для отправки: `results chan<- int`. Направления каналов ловят такую путаницу при компиляции."
+
+  - id: who-closes-results
+    kind: single
+    prompt: Кто должен закрыть канал результатов, в который пишут N воркеров?
+    options:
+      - text: Каждый воркер, когда закончит
+        explain: Второй же `close` запаникует, а оставшиеся воркеры получат `send on closed channel`.
+      - text: Отдельная горутина после `wg.Wait()`
+        correct: true
+        explain: Только после `wg.Wait()` известно, что писателей больше нет. Отдельная горутина нужна, чтобы основная могла параллельно читать результаты.
+      - text: Читатель — после того как прочтёт N значений
+        explain: Закрытие — сигнал от отправителя получателю. Если читатель знает N, закрывать вообще не обязательно, но правило «закрывает отправитель» лучше не нарушать.
+      - text: Никто — сборщик мусора закроет сам
+        explain: GC соберёт недостижимый канал, но `range` по незакрытому каналу будет ждать вечно.

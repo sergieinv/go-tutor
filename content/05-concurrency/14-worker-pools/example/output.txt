@@ -1,0 +1,3 @@
+[GO CHANNEL WORKER POOL SELECT MUTEX]
+[2 7 6 4 6 5]
+больше двух одновременно: false

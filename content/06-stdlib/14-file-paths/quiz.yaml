@@ -1,0 +1,91 @@
+questions:
+  - id: join-clean
+    kind: output
+    prompt: Что выведет программа (Linux или macOS)?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"path/filepath"
+      )
+
+      func main() {
+      	fmt.Println(filepath.Join("a", "/b/", "../c", ""))
+      }
+    options:
+      - text: "/b/../c"
+        explain: "`Join` не отбрасывает элементы до абсолютного, как `Path.Combine`, и сразу нормализует результат."
+      - text: "a/c"
+        correct: true
+        explain: "Элементы склеиваются через `/` (пустые пропускаются) — `a//b//../c`, затем `Clean` схлопывает двойные слеши и `b/..`. Результат — `a/c`."
+      - text: "a/b/../c/"
+        explain: "`Join` вызывает `Clean`: `..` и хвостовой слеш убираются."
+      - text: "/c"
+        explain: Слеш в начале второго элемента не делает результат абсолютным — первый элемент `a` остаётся.
+
+  - id: base-dir-ext
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"path/filepath"
+      )
+
+      func main() {
+      	p := "backup/db.2024.sql.gz"
+      	fmt.Println(filepath.Dir(p), filepath.Base(p), filepath.Ext(p))
+      }
+    options:
+      - text: "backup db.2024.sql.gz .gz"
+        correct: true
+        explain: "`Dir` — всё до последнего разделителя, `Base` — последний элемент, `Ext` — от последней точки последнего элемента."
+      - text: "backup/ db.2024.sql.gz .2024.sql.gz"
+        explain: "`Dir` убирает завершающий слеш, а `Ext` смотрит только на последнюю точку."
+      - text: "backup db .gz"
+        explain: "`Base` возвращает имя целиком, с расширением. Имя без расширения получают через `strings.TrimSuffix`."
+
+  - id: match-separator
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"path/filepath"
+      )
+
+      func main() {
+      	a, _ := filepath.Match("*.txt", "notes.txt")
+      	b, _ := filepath.Match("*.txt", "docs/notes.txt")
+      	c, _ := filepath.Match("*/*.txt", "docs/notes.txt")
+      	fmt.Println(a, b, c)
+      }
+    options:
+      - text: "true true true"
+        explain: "`*` в шаблонах Go не совпадает с разделителем пути."
+      - text: "true false true"
+        correct: true
+        explain: "`*` — любая последовательность символов, кроме разделителя. Поэтому `*.txt` не захватывает `docs/`, а `*/*.txt` — да. Рекурсивного `**` нет."
+      - text: "true false false"
+        explain: "`*/*.txt` описывает ровно один каталог и файл в нём — `docs/notes.txt` подходит."
+
+  - id: path-vs-filepath
+    kind: multiple
+    prompt: В каких случаях нужен пакет `path`, а не `path/filepath`?
+    options:
+      - text: Склеить сегменты URL
+        correct: true
+        explain: В URL разделитель всегда `/`, а `filepath.Join` в Windows вставит `\`.
+      - text: Путь внутри `embed.FS` или `fs.FS`
+        correct: true
+        explain: Пути `io/fs` всегда со слешами и без ведущего `/` на любой ОС.
+      - text: Путь к файлу на диске, который откроет `os.Open`
+        explain: Это путь ОС — для него `filepath`, который знает разделитель и тома Windows.
+      - text: Имя файла внутри zip-архива
+        correct: true
+        explain: Формат zip хранит пути со слешами, независимо от ОС, где создан архив.

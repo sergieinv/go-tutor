@@ -1,0 +1,118 @@
+questions:
+  - id: fast-wins
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"time"
+      )
+
+      func main() {
+      	ch := make(chan string, 1)
+      	go func() { ch <- "готово" }()
+      	select {
+      	case v := <-ch:
+      		fmt.Println(v)
+      	case <-time.After(time.Second):
+      		fmt.Println("таймаут")
+      	}
+      }
+    options:
+      - text: готово
+        correct: true
+        explain: Горутина отправляет значение сразу, и ветка получения становится готова задолго до секунды.
+      - text: таймаут
+        explain: "`time.After` сработает только через секунду, а результат приходит почти мгновенно."
+      - text: deadlock
+        explain: Отправитель есть, канал с буфером — блокировки нет.
+
+  - id: leak-count
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"runtime"
+      	"time"
+      )
+
+      func main() {
+      	for range 3 {
+      		ch := make(chan int)
+      		go func() {
+      			time.Sleep(20 * time.Millisecond)
+      			ch <- 42
+      		}()
+      		select {
+      		case <-ch:
+      		case <-time.After(time.Millisecond):
+      		}
+      	}
+      	time.Sleep(200 * time.Millisecond)
+      	fmt.Println(runtime.NumGoroutine())
+      }
+    options:
+      - text: "4"
+        correct: true
+        explain: "Каждая итерация уходит по таймауту, а исполнитель через 20 мс застревает на отправке в небуферизованный канал, который никто не читает. Три висящие горутины плюс `main` — четыре."
+      - text: "1"
+        explain: Так было бы с `make(chan int, 1)` — исполнитель положил бы значение в буфер и завершился.
+      - text: "3"
+        explain: "`NumGoroutine` считает и саму `main`."
+
+  - id: after-not-cancel
+    kind: single
+    prompt: "`Call` вернул `ErrTimeout` по ветке `<-time.After(d)`. Что происходит с горутиной, которая выполняет работу?"
+    options:
+      - text: Продолжает работать, пока функция не вернётся сама
+        correct: true
+        explain: Таймаут прекращает только ожидание. Чтобы работа узнала об отмене, ей нужен сигнал — канал `done` или `context.Context`.
+      - text: Рантайм останавливает её при срабатывании таймера
+        explain: В Go нет способа остановить горутину снаружи — ни `Thread.Abort`, ни его аналогов.
+      - text: Она паникует при следующей операции с каналом
+        explain: Каналы не знают о таймерах. Паника возникает только при отправке в закрытый канал.
+
+  - id: total-deadline
+    kind: output
+    prompt: События приходят каждые 30 мс, всего их 10. Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"time"
+      )
+
+      func main() {
+      	events := make(chan int)
+      	go func() {
+      		for i := range 10 {
+      			time.Sleep(30 * time.Millisecond)
+      			events <- i
+      		}
+      	}()
+
+      	deadline := time.After(100 * time.Millisecond)
+      	got := 0
+      	for {
+      		select {
+      		case <-events:
+      			got++
+      			continue
+      		case <-deadline:
+      		}
+      		break
+      	}
+      	fmt.Println(got < 10)
+      }
+    options:
+      - text: "true"
+        correct: true
+        explain: "Канал `deadline` создан один раз до цикла, поэтому через 100 мс цикл заканчивается, хотя события ещё идут. Создай мы `time.After` внутри `select`, таймер перезапускался бы после каждого события и цикл дождался бы всех 10."
+      - text: "false"
+        explain: Общий дедлайн срабатывает через 100 мс — за это время успевает прийти не больше трёх-четырёх событий из десяти.

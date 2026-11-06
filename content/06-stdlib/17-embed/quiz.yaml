@@ -1,0 +1,81 @@
+questions:
+  - id: embed-missing-import
+    kind: compile
+    prompt: "Скомпилируется ли программа? (Файл `version.txt` лежит рядом с `main.go`.)"
+    code: |
+      package main
+
+      import "fmt"
+
+      //go:embed version.txt
+      var version string
+
+      func main() {
+      	fmt.Println(version)
+      }
+    compiles: false
+    explain: "Директива `//go:embed` требует импорта пакета `embed`. Для переменной `string` или `[]byte` он по имени не используется, поэтому пишут `import _ \"embed\"`. Без него — ошибка `go:embed requires import \"embed\"`."
+
+  - id: embed-parent
+    kind: single
+    prompt: "Пакет `internal/web` хочет встроить файл `assets/logo.png` из корня модуля. Что сработает?"
+    options:
+      - text: "`//go:embed ../../assets/logo.png`"
+        explain: "Пути с `..` в шаблонах запрещены: `invalid pattern syntax`."
+      - text: "`//go:embed /assets/logo.png`"
+        explain: Абсолютные пути тоже запрещены — шаблон относителен каталога пакета.
+      - text: Встроить файл в пакет, в каталоге которого он лежит (или ниже), и экспортировать переменную
+        correct: true
+        explain: "Встраивать можно только файлы из каталога пакета и его подкаталогов. Обычный приём — пакет `assets` рядом с файлами с `//go:embed` и экспортируемым `embed.FS`."
+      - text: Скопировать файл в рантайме через `os.ReadFile`
+        explain: Тогда файл придётся поставлять вместе с бинарником — смысл встраивания теряется.
+
+  - id: embed-hidden
+    kind: single
+    prompt: "В каталоге `static` лежат `index.html`, `.well-known/security.txt` и `_headers`. Что встроит `//go:embed static`?"
+    options:
+      - text: Все три файла
+        explain: "Это делает шаблон `all:static`."
+      - text: Только `static/index.html`
+        correct: true
+        explain: "Когда шаблон называет каталог, файлы и каталоги с именами на `.` и `_` исключаются. Чтобы включить их, пишут `//go:embed all:static`."
+      - text: Ничего — каталоги встраивать нельзя
+        explain: Можно, если переменная имеет тип `embed.FS`. Каталог встраивается рекурсивно.
+
+  - id: embed-string-multi
+    kind: single
+    prompt: "Можно ли написать `//go:embed *.sql` над `var migrations string`?"
+    options:
+      - text: Да, файлы склеятся в одну строку
+        explain: Склеивания нет — у `string` и `[]byte` должен быть ровно один файл.
+      - text: Нет, для нескольких файлов нужен тип `embed.FS`
+        correct: true
+        explain: "Переменная `string` или `[]byte` принимает один шаблон, который совпадает ровно с одним файлом. Набор файлов — только `embed.FS`."
+      - text: Да, встроится первый по алфавиту файл
+        explain: Компилятор не выбирает за вас — несколько совпадений для `string` дают ошибку сборки.
+
+  - id: fs-valid-path
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"io/fs"
+      	"testing/fstest"
+      )
+
+      func main() {
+      	fsys := fstest.MapFS{"cfg/app.json": {Data: []byte("{}")}}
+      	_, err := fs.ReadFile(fsys, "/cfg/app.json")
+      	fmt.Println(err == nil, fs.ValidPath("cfg/app.json"), fs.ValidPath("./cfg"))
+      }
+    options:
+      - text: "true true true"
+        explain: Пути `io/fs` (и `embed.FS`) не начинаются с `/` и не содержат элементов `.` и `..`.
+      - text: "false true false"
+        correct: true
+        explain: "Ведущий `/` делает путь недопустимым — `ReadFile` вернёт ошибку. `./cfg` тоже недопустим: элемент `.` разрешён только как весь путь (корень)."
+      - text: "false true true"
+        explain: "`fs.ValidPath` отвергает элементы `.` и `..` внутри пути: `./cfg` нужно писать как `cfg`."

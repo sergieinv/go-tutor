@@ -1,0 +1,100 @@
+questions:
+  - id: attr-chardata
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"encoding/xml"
+      	"fmt"
+      )
+
+      type price struct {
+      	XMLName  xml.Name `xml:"price"`
+      	Currency string   `xml:"cur,attr"`
+      	Value    string   `xml:",chardata"`
+      }
+
+      func main() {
+      	b, _ := xml.Marshal(price{Currency: "RUB", Value: "10"})
+      	fmt.Println(string(b))
+      }
+    options:
+      - text: "<price cur=\"RUB\">10</price>"
+        correct: true
+        explain: "`XMLName` задаёт имя элемента, `,attr` делает поле атрибутом, `,chardata` — текстом элемента."
+      - text: "<price><cur>RUB</cur><Value>10</Value></price>"
+        explain: "Так было бы без `,attr` и `,chardata`: каждое поле стало бы вложенным элементом."
+      - text: "<?xml version=\"1.0\"?><price cur=\"RUB\">10</price>"
+        explain: "`xml.Marshal` не добавляет объявление `<?xml …?>` — для него есть константа `xml.Header`."
+
+  - id: nested-path
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"encoding/xml"
+      	"fmt"
+      )
+
+      type order struct {
+      	Items []string `xml:"items>item"`
+      }
+
+      func main() {
+      	b, _ := xml.Marshal(order{Items: []string{"a", "b"}})
+      	fmt.Println(string(b))
+      }
+    options:
+      - text: "<order><items><item>a</item><item>b</item></items></order>"
+        correct: true
+        explain: "Без `XMLName` корень называется по имени типа — `order`. Тег `items>item` создаёт обёртку `items` и по элементу `item` на каждый элемент среза."
+      - text: "<order><items><item>a</item></items><items><item>b</item></items></order>"
+        explain: "Соседние элементы среза с общим путём `items>…` попадают в одну обёртку."
+      - text: "<Order><Items>a b</Items></Order>"
+        explain: "Имена берутся из тега, а корень — из имени типа как есть, без смены регистра."
+
+  - id: wrong-root
+    kind: single
+    prompt: "У структуры поле `` XMLName xml.Name `xml:\"book\"` ``. Что сделает `xml.Unmarshal` с документом `<film id=\"1\"/>`?"
+    options:
+      - text: Вернёт ошибку `expected element type <book> but have <film>`
+        correct: true
+        explain: При разборе тег на `XMLName` проверяет имя корня.
+      - text: Разберёт документ, `XMLName.Local` станет `film`
+        explain: "Без тега у `XMLName` так бы и было. С тегом имя корня обязано совпасть."
+      - text: Ничего не заполнит и вернёт `nil`
+        explain: Несовпадение имени корня — ошибка, а не тихий пропуск.
+
+  - id: chardata-nested
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"encoding/xml"
+      	"fmt"
+      )
+
+      type p struct {
+      	Text  string `xml:",chardata"`
+      	Inner string `xml:",innerxml"`
+      }
+
+      func main() {
+      	var v p
+      	xml.Unmarshal([]byte(`<p>Hi <b>Go</b>!</p>`), &v)
+      	fmt.Printf("%q %q\n", v.Text, v.Inner)
+      }
+    options:
+      - text: "\"Hi !\" \"Hi <b>Go</b>!\""
+        correct: true
+        explain: "`chardata` собирает только собственный текст элемента — куски до и после `<b>`. `innerxml` хранит всё содержимое как есть, с разметкой."
+      - text: "\"Hi Go!\" \"Hi <b>Go</b>!\""
+        explain: "Текст вложенного элемента `<b>` в `chardata` родителя не попадает."
+      - text: "\"Hi \" \"<p>Hi <b>Go</b>!</p>\""
+        explain: "`chardata` склеивает все текстовые куски элемента, а `innerxml` — содержимое без тегов самого элемента."

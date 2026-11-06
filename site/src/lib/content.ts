@@ -65,7 +65,8 @@ export interface Lesson {
   module: Module;
   meta: LessonMeta;
   body: string; // markdown без frontmatter
-  example: { source: string; output: string };
+  /** files — файлы рядом с main.go (данные для embed и т.п.), их тоже получает runner. */
+  example: { source: string; output: string; files: Record<string, string> };
   csharp: { file: string; source: string }[];
   quiz: QuizQuestion[];
   task?: Task;
@@ -140,6 +141,13 @@ function loadLesson(module: Module, slug: string): Lesson {
     example: {
       source: read(dir, "example", "main.go"),
       output: exists(dir, "example", "output.txt") ? read(dir, "example", "output.txt") : "",
+      files: Object.fromEntries(
+        fs
+          .readdirSync(path.join(dir, "example"))
+          .filter((f) => f !== "main.go" && f !== "output.txt")
+          .sort()
+          .map((f) => [f, read(dir, "example", f)]),
+      ),
     },
     csharp,
     quiz: YAML.parse(read(dir, "quiz.yaml")).questions,
