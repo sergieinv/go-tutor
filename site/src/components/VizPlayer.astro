@@ -1,0 +1,100 @@
+---
+// Визуализатор урока: код слева, схема справа, плеер шагов снизу.
+// Без JS остаётся код и список шагов текстом.
+import fs from "node:fs";
+import path from "node:path";
+import { contentDir, type Lesson } from "../lib/content";
+import { highlight, inlineMarkdown, scriptJSON } from "../lib/markdown";
+import { lessonViz } from "../lib/viz";
+import "../../../viz/src/viz.css";
+
+interface Props {
+  lesson: Lesson;
+}
+const { lesson } = Astro.props;
+const viz = lessonViz(lesson.id);
+if (!viz) throw new Error(`${lesson.id}: нет viz.ts`);
+
+const liveCode = viz.kind === "live" ? fs.readFileSync(path.join(contentDir, lesson.id, viz.file), "utf8") : "";
+const codeHtml = await highlight((viz.kind === "scenario" ? viz.code : liveCode).trimEnd(), "go");
+const steps = viz.kind === "scenario" ? viz.steps : [];
+---
+
+<figure class="viz" data-viz data-kind={viz.kind} data-lesson={lesson.id} tabindex="-1" aria-label={`Визуализация: ${viz.title}`}>
+  <figcaption class="viz-title">
+    {viz.title}
+    {viz.kind === "live" && <span class="badge">живая</span>}
+  </figcaption>
+  {
+    viz.kind === "scenario" && (
+      <script type="application/json" data-steps set:html={scriptJSON({ width: viz.width, height: viz.height, steps: viz.steps })} />
+    )
+  }
+  {viz.kind === "live" && <script type="application/json" data-live-code set:html={scriptJSON(liveCode)} />}
+
+  <div class="viz-body">
+    <div class="viz-code" data-code>
+      {viz.kind === "scenario" && <Fragment set:html={codeHtml} />}
+      {
+        viz.kind === "live" && (
+          <>
+            <div class="editor" data-editor>
+              <Fragment set:html={codeHtml} />
+            </div>
+            <div class="toolbar" role="toolbar" aria-label="Запуск визуализации">
+              <button type="button" class="primary" data-act="trace" disabled>
+                Запустить и построить
+              </button>
+              <button type="button" data-act="reset" disabled>
+                Сбросить
+              </button>
+              {viz.gomaxprocs && viz.gomaxprocs.length > 0 && (
+                <label class="muted">
+                  GOMAXPROCS{" "}
+                  <select data-gomaxprocs>
+                    <option value="">по умолчанию</option>
+                    {viz.gomaxprocs.map((n) => (
+                      <option value={n}>{n}</option>
+                    ))}
+                  </select>
+                </label>
+              )}
+            </div>
+            <div class="result" data-result aria-live="polite" />
+          </>
+        )
+      }
+    </div>
+    <div class="viz-stage" data-stage>
+      <svg role="img" aria-label={viz.title} preserveAspectRatio="xMidYMin meet"></svg>
+    </div>
+  </div>
+
+  <p class="viz-note" data-note aria-live="polite">
+    {
+      viz.kind === "live"
+        ? "Нажмите «Запустить и построить»: код выполнится в runner с трассировкой, и шаги построятся по тому, что произошло на самом деле."
+        : ""
+    }
+  </p>
+  <div class="viz-controls" role="toolbar" aria-label="Шаги визуализации">
+    <button type="button" data-act="first" disabled aria-label="В начало">⏮</button>
+    <button type="button" data-act="prev" disabled>← Назад</button>
+    <button type="button" data-act="next" class="primary" disabled>Вперёд →</button>
+    <button type="button" data-act="play" disabled aria-pressed="false">▶ Авто</button>
+    <input type="range" data-act="seek" min="0" max="0" value="0" disabled aria-label="Шаг" />
+    <span class="muted" data-counter></span>
+    <span class="muted" data-time></span>
+  </div>
+  <details class="viz-text">
+    <summary>Все шаги текстом</summary>
+    <ol data-steps-list>
+      {steps.map((s) => <li set:html={inlineMarkdown(s.note)} />)}
+    </ol>
+  </details>
+</figure>
+
+<script>
+  import { mountAll } from "../lib/client/viz.ts";
+  mountAll();
+</script>

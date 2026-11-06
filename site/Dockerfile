@@ -11,6 +11,8 @@ COPY site/package.json site/package-lock.json ./
 RUN npm ci --registry="$NPM_REGISTRY" --replace-registry-host="$LOCK_REGISTRY"
 COPY site/ ./
 COPY content /app/content
+# Движок визуализаций: сайт импортирует его исходники напрямую.
+COPY viz /app/viz
 RUN npx astro telemetry disable && npm run build
 
 FROM nginx:1.29-alpine

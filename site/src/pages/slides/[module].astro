@@ -1,0 +1,149 @@
+---
+// Режим слайдов: обзор модуля на 8–12 экранов для показа команде.
+// ← / → листают; если на слайде визуализатор, сначала листаются его шаги.
+import VizPlayer from "../../components/VizPlayer.astro";
+import { loadCourse, type Module } from "../../lib/content";
+import { hasSlides, loadSlides } from "../../lib/slides";
+import "../../styles/global.css";
+
+export function getStaticPaths() {
+  return loadCourse()
+    .filter(hasSlides)
+    .map((module) => ({ params: { module: module.slug }, props: { module } }));
+}
+
+interface Props {
+  module: Module;
+}
+const { module } = Astro.props;
+const slides = await loadSlides(module);
+---
+
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{`Слайды: ${module.title} — Go для C#-разработчика`}</title>
+  </head>
+  <body class="slides-body">
+    <main class="deck" data-deck>
+      {
+        slides.map((s, i) => (
+          <section class="slide" data-slide aria-roledescription="слайд" aria-label={`${i + 1} из ${slides.length}`} hidden={i > 0}>
+            <div class="prose slide-text" set:html={s.html} />
+            {s.viz && <VizPlayer lesson={s.viz} />}
+          </section>
+        ))
+      }
+    </main>
+    <nav class="deck-bar" aria-label="Слайды">
+      <a href="/" class="muted">← Оглавление</a>
+      <span class="muted">Модуль {module.number}. {module.title}</span>
+      <span class="deck-nav">
+        <button type="button" data-deck-act="prev" aria-label="Предыдущий слайд">←</button>
+        <span data-deck-counter aria-live="polite">1 / {slides.length}</span>
+        <button type="button" data-deck-act="next" aria-label="Следующий слайд">→</button>
+        <button type="button" data-deck-act="full">Во весь экран</button>
+      </span>
+    </nav>
+  </body>
+</html>
+
+<script>
+  import { players } from "../../lib/client/viz.ts";
+
+  const slides = [...document.querySelectorAll<HTMLElement>("[data-slide]")];
+  const counter = document.querySelector<HTMLElement>("[data-deck-counter]")!;
+  let current = 0;
+
+  function show(i: number, focus = true) {
+    current = Math.min(Math.max(i, 0), slides.length - 1);
+    slides.forEach((s, n) => (s.hidden = n !== current));
+    counter.textContent = `${current + 1} / ${slides.length}`;
+    history.replaceState(null, "", `#${current + 1}`);
+    if (focus) slides[current].querySelector<HTMLElement>("[data-viz]")?.focus({ preventScroll: true });
+  }
+
+  const player = () => {
+    const root = slides[current].querySelector<HTMLElement>("[data-viz]");
+    return root ? players.get(root) : undefined;
+  };
+
+  // Сначала шаги визуализатора, потом следующий слайд.
+  function forward() {
+    const p = player();
+    if (p && p.steps.length > 0 && !p.atEnd) p.next();
+    else show(current + 1);
+  }
+  function back() {
+    const p = player();
+    if (p && p.steps.length > 0 && !p.atStart) p.prev();
+    else show(current - 1);
+  }
+
+  document.addEventListener("keydown", (e) => {
+    // Плеер уже обработал стрелку, а в редакторе и полях клавиши — для ввода.
+    if (e.defaultPrevented || (e.target as HTMLElement).closest(".cm-editor, input, select, textarea")) return;
+    if (["ArrowRight", "PageDown", " "].includes(e.key)) forward();
+    else if (["ArrowLeft", "PageUp"].includes(e.key)) back();
+    else if (e.key === "Home") show(0);
+    else if (e.key === "End") show(slides.length - 1);
+    else return;
+    e.preventDefault();
+  });
+  document.querySelector("[data-deck-act=next]")!.addEventListener("click", () => show(current + 1));
+  document.querySelector("[data-deck-act=prev]")!.addEventListener("click", () => show(current - 1));
+  document.querySelector("[data-deck-act=full]")!.addEventListener("click", () => {
+    if (document.fullscreenElement) void document.exitFullscreen();
+    else void document.documentElement.requestFullscreen();
+  });
+
+  show(Number(location.hash.slice(1)) - 1 || 0, false);
+</script>
+
+<style>
+  .slides-body {
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+  .deck {
+    flex: 1;
+    max-width: 1200px;
+    width: 100%;
+    margin: 0 auto;
+    padding: 2rem 1.5rem 1rem;
+  }
+  .slide-text {
+    font-size: 1.35rem;
+  }
+  .slide-text :global(h1) {
+    font-size: 3rem;
+    margin-top: 18vh;
+  }
+  .slide-text :global(h2) {
+    font-size: 2.1rem;
+    margin-top: 0;
+  }
+  .slide-text :global(pre) {
+    font-size: 1.1rem;
+  }
+  .deck-bar {
+    position: sticky;
+    bottom: 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem 1.5rem;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.5rem 1.5rem;
+    border-top: 1px solid var(--border);
+    background: var(--bg);
+  }
+  .deck-nav {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+  }
+</style>

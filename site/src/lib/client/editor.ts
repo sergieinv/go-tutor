@@ -1,8 +1,8 @@
 // Редактор Go на CodeMirror 6 с цветами из CSS-переменных сайта.
 import { go } from "@codemirror/lang-go";
 import { HighlightStyle, indentUnit, syntaxHighlighting } from "@codemirror/language";
-import { EditorState, type Extension } from "@codemirror/state";
-import { EditorView, keymap } from "@codemirror/view";
+import { EditorState, StateEffect, StateField, type Extension } from "@codemirror/state";
+import { Decoration, type DecorationSet, EditorView, keymap } from "@codemirror/view";
 import { tags as t } from "@lezer/highlight";
 import { basicSetup } from "codemirror";
 
@@ -32,6 +32,7 @@ const theme = EditorView.theme({
     border: "none",
     borderRadius: "var(--radius) 0 0 var(--radius)",
   },
+  ".cm-viz-line": { backgroundColor: "color-mix(in srgb, var(--warn-border) 28%, transparent)" },
   ".cm-activeLine, .cm-activeLineGutter": { backgroundColor: "color-mix(in srgb, var(--accent) 7%, transparent)" },
   "&.cm-focused .cm-selectionBackground, .cm-selectionBackground": {
     backgroundColor: "color-mix(in srgb, var(--accent) 25%, transparent) !important",
@@ -50,6 +51,34 @@ const highlight = HighlightStyle.define([
   { tag: [t.operator, t.punctuation], color: "var(--fg)" },
 ]);
 
+// Подсветка строк по шагу визуализации.
+const setHighlight = StateEffect.define<number[]>();
+const lineMark = Decoration.line({ class: "cm-viz-line" });
+const highlightField = StateField.define<DecorationSet>({
+  create: () => Decoration.none,
+  update(deco, tr) {
+    deco = deco.map(tr.changes);
+    for (const e of tr.effects) {
+      if (!e.is(setHighlight)) continue;
+      const lines = e.value.filter((n) => n >= 1 && n <= tr.state.doc.lines).sort((a, b) => a - b);
+      deco = Decoration.set(lines.map((n) => lineMark.range(tr.state.doc.line(n).from)));
+    }
+    return deco;
+  },
+  provide: (f) => EditorView.decorations.from(f),
+});
+
+/** Подсвечивает строки (с 1) и прокручивает редактор к первой; пустой список снимает подсветку. */
+export function highlightLines(view: EditorView, lines: number[]) {
+  const first = lines.find((n) => n >= 1 && n <= view.state.doc.lines);
+  view.dispatch({
+    effects: [
+      setHighlight.of(lines),
+      ...(first ? [EditorView.scrollIntoView(view.state.doc.line(first).from, { y: "nearest" })] : []),
+    ],
+  });
+}
+
 export function createEditor(parent: HTMLElement, opts: EditorOptions): EditorView {
   const extensions: Extension[] = [
     basicSetup,
@@ -58,6 +87,7 @@ export function createEditor(parent: HTMLElement, opts: EditorOptions): EditorVi
     indentUnit.of("\t"),
     EditorState.tabSize.of(4),
     theme,
+    highlightField,
     EditorView.contentAttributes.of({ "aria-label": opts.label }),
   ];
   if (opts.onSubmit) {

@@ -1,0 +1,284 @@
+/* Оформление визуализаций. Цвета — переменные сайта, поэтому схемы следуют
+   светлой и тёмной теме. */
+
+.viz {
+  --v-fg: var(--fg, #1f2328);
+  --v-muted: var(--fg-muted, #59636e);
+  --v-line: var(--border, #d1d9e0);
+  --v-soft: var(--bg-soft, #f6f8fa);
+  --v-accent: var(--accent, #00add8);
+  --v-hl: color-mix(in srgb, var(--warn-border, #f0b429) 35%, transparent);
+  --v-ok: var(--ok, #1a7f37);
+  --v-bad: var(--bad, #cf222e);
+  margin: 1.5rem 0;
+  padding: 1rem;
+  border: 1px solid var(--v-line);
+  border-radius: var(--radius, 8px);
+  background: var(--bg, #fff);
+}
+
+.viz:focus-visible {
+  outline: 2px solid var(--v-accent);
+}
+
+.viz-title {
+  font-weight: 600;
+  margin-bottom: 0.75rem;
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.viz-body {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
+  gap: 1rem;
+  align-items: start;
+}
+
+@media (max-width: 860px) {
+  .viz-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.viz-code pre {
+  margin: 0;
+  padding: 0.75rem 0;
+  border-radius: 6px;
+  overflow-x: auto;
+  font-size: 13px;
+}
+
+/* Строки Shiki как блоки: подсветка во всю ширину. Пробельные узлы между
+   строками во flex-контейнере не рисуются, лишних пустых строк нет. */
+.viz-code pre code {
+  display: flex;
+  flex-direction: column;
+}
+
+.viz-code .line {
+  display: block;
+  min-height: 1.5em;
+  padding: 0 0.75rem;
+  border-left: 3px solid transparent;
+  transition: background-color 0.25s;
+}
+
+.viz-code .line.is-active {
+  background-color: var(--v-hl) !important;
+  border-left-color: var(--warn-border, #f0b429);
+}
+
+.viz-code .line.is-active span {
+  background-color: transparent !important;
+}
+
+.viz-stage svg {
+  width: 100%;
+  height: auto;
+  display: block;
+  font-family: var(--mono, monospace);
+  font-size: 13px;
+}
+
+.viz-note {
+  min-height: 3.2em;
+  margin: 0.75rem 0 0.5rem;
+  padding: 0.5rem 0.75rem;
+  border-left: 3px solid var(--v-accent);
+  background: var(--v-soft);
+  border-radius: 0 6px 6px 0;
+}
+
+.viz-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.viz-controls input[type="range"] {
+  flex: 1 1 8rem;
+  min-width: 6rem;
+}
+
+.viz-text {
+  margin-top: 0.5rem;
+  font-size: 0.9rem;
+}
+
+.viz-text li.is-current {
+  font-weight: 600;
+}
+
+.viz .result:empty {
+  display: none;
+}
+
+/* ---- Фигуры ---- */
+
+.v-shape {
+  transition:
+    transform 0.4s ease,
+    fill 0.3s,
+    stroke 0.3s,
+    opacity 0.3s;
+}
+
+.v-enter {
+  animation: v-enter 0.35s ease;
+}
+
+@keyframes v-enter {
+  from {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .v-shape,
+  .viz-code .line {
+    transition: none;
+  }
+  .v-enter {
+    animation: none;
+  }
+}
+
+.viz text {
+  fill: var(--v-fg);
+}
+
+.v-caption {
+  fill: var(--v-muted) !important;
+  font-family: var(--sans, sans-serif);
+  font-size: 12px;
+}
+
+.v-label {
+  font-family: var(--sans, sans-serif);
+}
+
+.v-index {
+  fill: var(--v-muted) !important;
+  font-size: 11px;
+}
+
+.v-cell {
+  fill: var(--v-soft);
+  stroke: var(--v-fg);
+  stroke-width: 1.2;
+}
+
+.v-cell-empty {
+  fill: transparent;
+  stroke: var(--v-muted);
+  stroke-dasharray: 4 3;
+}
+
+.v-chan-unbuf {
+  stroke-dasharray: 2 4;
+}
+
+.v-hl {
+  fill: var(--v-hl) !important;
+}
+
+.v-struct,
+.v-box {
+  fill: var(--v-soft);
+  stroke: var(--v-fg);
+  stroke-width: 1.2;
+}
+
+.v-waiting {
+  stroke: var(--warn-border, #f0b429);
+  stroke-width: 2;
+}
+
+.v-wait {
+  fill: var(--warn-border, #b7791f) !important;
+  font-size: 12px;
+}
+
+.v-row {
+  fill: transparent;
+  stroke: var(--v-line);
+}
+
+.v-struct-title {
+  font-weight: 600;
+}
+
+.v-field {
+  fill: var(--v-muted) !important;
+}
+
+.v-code {
+  font-size: 12px;
+}
+
+.v-bar {
+  fill: var(--v-accent);
+}
+
+.v-ptr {
+  fill: none;
+  stroke: var(--v-accent);
+  stroke-width: 2;
+}
+
+.v-arrowhead {
+  fill: var(--v-accent);
+}
+
+.v-wake {
+  stroke-dasharray: 5 4;
+}
+
+.v-g {
+  fill: var(--v-soft);
+  stroke: var(--v-line);
+}
+
+.v-g-dot.v-g-running {
+  fill: var(--v-ok);
+}
+
+.v-g-dot.v-g-runnable {
+  fill: var(--v-accent);
+}
+
+.v-g-dot.v-g-blocked {
+  fill: var(--warn-border, #f0b429);
+}
+
+.v-g-dot.v-g-done {
+  fill: var(--v-muted);
+}
+
+.v-g.v-g-blocked {
+  stroke: var(--warn-border, #f0b429);
+}
+
+.v-g.v-g-done {
+  opacity: 0.55;
+}
+
+.v-g-name {
+  font-weight: 600;
+}
+
+.v-g-detail {
+  fill: var(--v-muted) !important;
+  font-size: 11px;
+}
+
+.viz [data-editor] .cm-editor {
+  max-height: 24rem;
+}
+
+.viz [data-editor] .cm-scroller {
+  overflow: auto;
+}

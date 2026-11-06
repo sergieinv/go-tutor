@@ -36,6 +36,8 @@ type Lesson struct {
 	Sections []string
 	Quiz     Quiz
 	HasTask  bool
+	// HasLive — есть live/main.go для живой визуализации.
+	HasLive bool
 }
 
 // ID — идентификатор урока вида "02-basics/05-slices".
@@ -130,6 +132,7 @@ func LoadModules(root string, update bool, problems map[string]*Problems) ([]*Mo
 		modules = append(modules, m)
 	}
 	checkPrerequisites(modules, problems)
+	checkSlides(root, modules, problems)
 	return modules, nil
 }
 
@@ -191,6 +194,19 @@ func loadLesson(l *Lesson, update bool, p *Problems) {
 		p.Errorf("quiz.yaml: %v", err)
 	} else {
 		validateQuiz(l.Quiz, p)
+	}
+
+	// viz.ts проверяют тесты сайта (npm test), здесь — только его связь с уроком.
+	_, vizErr := os.Stat(filepath.Join(l.Dir, "viz.ts"))
+	if vizErr == nil && !slices.Contains(l.Sections, "Под капотом") {
+		p.Errorf("lesson.md: есть viz.ts, но нет раздела «## Под капотом», где он показывается")
+	}
+	if _, err := os.Stat(filepath.Join(l.Dir, "live")); err == nil {
+		l.HasLive = true
+		requireFile(l, p, "live/main.go")
+		if vizErr != nil {
+			p.Errorf("есть папка live/, но нет viz.ts, который её показывает")
+		}
 	}
 
 	if _, err := os.Stat(filepath.Join(l.Dir, "task")); err == nil {
@@ -280,6 +296,40 @@ func checkPrerequisites(modules []*Module, problems map[string]*Problems) {
 				if !ids[pre] {
 					// Пока курс наполняется, ссылка на ещё не написанный урок — не ошибка.
 					problems[l.ID()].Warnf("пререквизит %s ещё не существует", pre)
+				}
+			}
+		}
+	}
+}
+
+var vizDirective = regexp.MustCompile(`(?m)^@viz\s+(\S+)\s*$`)
+
+// checkSlides проверяет slides.md модулей: каждый @viz ссылается на урок
+// с viz.ts, на одном слайде не больше одного визуализатора.
+func checkSlides(root string, modules []*Module, problems map[string]*Problems) {
+	hasViz := map[string]bool{}
+	for _, m := range modules {
+		for _, l := range m.Lessons {
+			if _, err := os.Stat(filepath.Join(l.Dir, "viz.ts")); err == nil {
+				hasViz[l.ID()] = true
+			}
+		}
+	}
+	for _, m := range modules {
+		src, err := os.ReadFile(filepath.Join(root, m.Slug, "slides.md"))
+		if err != nil {
+			continue
+		}
+		p := problems[m.Slug]
+		slides := regexp.MustCompile(`(?m)^---$`).Split(string(src), -1)
+		for i, s := range slides {
+			refs := vizDirective.FindAllStringSubmatch(s, -1)
+			if len(refs) > 1 {
+				p.Errorf("slides.md, слайд %d: больше одного @viz", i+1)
+			}
+			for _, r := range refs {
+				if !hasViz[r[1]] {
+					p.Errorf("slides.md, слайд %d: у урока %s нет viz.ts", i+1, r[1])
 				}
 			}
 		}

@@ -1,6 +1,7 @@
 ---
 import Base from "../layouts/Base.astro";
 import { loadCourse, lessonUrl } from "../lib/content";
+import { hasSlides } from "../lib/slides";
 
 const modules = loadCourse();
 ---
@@ -19,7 +20,15 @@ const modules = loadCourse();
           <h2>
             <span class="num">{m.number}</span> {m.title}
           </h2>
-          <p class="muted">{m.summary}</p>
+          <p class="muted">
+            {m.summary}
+            {hasSlides(m) && (
+              <>
+                {" "}
+                <a href={`/slides/${m.slug}/`}>Слайды модуля</a>
+              </>
+            )}
+          </p>
           {m.lessons.length > 0 ? (
             <ol class="lessons">
               {m.lessons.map((l) => (

@@ -1,4 +1,4 @@
-// Package api — HTTP-интерфейс runner: /api/run, /api/test, /api/fmt.
+// Package api — HTTP-интерфейс runner: /api/run, /api/test, /api/fmt, /api/trace.
 package api
 
 import (
@@ -18,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"gotutor/runner/livetrace"
 	"gotutor/runner/sandbox"
 )
 
@@ -40,6 +41,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/test", s.handleTest)
 	mux.HandleFunc("POST /api/fmt", s.handleFmt)
 	mux.HandleFunc("POST /api/solution", s.handleSolution)
+	mux.HandleFunc("POST /api/trace", s.handleTrace)
 	mux.HandleFunc("GET /api/health", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "lessons": len(s.lessons)})
 	})
@@ -57,17 +59,8 @@ func (s *Server) handleRun(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &req) {
 		return
 	}
-	flags := req.Flags
-	if req.Lesson != "" {
-		l, ok := s.lessons[req.Lesson]
-		if !ok {
-			writeError(w, http.StatusNotFound, "урок %q не найден", req.Lesson)
-			return
-		}
-		flags = merge(l.Flags, req.Flags)
-	}
-	if err := validateFlags(flags); err != nil {
-		writeError(w, http.StatusBadRequest, "%v", err)
+	flags, ok := s.runFlags(w, req)
+	if !ok {
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), s.queueTimeout)
@@ -80,6 +73,50 @@ func (s *Server) handleRun(w http.ResponseWriter, r *http.Request) {
 	}
 	s.log.Info("run", "lesson", req.Lesson, "ms", res.DurationMs, "exit", res.ExitCode,
 		"buildFailed", res.BuildFailed, "timedOut", res.TimedOut)
+	writeJSON(w, http.StatusOK, res)
+}
+
+// runFlags — флаги урока с наложенными флагами запроса.
+func (s *Server) runFlags(w http.ResponseWriter, req runRequest) (sandbox.Flags, bool) {
+	flags := req.Flags
+	if req.Lesson != "" {
+		l, ok := s.lessons[req.Lesson]
+		if !ok {
+			writeError(w, http.StatusNotFound, "урок %q не найден", req.Lesson)
+			return flags, false
+		}
+		flags = merge(l.Flags, req.Flags)
+	}
+	if err := validateFlags(flags); err != nil {
+		writeError(w, http.StatusBadRequest, "%v", err)
+		return flags, false
+	}
+	return flags, true
+}
+
+// handleTrace запускает программу с runtime/trace для живой визуализации.
+// Флаги — как у /run, кроме -race: он искажает тайминги.
+func (s *Server) handleTrace(w http.ResponseWriter, r *http.Request) {
+	var req runRequest
+	if !decode(w, r, &req) {
+		return
+	}
+	flags, ok := s.runFlags(w, req)
+	if !ok {
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), s.queueTimeout)
+	defer cancel()
+	res, err := livetrace.Run(ctx, s.exec, req.Files, flags)
+	if s.fail(w, r, err) {
+		return
+	}
+	events := 0
+	if res.Trace != nil {
+		events = res.Trace.Total
+	}
+	s.log.Info("trace", "lesson", req.Lesson, "ms", res.DurationMs, "exit", res.ExitCode,
+		"buildFailed", res.BuildFailed, "events", events, "traceError", res.TraceError)
 	writeJSON(w, http.StatusOK, res)
 }
 

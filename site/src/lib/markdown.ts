@@ -71,6 +71,11 @@ export async function renderLessonBody(md: string): Promise<LessonSections> {
   };
 }
 
+/** Произвольный markdown целиком: слайды. */
+export async function renderMarkdown(md: string): Promise<string> {
+  return render((processor.parse(md) as Root).children);
+}
+
 /** Подсказки задачи: каждая — раздел «## Подсказка N». */
 export async function renderHints(md: string): Promise<string[]> {
   const tree = processor.parse(md) as Root;

@@ -9,8 +9,8 @@
 | `content/` | Уроки: папка на урок с настоящими `.go`-файлами. Формат — [content/README.md](content/README.md) |
 | `tools/lessonlint/` | Проверка структуры и прогон каждого урока |
 | `site/` | Сайт на Astro, собирается из `content/` |
-| `runner/` | Сервис исполнения кода: `/api/run`, `/api/test`, `/api/fmt` |
-| `viz/` | Движок визуализаций (этап 4) |
+| `runner/` | Сервис исполнения кода: `/api/run`, `/api/test`, `/api/fmt`, `/api/trace` |
+| `viz/` | Движок визуализаций: примитивы SVG, плеер шагов, построители шагов из трассы |
 
 ## Запуск в Docker
 
@@ -32,8 +32,17 @@ docker compose up --build        # учебник на http://localhost:8080
 | `POST /api/test` | `{"lesson", "files": {"task.go": "..."}}` | `passed`, `buildFailed`, `tests: [{name, status, output, elapsed, hidden}]`, `durationMs` |
 | `POST /api/fmt` | `{"files": {...}}` | `files`, `errors` |
 | `POST /api/solution` | `{"lesson"}` | `files` — эталон; сайт показывает его после успеха или трёх неудачных попыток |
+| `POST /api/trace` | как у `/api/run` | поля `/api/run` плюс `trace`: горутины, операторы `select` со счётчиками веток, события; при сбое — `traceError` |
 
 Тесты для `/api/test` runner берёт из контента урока, включая `hidden_test.go`; клиент присылает только своё решение.
+
+`/api/trace` нужен живым визуализаторам:
+
+- Runner переименовывает `main` в `gotutorMain` и добавляет файл с настоящим `main`, который включает `runtime/trace`.
+- Ветки `select` размечаются вызовами на тех же строках, поэтому номера строк в трассе совпадают с редактором.
+- Трассу разбирает `golang.org/x/exp/trace` на стороне runner, клиенту уходит JSON — не больше 2000 событий.
+- `-race` в этом режиме выключен.
+- Если программа завершилась через `os.Exit`, паникой в горутине или deadlock'ом, трасса не дописывается, и ответ содержит `traceError`.
 
 ## Команды
 
@@ -49,11 +58,14 @@ go run ./runner                      # runner без изоляции, для р
 cd site && npm ci && npm run dev     # http://localhost:4321
 cd site && npm run build             # статика в site/dist
 
-# тесты сайта: логика прогресса и «Поделиться»
+# тесты сайта: прогресс, «Поделиться», движок визуализаций и все viz.ts
+# (трасса-образец для них: GOTUTOR_FIXTURE=1 go test ./runner/livetrace -run WriteFixture)
 cd site && npm test
-# e2e: уроки от начала до конца в браузере, против docker compose на :8080
+# e2e: уроки от начала до конца, визуализаторы и слайды — против docker compose на :8080
 cd site && npx playwright install chromium && npm run e2e
 ```
+
+Слайды модуля — `/slides/<модуль>/` (ссылка в оглавлении), формат в [content/README.md](content/README.md#slidesmd).
 
 Прогресс (квизы, попытки, «пройдено») хранится в `localStorage`; на главной есть экспорт и импорт JSON. Черновики кода тоже лежат в `localStorage`, но в экспорт не попадают.
 

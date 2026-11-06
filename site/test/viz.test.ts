@@ -1,0 +1,172 @@
+// Движок визуализаций: формат viz.ts всех уроков, плеер, построитель шагов select.
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+import { test } from "node:test";
+import { pathToFileURL } from "node:url";
+import { ARROW_HEAD, arrow, type Side, validate } from "../../viz/src/index.ts";
+import { selectHeight, selectSteps, SELECT_WIDTH } from "../../viz/src/live/select.ts";
+import type { TraceResult } from "../../viz/src/live/trace.ts";
+import { type Clock, Player } from "../../viz/src/player.ts";
+import type { Step, Viz } from "../../viz/src/types.ts";
+
+const root = path.resolve(import.meta.dirname, "../..");
+const content = path.join(root, "content");
+
+const vizFiles = fs
+  .readdirSync(content, { withFileTypes: true })
+  .filter((m) => m.isDirectory())
+  .flatMap((m) =>
+    fs
+      .readdirSync(path.join(content, m.name), { withFileTypes: true })
+      .filter((l) => l.isDirectory() && fs.existsSync(path.join(content, m.name, l.name, "viz.ts")))
+      .map((l) => path.join(content, m.name, l.name, "viz.ts")),
+  );
+
+test("у пилотных уроков есть визуализаторы", () => {
+  const ids = vizFiles.map((f) => path.relative(content, path.dirname(f)));
+  assert.ok(ids.includes("02-basics/05-slices"));
+  assert.ok(ids.includes("05-concurrency/07-select"));
+});
+
+for (const file of vizFiles) {
+  const id = path.relative(content, path.dirname(file));
+  test(`viz.ts ${id} корректен`, async () => {
+    const viz: Viz = (await import(pathToFileURL(file).href)).default;
+    assert.deepEqual(validate(viz), []);
+    if (viz.kind === "live") {
+      assert.ok(fs.existsSync(path.join(path.dirname(file), viz.file)), `нет ${viz.file}`);
+    }
+  });
+}
+
+const steps = (n: number): Step[] => Array.from({ length: n }, (_, i) => ({ note: `шаг ${i}`, scene: [] }));
+
+class FakeClock implements Clock {
+  pending: (() => void) | undefined;
+  set(fn: () => void) {
+    this.pending = fn;
+    return 1;
+  }
+  clear() {
+    this.pending = undefined;
+  }
+  tick() {
+    const fn = this.pending;
+    this.pending = undefined;
+    fn?.();
+  }
+}
+
+test("плеер листает шаги в обе стороны и не выходит за края", () => {
+  const p = new Player(steps(3));
+  const seen: number[] = [];
+  p.onChange((pl) => seen.push(pl.index));
+  assert.equal(p.prev(), false);
+  assert.equal(p.next(), true);
+  assert.equal(p.next(), true);
+  assert.equal(p.atEnd, true);
+  assert.equal(p.next(), false);
+  assert.equal(p.prev(), true);
+  p.go(99);
+  p.go(-5);
+  assert.deepEqual(seen, [1, 2, 1, 2, 0]);
+});
+
+test("авто доходит до конца и останавливается, с конца начинает заново", () => {
+  const clock = new FakeClock();
+  const p = new Player(steps(3), clock);
+  p.play();
+  assert.equal(p.playing, true);
+  clock.tick();
+  clock.tick();
+  assert.equal(p.index, 2);
+  assert.equal(p.playing, false);
+  assert.equal(clock.pending, undefined);
+  p.play();
+  assert.equal(p.index, 0);
+  p.pause();
+  assert.equal(clock.pending, undefined);
+});
+
+test("load заменяет шаги и возвращает в начало", () => {
+  const p = new Player([]);
+  p.load(steps(4));
+  p.go(3);
+  p.load(steps(2));
+  assert.equal(p.index, 0);
+  assert.equal(p.steps.length, 2);
+});
+
+const fixture: TraceResult = JSON.parse(fs.readFileSync(path.join(root, "viz/test/testdata/select-trace.json"), "utf8"));
+
+test("шаги select строятся по трассе живой программы", () => {
+  const t = fixture.trace!;
+  const s = selectSteps(t);
+  // Старт + по шагу на событие + итог.
+  assert.equal(s.length, t.events.length + 2);
+  const notes = s.map((x) => x.note);
+  assert.match(notes[1], /main запускает горутину G2.*стр\. 15/);
+  // main засыпает в select, его будит G2 отправкой со строки 17.
+  const wake = s.findIndex((x) => /^Будит G2 \(стр\. 17\)/.test(x.note));
+  assert.ok(wake > 0, notes.join("\n"));
+  assert.deepEqual(s[wake].lines, [17]);
+  assert.ok(s[wake].scene.some((sh) => sh.id === "wake"));
+  // Ветка по таймауту: будит рантайм.
+  assert.ok(notes.some((n) => n.startsWith("Будит рантайм")));
+  assert.ok(notes.some((n) => /`default`/.test(n) && /ни одна ветка не была готова/.test(n)));
+  // Итог: G3 не дождалась, счётчики третьего select совпадают с трассой.
+  const last = notes[notes.length - 1];
+  assert.match(last, /G3 так и не дождалась/);
+  const [x, y] = t.selects[2].counts;
+  assert.ok(last.includes(`\`case <-a\` — ${x}, \`case <-b\` — ${y}`), last);
+  for (const step of s) {
+    const ids = step.scene.map((sh) => sh.id);
+    assert.equal(new Set(ids).size, ids.length, "повтор id в сцене");
+  }
+});
+
+test("схема select помещается в свои размеры", () => {
+  const t = fixture.trace!;
+  const h = selectHeight(t);
+  for (const step of selectSteps(t)) {
+    for (const sh of step.scene) {
+      if (sh.type === "path") continue;
+      const right = sh.type === "rect" ? sh.x + sh.w : sh.x;
+      const bottom = sh.type === "rect" ? sh.y + sh.h : sh.y;
+      assert.ok(right <= SELECT_WIDTH && bottom <= h, `${sh.id}: ${right}×${bottom} вне ${SELECT_WIDTH}×${h}`);
+    }
+  }
+});
+
+test("пустая трасса даёт понятный шаг вместо пустого плеера", () => {
+  const s = selectSteps({ goroutines: [{ id: 1, func: "main.main" }], selects: [], events: [], total: 0, durationUs: 5 });
+  assert.equal(s.length, 2);
+  assert.match(s[0].note, /нет событий/);
+});
+
+test("стрелка входит в цель перпендикулярно стороне, остриё — точно в цели", () => {
+  const nums = (d: string) => d.match(/-?[\d.]+/g)!.map(Number);
+  const cases: [Side, { x: number; y: number }][] = [
+    ["top", { x: 0, y: 1 }],
+    ["bottom", { x: 0, y: -1 }],
+    ["left", { x: 1, y: 0 }],
+    ["right", { x: -1, y: 0 }],
+  ];
+  for (const [enter, dir] of cases) {
+    const to = { x: 200, y: 100 };
+    const a = arrow("a", { x: 10, y: 20 }, to, { enter });
+    assert.equal(a.type, "path");
+    const n = nums((a as { d: string }).d);
+    const [c2x, c2y, ex, ey] = n.slice(-4);
+    // Конец пути — на длину наконечника до цели вдоль направления входа.
+    assert.deepEqual([ex + dir.x * ARROW_HEAD, ey + dir.y * ARROW_HEAD], [to.x, to.y], enter);
+    // Последний отрезок касательной лежит на той же прямой — маркер смотрит в цель.
+    assert.equal(dir.x === 0 ? c2x - ex : c2y - ey, 0, enter);
+  }
+  // Без enter: цель ниже — вход сверху, на одном уровне — слева.
+  const down = nums((arrow("b", { x: 0, y: 0 }, { x: 100, y: 200 }) as { d: string }).d);
+  assert.deepEqual(down.slice(-2), [100, 200 - ARROW_HEAD]);
+  const level = nums((arrow("c", { x: 0, y: 50 }, { x: 100, y: 55 }) as { d: string }).d);
+  assert.deepEqual(level.slice(-2), [100 - ARROW_HEAD, 55]);
+});

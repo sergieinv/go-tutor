@@ -1,0 +1,421 @@
+{
+  "buildFailed": false,
+  "stdout": "получено: быстрый\nтаймаут\nмедленный ещё в пути\n",
+  "stderr": "",
+  "exitCode": 0,
+  "timedOut": false,
+  "truncated": false,
+  "durationMs": 337,
+  "trace": {
+    "goroutines": [
+      {
+        "id": 1,
+        "func": "main.main"
+      },
+      {
+        "id": 22,
+        "func": "main.main.func1",
+        "file": "main.go",
+        "line": 15
+      },
+      {
+        "id": 23,
+        "func": "main.main.func2",
+        "file": "main.go",
+        "line": 19
+      }
+    ],
+    "selects": [
+      {
+        "id": 1,
+        "file": "main.go",
+        "line": 27,
+        "cases": [
+          {
+            "line": 28,
+            "kind": "recv",
+            "text": "case msg := \u003c-fast"
+          },
+          {
+            "line": 30,
+            "kind": "recv",
+            "text": "case msg := \u003c-slow"
+          },
+          {
+            "line": 32,
+            "kind": "recv",
+            "text": "case \u003c-time.After(30 * time.Millisecond)"
+          }
+        ],
+        "counts": [
+          1,
+          0,
+          1
+        ]
+      },
+      {
+        "id": 2,
+        "file": "main.go",
+        "line": 38,
+        "cases": [
+          {
+            "line": 39,
+            "kind": "recv",
+            "text": "case msg := \u003c-slow"
+          },
+          {
+            "line": 41,
+            "kind": "default",
+            "text": "default"
+          }
+        ],
+        "counts": [
+          0,
+          1
+        ]
+      },
+      {
+        "id": 3,
+        "file": "main.go",
+        "line": 51,
+        "cases": [
+          {
+            "line": 52,
+            "kind": "recv",
+            "text": "case \u003c-a"
+          },
+          {
+            "line": 54,
+            "kind": "recv",
+            "text": "case \u003c-b"
+          }
+        ],
+        "counts": [
+          5,
+          5
+        ]
+      }
+    ],
+    "events": [
+      {
+        "t": 0,
+        "g": 1,
+        "kind": "go",
+        "file": "main.go",
+        "line": 15,
+        "target": 22,
+        "case": 0
+      },
+      {
+        "t": 1,
+        "g": 1,
+        "kind": "go",
+        "file": "main.go",
+        "line": 19,
+        "target": 23,
+        "case": 0
+      },
+      {
+        "t": 1,
+        "g": 1,
+        "kind": "select",
+        "file": "main.go",
+        "line": 27,
+        "select": 1,
+        "case": 0
+      },
+      {
+        "t": 10,
+        "g": 22,
+        "kind": "block",
+        "file": "main.go",
+        "line": 16,
+        "reason": "sleep",
+        "case": 0
+      },
+      {
+        "t": 23,
+        "g": 1,
+        "kind": "block",
+        "file": "main.go",
+        "line": 27,
+        "reason": "select",
+        "case": 0
+      },
+      {
+        "t": 24,
+        "g": 23,
+        "kind": "block",
+        "file": "main.go",
+        "line": 20,
+        "reason": "sleep",
+        "case": 0
+      },
+      {
+        "t": 11056,
+        "g": 0,
+        "kind": "unblock",
+        "target": 22,
+        "case": 0
+      },
+      {
+        "t": 11066,
+        "g": 22,
+        "kind": "unblock",
+        "file": "main.go",
+        "line": 17,
+        "target": 1,
+        "case": 0
+      },
+      {
+        "t": 11066,
+        "g": 22,
+        "kind": "end",
+        "case": 0
+      },
+      {
+        "t": 11076,
+        "g": 1,
+        "kind": "case",
+        "file": "main.go",
+        "line": 28,
+        "select": 1,
+        "case": 0
+      },
+      {
+        "t": 11201,
+        "g": 1,
+        "kind": "select",
+        "file": "main.go",
+        "line": 27,
+        "select": 1,
+        "case": 0
+      },
+      {
+        "t": 11210,
+        "g": 1,
+        "kind": "block",
+        "file": "main.go",
+        "line": 27,
+        "reason": "select",
+        "case": 0
+      },
+      {
+        "t": 41992,
+        "g": 0,
+        "kind": "unblock",
+        "target": 1,
+        "case": 0
+      },
+      {
+        "t": 42015,
+        "g": 1,
+        "kind": "case",
+        "file": "main.go",
+        "line": 32,
+        "select": 1,
+        "case": 2
+      },
+      {
+        "t": 42031,
+        "g": 1,
+        "kind": "select",
+        "file": "main.go",
+        "line": 38,
+        "select": 2,
+        "case": 0
+      },
+      {
+        "t": 42032,
+        "g": 1,
+        "kind": "case",
+        "file": "main.go",
+        "line": 41,
+        "select": 2,
+        "case": 1
+      },
+      {
+        "t": 42051,
+        "g": 1,
+        "kind": "select",
+        "file": "main.go",
+        "line": 51,
+        "select": 3,
+        "case": 0
+      },
+      {
+        "t": 42052,
+        "g": 1,
+        "kind": "case",
+        "file": "main.go",
+        "line": 54,
+        "select": 3,
+        "case": 1
+      },
+      {
+        "t": 42052,
+        "g": 1,
+        "kind": "select",
+        "file": "main.go",
+        "line": 51,
+        "select": 3,
+        "case": 0
+      },
+      {
+        "t": 42053,
+        "g": 1,
+        "kind": "case",
+        "file": "main.go",
+        "line": 54,
+        "select": 3,
+        "case": 1
+      },
+      {
+        "t": 42053,
+        "g": 1,
+        "kind": "select",
+        "file": "main.go",
+        "line": 51,
+        "select": 3,
+        "case": 0
+      },
+      {
+        "t": 42054,
+        "g": 1,
+        "kind": "case",
+        "file": "main.go",
+        "line": 52,
+        "select": 3,
+        "case": 0
+      },
+      {
+        "t": 42054,
+        "g": 1,
+        "kind": "select",
+        "file": "main.go",
+        "line": 51,
+        "select": 3,
+        "case": 0
+      },
+      {
+        "t": 42055,
+        "g": 1,
+        "kind": "case",
+        "file": "main.go",
+        "line": 54,
+        "select": 3,
+        "case": 1
+      },
+      {
+        "t": 42055,
+        "g": 1,
+        "kind": "select",
+        "file": "main.go",
+        "line": 51,
+        "select": 3,
+        "case": 0
+      },
+      {
+        "t": 42056,
+        "g": 1,
+        "kind": "case",
+        "file": "main.go",
+        "line": 54,
+        "select": 3,
+        "case": 1
+      },
+      {
+        "t": 42056,
+        "g": 1,
+        "kind": "select",
+        "file": "main.go",
+        "line": 51,
+        "select": 3,
+        "case": 0
+      },
+      {
+        "t": 42056,
+        "g": 1,
+        "kind": "case",
+        "file": "main.go",
+        "line": 52,
+        "select": 3,
+        "case": 0
+      },
+      {
+        "t": 42057,
+        "g": 1,
+        "kind": "select",
+        "file": "main.go",
+        "line": 51,
+        "select": 3,
+        "case": 0
+      },
+      {
+        "t": 42057,
+        "g": 1,
+        "kind": "case",
+        "file": "main.go",
+        "line": 54,
+        "select": 3,
+        "case": 1
+      },
+      {
+        "t": 42057,
+        "g": 1,
+        "kind": "select",
+        "file": "main.go",
+        "line": 51,
+        "select": 3,
+        "case": 0
+      },
+      {
+        "t": 42058,
+        "g": 1,
+        "kind": "case",
+        "file": "main.go",
+        "line": 52,
+        "select": 3,
+        "case": 0
+      },
+      {
+        "t": 42058,
+        "g": 1,
+        "kind": "select",
+        "file": "main.go",
+        "line": 51,
+        "select": 3,
+        "case": 0
+      },
+      {
+        "t": 42058,
+        "g": 1,
+        "kind": "case",
+        "file": "main.go",
+        "line": 52,
+        "select": 3,
+        "case": 0
+      },
+      {
+        "t": 42059,
+        "g": 1,
+        "kind": "select",
+        "file": "main.go",
+        "line": 51,
+        "select": 3,
+        "case": 0
+      },
+      {
+        "t": 42059,
+        "g": 1,
+        "kind": "case",
+        "file": "main.go",
+        "line": 52,
+        "select": 3,
+        "case": 0
+      }
+    ],
+    "total": 36,
+    "durationUs": 42059
+  }
+}

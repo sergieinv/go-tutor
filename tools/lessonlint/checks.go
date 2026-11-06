@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"gotutor/runner/livetrace"
 	"gotutor/runner/sandbox"
 )
 
@@ -25,6 +26,33 @@ func (c *Checker) CheckLesson(ctx context.Context, l *Lesson, p *Problems) {
 		c.checkTask(ctx, l, p)
 	}
 	c.checkQuiz(ctx, l, p)
+	if l.HasLive {
+		c.checkLive(ctx, l, p)
+	}
+}
+
+// checkLive запускает программу живой визуализации так же, как /api/trace:
+// она должна отработать и оставить трассу с событиями select.
+func (c *Checker) checkLive(ctx context.Context, l *Lesson, p *Problems) {
+	src, err := os.ReadFile(filepath.Join(l.Dir, "live", "main.go"))
+	if err != nil {
+		return
+	}
+	res, err := livetrace.Run(ctx, c.Exec, sandbox.Files{"main.go": string(src)}, l.Meta.Runner)
+	switch {
+	case err != nil:
+		p.Errorf("live: %v", err)
+	case res.BuildFailed:
+		p.Errorf("live: не компилируется\n%s", indent(res.BuildOutput))
+	case res.TimedOut || res.ExitCode != 0:
+		p.Errorf("live: exit=%d timedOut=%v\n%s", res.ExitCode, res.TimedOut, indent(res.Stderr))
+	case res.Trace == nil:
+		p.Errorf("live: нет трассы: %s", res.TraceError)
+	case len(res.Trace.Selects) == 0 || res.Trace.Total == 0:
+		p.Errorf("live: в трассе нет событий select — визуализатору нечего показать")
+	case res.Trace.Total > livetrace.MaxEvents:
+		p.Warnf("live: %d событий, показаны будут первые %d — сократите программу", res.Trace.Total, livetrace.MaxEvents)
+	}
 }
 
 // checkFormat проверяет, что все .go-файлы урока отформатированы gofmt.

@@ -11,6 +11,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -230,14 +231,25 @@ func (e *Executor) goTool(ctx context.Context, dir string, flags Flags, args ...
 
 // Run собирает и запускает программу.
 func (e *Executor) Run(ctx context.Context, files Files, flags Flags) (*RunResult, error) {
+	res, _, err := e.RunCollect(ctx, files, flags, "")
+	return res, err
+}
+
+// maxCollect — предел файла, который RunCollect забирает из рабочего каталога.
+// RLIMIT_FSIZE программы — 16 МБ, так что больше там не бывает.
+const maxCollect = 16 << 20
+
+// RunCollect как Run, но после запуска читает файл collect из рабочего
+// каталога программы (например, трассу runtime/trace). Нет файла — nil.
+func (e *Executor) RunCollect(ctx context.Context, files Files, flags Flags, collect string) (*RunResult, []byte, error) {
 	uid, err := e.acquire(ctx)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer e.release(uid)
 	ws, err := e.newWorkspace(uid, files)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer ws.remove()
 
@@ -246,17 +258,43 @@ func (e *Executor) Run(ctx context.Context, files Files, flags Flags) (*RunResul
 		args = append(args, "-race")
 	}
 	if out, err := e.goTool(ctx, ws.dir, flags, append(args, ".")...); err != nil {
-		return &RunResult{BuildFailed: true, BuildOutput: out}, nil
+		return &RunResult{BuildFailed: true, BuildOutput: out}, nil, nil
 	}
 	p := e.exec(ctx, ws, flags, "./prog")
-	return &RunResult{
+	res := &RunResult{
 		Stdout:     p.stdout,
 		Stderr:     p.stderr,
 		ExitCode:   p.exitCode,
 		TimedOut:   p.timedOut,
 		Truncated:  p.truncated,
 		DurationMs: p.duration.Milliseconds(),
-	}, nil
+	}
+	if collect == "" {
+		return res, nil, nil
+	}
+	data, err := readCapped(filepath.Join(ws.dir, collect), maxCollect)
+	if errors.Is(err, os.ErrNotExist) {
+		return res, nil, nil
+	}
+	return res, data, err
+}
+
+// readCapped читает обычный файл не длиннее limit: программа могла
+// подменить его симлинком или каталогом.
+func readCapped(path string, limit int64) ([]byte, error) {
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	st, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !st.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s: не обычный файл", filepath.Base(path))
+	}
+	return io.ReadAll(io.LimitReader(f, limit))
 }
 
 // Build только собирает программу: для вопросов «скомпилируется ли».

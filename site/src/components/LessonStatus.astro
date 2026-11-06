@@ -9,7 +9,7 @@ interface Props {
 const { lesson, quizIds, hasTask } = Astro.props;
 ---
 
-<div class="lesson-status card" data-status data-lesson={lesson} data-quiz={quizIds.join(",")} data-has-task={hasTask}>
+<div class="lesson-status card" data-status data-lesson={lesson} data-quiz-ids={quizIds.join(",")} data-has-task={hasTask}>
   <p class="checklist" data-checklist>Прогресс сохраняется в этом браузере.</p>
   <button type="button" data-toggle hidden></button>
 </div>
@@ -21,7 +21,7 @@ const { lesson, quizIds, hasTask } = Astro.props;
 
   for (const root of document.querySelectorAll<HTMLElement>("[data-status]")) {
     const id = root.dataset.lesson!;
-    const quizIds = root.dataset.quiz!.split(",").filter(Boolean);
+    const quizIds = root.dataset.quizIds!.split(",").filter(Boolean);
     const hasTask = root.dataset.hasTask === "true";
     const checklist = root.querySelector<HTMLElement>("[data-checklist]")!;
     const toggle = root.querySelector<HTMLButtonElement>("[data-toggle]")!;

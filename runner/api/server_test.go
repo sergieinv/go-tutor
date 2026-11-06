@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"gotutor/runner/livetrace"
 	"gotutor/runner/sandbox"
 )
 
@@ -142,5 +143,29 @@ func TestSolution(t *testing.T) {
 	var e map[string]string
 	if code := post(t, srv, "/api/solution", map[string]any{"lesson": "nope"}, &e); code != http.StatusNotFound {
 		t.Errorf("неизвестный урок: status %d", code)
+	}
+}
+
+func TestTraceLive(t *testing.T) {
+	srv := newTestServer(t)
+	const lesson = "05-concurrency/07-select"
+	var res livetrace.Result
+	code := post(t, srv, "/api/trace", map[string]any{
+		"lesson": lesson,
+		"files":  map[string]string{"main.go": readLessonFile(t, lesson, "live/main.go")},
+		"flags":  map[string]any{"gomaxprocs": 1},
+	}, &res)
+	if code != http.StatusOK {
+		t.Fatalf("status %d", code)
+	}
+	if res.Trace == nil {
+		t.Fatalf("нет трассы: %s\n%s", res.TraceError, res.Stderr)
+	}
+	if len(res.Trace.Selects) != 3 || res.Trace.Total == 0 {
+		t.Errorf("selects=%d events=%d", len(res.Trace.Selects), res.Trace.Total)
+	}
+	var msg map[string]string
+	if code := post(t, srv, "/api/trace", map[string]any{"files": map[string]string{"lib.go": "package lib\n"}}, &msg); code != http.StatusBadRequest {
+		t.Errorf("без main: status %d, %v", code, msg)
 	}
 }

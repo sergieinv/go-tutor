@@ -1,6 +1,5 @@
 ---
 // Страница урока. Порядок блоков — «Анатомия урока» из плана.
-// Визуализатор (п. 5) подключается на этапе 4.
 import AnnotatedExample from "../../components/AnnotatedExample.astro";
 import CSharpBridge from "../../components/CSharpBridge.astro";
 import LessonHeader from "../../components/LessonHeader.astro";
@@ -8,6 +7,7 @@ import LessonStatus from "../../components/LessonStatus.astro";
 import Playground from "../../components/Playground.astro";
 import Quiz from "../../components/Quiz.astro";
 import TaskBlock from "../../components/TaskBlock.astro";
+import VizPlayer from "../../components/VizPlayer.astro";
 import Base from "../../layouts/Base.astro";
 import { allLessons, lessonUrl, type Lesson } from "../../lib/content";
 import { renderLessonBody } from "../../lib/markdown";
@@ -45,6 +45,7 @@ const sections = await renderLessonBody(lesson.body);
         <section aria-label="Под капотом">
           <h2>Под капотом</h2>
           <div class="prose" set:html={sections.internals} />
+          {lesson.hasViz && <VizPlayer lesson={lesson} />}
         </section>
       )
     }

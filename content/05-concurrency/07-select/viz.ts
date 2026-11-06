@@ -1,0 +1,9 @@
+// Живой визуализатор: шаги строятся из трассы запуска live/main.go.
+import { defineLive } from "../../../viz/src/index.ts";
+
+export default defineLive({
+  title: "select по реальному запуску",
+  builder: "select",
+  file: "live/main.go",
+  gomaxprocs: [1, 2, 4],
+});
