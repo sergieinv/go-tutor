@@ -1,0 +1,7 @@
+# Режим server: runner внутри gVisor. Нужен Docker с зарегистрированным runtime runsc.
+#   docker compose -f docker-compose.yml -f docker-compose.server.yml up -d
+services:
+  runner:
+    runtime: runsc
+    environment:
+      RUNNER_MODE: server

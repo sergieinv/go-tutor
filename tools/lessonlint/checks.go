@@ -3,24 +3,18 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/json"
-	"fmt"
 	"go/format"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
-	"time"
+
+	"gotutor/runner/sandbox"
 )
 
-// goVersion — версия языка в go.mod, который lessonlint создаёт для запусков.
-// Должна совпадать с версией в runner.
-const goVersion = "1.25"
-
-const runTimeout = 60 * time.Second
-
+// Checker прогоняет уроки через ту же песочницу, что и runner: сборка,
+// лимиты и разбор go test -json в CI и в браузере совпадают.
 type Checker struct {
+	Exec   *sandbox.Executor
 	Update bool // перезаписать example/output.txt реальным выводом
 }
 
@@ -57,14 +51,22 @@ func (c *Checker) checkExample(ctx context.Context, l *Lesson, p *Problems) {
 	if err != nil {
 		return // отсутствие файла уже отмечено при загрузке
 	}
-	res := goRun(ctx, l.Meta.Runner, map[string][]byte{"main.go": src})
-	if res.err != nil {
-		p.Errorf("example: go run завершился ошибкой: %v\n%s", res.err, indent(res.stderr))
+	res, err := c.Exec.Run(ctx, sandbox.Files{"main.go": string(src)}, l.Meta.Runner)
+	if err != nil {
+		p.Errorf("example: %v", err)
+		return
+	}
+	switch {
+	case res.BuildFailed:
+		p.Errorf("example: не компилируется\n%s", indent(res.BuildOutput))
+		return
+	case res.TimedOut || res.Truncated || res.ExitCode != 0:
+		p.Errorf("example: exit=%d timedOut=%v truncated=%v\n%s", res.ExitCode, res.TimedOut, res.Truncated, indent(res.Stderr))
 		return
 	}
 	outPath := filepath.Join(l.Dir, "example", "output.txt")
 	if c.Update {
-		if err := os.WriteFile(outPath, res.stdout, 0o644); err != nil {
+		if err := os.WriteFile(outPath, []byte(res.Stdout), 0o644); err != nil {
 			p.Errorf("example: %v", err)
 		}
 		return
@@ -73,64 +75,80 @@ func (c *Checker) checkExample(ctx context.Context, l *Lesson, p *Problems) {
 	if err != nil {
 		return
 	}
-	if normalize(want) != normalize(res.stdout) {
-		p.Errorf("example: вывод не совпадает с output.txt\n--- ожидалось\n%s--- получено\n%s", indent(want), indent(res.stdout))
+	if normalize(string(want)) != normalize(res.Stdout) {
+		p.Errorf("example: вывод не совпадает с output.txt\n--- ожидалось\n%s--- получено\n%s", indent(string(want)), indent(res.Stdout))
 	}
 }
 
 func (c *Checker) checkTask(ctx context.Context, l *Lesson, p *Problems) {
-	read := func(name string) []byte {
+	files := sandbox.Files{}
+	for _, name := range []string{"task_test.go", "hidden_test.go", "solution.go", "task.go"} {
 		b, err := os.ReadFile(filepath.Join(l.Dir, "task", name))
 		if err != nil {
-			p.Errorf("task/%s: %v", name, err)
+			return // отсутствие файла уже отмечено при загрузке
 		}
-		return b
+		files[name] = string(b)
 	}
-	tests := map[string][]byte{
-		"task_test.go":   read("task_test.go"),
-		"hidden_test.go": read("hidden_test.go"),
-	}
-	solution, template := read("solution.go"), read("task.go")
-	if len(p.Errors) > 0 && (solution == nil || template == nil) {
-		return
-	}
-
-	withTests := func(name string, src []byte) map[string][]byte {
-		files := map[string][]byte{name: src}
-		for k, v := range tests {
-			files[k] = v
-		}
-		return files
+	// Шаблон и эталон объявляют одно и то же — собираем их по очереди.
+	withTests := func(code string) sandbox.Files {
+		return sandbox.Files{"task.go": code, "task_test.go": files["task_test.go"], "hidden_test.go": files["hidden_test.go"]}
 	}
 
 	// Эталон проходит все тесты, включая скрытые.
-	res := goTest(ctx, l.Meta.Runner, withTests("solution.go", solution))
-	if res.buildFailed {
-		p.Errorf("task: solution.go не компилируется с тестами\n%s", indent(res.output))
-	} else if len(res.failed) > 0 || !res.passed {
-		p.Errorf("task: solution.go не проходит тесты: %s\n%s", strings.Join(res.failed, ", "), indent(res.output))
+	res, err := c.Exec.Test(ctx, withTests(files["solution.go"]), l.Meta.Runner)
+	switch {
+	case err != nil:
+		p.Errorf("task: %v", err)
+	case res.BuildFailed:
+		p.Errorf("task: solution.go не компилируется с тестами\n%s", indent(res.BuildOutput))
+	case !res.Passed:
+		p.Errorf("task: solution.go не проходит тесты: %s", describeFailures(res))
 	}
 
 	// Шаблон компилируется, но тесты падают.
-	res = goTest(ctx, l.Meta.Runner, withTests("task.go", template))
-	if res.buildFailed {
-		p.Errorf("task: шаблон task.go не компилируется с тестами\n%s", indent(res.output))
-	} else if res.passed {
+	res, err = c.Exec.Test(ctx, withTests(files["task.go"]), l.Meta.Runner)
+	switch {
+	case err != nil:
+		p.Errorf("task: %v", err)
+	case res.BuildFailed:
+		p.Errorf("task: шаблон task.go не компилируется с тестами\n%s", indent(res.BuildOutput))
+	case res.Passed:
 		p.Errorf("task: шаблон task.go проходит все тесты — задача решена заранее")
 	}
+}
+
+func describeFailures(res *sandbox.TestResult) string {
+	var b strings.Builder
+	for _, tc := range res.Tests {
+		if tc.Status == "fail" {
+			b.WriteString("\n    " + tc.Name + "\n" + indent(tc.Output))
+		}
+	}
+	if res.TimedOut {
+		b.WriteString("\n    таймаут")
+	}
+	if res.Output != "" {
+		b.WriteString("\n" + indent(res.Output))
+	}
+	return b.String()
 }
 
 func (c *Checker) checkQuiz(ctx context.Context, l *Lesson, p *Problems) {
 	for _, q := range l.Quiz.Questions {
 		where := "quiz: " + q.ID
+		files := sandbox.Files{"main.go": q.Code}
 		switch q.Kind {
 		case "output":
-			res := goRun(ctx, RunnerFlags{}, map[string][]byte{"main.go": []byte(q.Code)})
-			if res.err != nil {
-				p.Errorf("%s: программа не запускается: %v\n%s", where, res.err, indent(res.stderr))
+			res, err := c.Exec.Run(ctx, files, sandbox.Flags{})
+			if err != nil {
+				p.Errorf("%s: %v", where, err)
 				continue
 			}
-			got := strings.TrimSpace(string(res.stdout))
+			if res.BuildFailed || res.TimedOut {
+				p.Errorf("%s: программа не запускается\n%s", where, indent(res.BuildOutput+res.Stderr))
+				continue
+			}
+			got := strings.TrimSpace(res.Stdout)
 			for _, o := range q.Options {
 				if o.Correct && strings.TrimSpace(o.Text) != got {
 					p.Errorf("%s: правильный вариант %q, а программа выводит %q", where, o.Text, got)
@@ -140,163 +158,26 @@ func (c *Checker) checkQuiz(ctx context.Context, l *Lesson, p *Problems) {
 			if q.Compiles == nil {
 				continue
 			}
-			ok := goBuild(ctx, map[string][]byte{"main.go": []byte(q.Code)})
-			if ok != *q.Compiles {
+			ok, _, err := c.Exec.Build(ctx, files, sandbox.Flags{})
+			if err != nil {
+				p.Errorf("%s: %v", where, err)
+			} else if ok != *q.Compiles {
 				p.Errorf("%s: compiles: %v, а go build говорит %v", where, *q.Compiles, ok)
 			}
 		}
 	}
 }
 
-type runResult struct {
-	stdout, stderr []byte
-	err            error
-}
-
-func goRun(ctx context.Context, flags RunnerFlags, files map[string][]byte) runResult {
-	dir, cleanup, err := tempModule(files)
-	if err != nil {
-		return runResult{err: err}
-	}
-	defer cleanup()
-	ctx, cancel := context.WithTimeout(ctx, runTimeout)
-	defer cancel()
-	args := []string{"run"}
-	if flags.Race {
-		args = append(args, "-race")
-	}
-	args = append(args, ".")
-	cmd := goCmd(ctx, dir, flags, args...)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &stdout, &stderr
-	err = cmd.Run()
-	return runResult{stdout: stdout.Bytes(), stderr: stderr.Bytes(), err: err}
-}
-
-func goBuild(ctx context.Context, files map[string][]byte) bool {
-	dir, cleanup, err := tempModule(files)
-	if err != nil {
-		return false
-	}
-	defer cleanup()
-	ctx, cancel := context.WithTimeout(ctx, runTimeout)
-	defer cancel()
-	return goCmd(ctx, dir, RunnerFlags{}, "build", "-o", os.DevNull, ".").Run() == nil
-}
-
-type testResult struct {
-	passed      bool // пакет целиком прошёл
-	buildFailed bool
-	failed      []string // имена упавших тестов
-	output      []byte   // вывод упавших тестов или ошибки сборки
-}
-
-// goTest запускает go test -json и разбирает события так же, как это будет
-// делать фронтенд: тест → ok/fail + вывод.
-func goTest(ctx context.Context, flags RunnerFlags, files map[string][]byte) testResult {
-	dir, cleanup, err := tempModule(files)
-	if err != nil {
-		return testResult{buildFailed: true, output: []byte(err.Error())}
-	}
-	defer cleanup()
-	ctx, cancel := context.WithTimeout(ctx, runTimeout)
-	defer cancel()
-	args := []string{"test", "-json", "-count=1"}
-	if flags.Race {
-		args = append(args, "-race")
-	}
-	args = append(args, ".")
-	cmd := goCmd(ctx, dir, flags, args...)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &stdout, &stderr
-	_ = cmd.Run() // код возврата не нужен: всё есть в событиях
-
-	var res testResult
-	outputs := map[string]*bytes.Buffer{}
-	dec := json.NewDecoder(&stdout)
-	for dec.More() {
-		var ev struct {
-			Action string
-			Test   string
-			Output string
-		}
-		if err := dec.Decode(&ev); err != nil {
-			break
-		}
-		switch ev.Action {
-		case "build-output":
-			res.output = append(res.output, ev.Output...)
-		case "build-fail":
-			res.buildFailed = true
-		case "output":
-			if outputs[ev.Test] == nil {
-				outputs[ev.Test] = &bytes.Buffer{}
-			}
-			outputs[ev.Test].WriteString(ev.Output)
-		case "pass":
-			if ev.Test == "" {
-				res.passed = true
-			}
-		case "fail":
-			if ev.Test != "" {
-				res.failed = append(res.failed, ev.Test)
-				res.output = append(res.output, outputs[ev.Test].Bytes()...)
-			} else if len(res.failed) == 0 && !res.buildFailed {
-				// Пакет упал без упавших тестов: паника при инициализации, таймаут и т.п.
-				res.output = append(res.output, outputs[""].Bytes()...)
-			}
-		}
-	}
-	if stdout.Len() == 0 && stderr.Len() > 0 {
-		res.buildFailed = true
-		res.output = append(res.output, stderr.Bytes()...)
-	}
-	return res
-}
-
-// goCmd готовит команду go; вызывающий отвечает за ctx с таймаутом.
-func goCmd(ctx context.Context, dir string, flags RunnerFlags, args ...string) *exec.Cmd {
-	cmd := exec.CommandContext(ctx, "go", args...)
-	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "GOTOOLCHAIN=local", "GOFLAGS=-mod=mod", "GOWORK=off")
-	if flags.GOMAXPROCS > 0 {
-		cmd.Env = append(cmd.Env, "GOMAXPROCS="+strconv.Itoa(flags.GOMAXPROCS))
-	}
-	if flags.GODEBUG != "" {
-		cmd.Env = append(cmd.Env, "GODEBUG="+flags.GODEBUG)
-	}
-	return cmd
-}
-
-// tempModule создаёт временный модуль с переданными файлами и go.mod.
-func tempModule(files map[string][]byte) (string, func(), error) {
-	dir, err := os.MkdirTemp("", "lessonlint-*")
-	if err != nil {
-		return "", nil, err
-	}
-	cleanup := func() { os.RemoveAll(dir) }
-	if _, ok := files["go.mod"]; !ok {
-		files["go.mod"] = fmt.Appendf(nil, "module lesson\n\ngo %s\n", goVersion)
-	}
-	for name, src := range files {
-		if err := os.WriteFile(filepath.Join(dir, name), src, 0o644); err != nil {
-			cleanup()
-			return "", nil, err
-		}
-	}
-	return dir, cleanup, nil
-}
-
-func normalize(b []byte) string {
-	lines := strings.Split(strings.TrimRight(string(b), "\n"), "\n")
+func normalize(s string) string {
+	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
 	for i, l := range lines {
 		lines[i] = strings.TrimRight(l, " \t\r")
 	}
 	return strings.Join(lines, "\n")
 }
 
-func indent(b []byte) string {
-	s := strings.TrimRight(string(b), "\n")
+func indent(s string) string {
+	s = strings.TrimRight(s, "\n")
 	if s == "" {
 		return ""
 	}

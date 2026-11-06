@@ -12,6 +12,8 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"gotutor/runner/sandbox"
 )
 
 var dirName = regexp.MustCompile(`^\d{2}-[a-z0-9-]+$`)
@@ -49,13 +51,7 @@ type Frontmatter struct {
 		Title string `yaml:"title"`
 		URL   string `yaml:"url"`
 	} `yaml:"docs"`
-	Runner RunnerFlags `yaml:"runner"`
-}
-
-type RunnerFlags struct {
-	Race       bool   `yaml:"race"`
-	GOMAXPROCS int    `yaml:"gomaxprocs"`
-	GODEBUG    string `yaml:"godebug"`
+	Runner sandbox.Flags `yaml:"runner"`
 }
 
 type Quiz struct {

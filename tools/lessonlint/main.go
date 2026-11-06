@@ -15,6 +15,8 @@ import (
 	"slices"
 	"strings"
 	"sync"
+
+	"gotutor/runner/sandbox"
 )
 
 func main() {
@@ -46,7 +48,14 @@ func main() {
 		}
 	}
 
-	checker := &Checker{Update: *update}
+	cfg := sandbox.DefaultConfig()
+	cfg.Slots = max(*jobs, 1)
+	exec, err := sandbox.New(cfg)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "lessonlint:", err)
+		os.Exit(2)
+	}
+	checker := &Checker{Exec: exec, Update: *update}
 	sem := make(chan struct{}, max(*jobs, 1))
 	var wg sync.WaitGroup
 	for _, l := range lessons {

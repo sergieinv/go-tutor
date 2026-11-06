@@ -1,0 +1,37 @@
+# Учебник целиком: docker compose up --build → http://localhost:8080
+services:
+  site:
+    build:
+      context: .
+      dockerfile: site/Dockerfile
+    image: go-tutor/site:dev
+    ports:
+      - "8080:8080"
+    depends_on:
+      runner:
+        condition: service_healthy
+    networks: [default, sandbox]
+
+  runner:
+    build:
+      context: .
+      dockerfile: runner/Dockerfile
+    image: go-tutor/runner:dev
+    # tini как PID 1 собирает зомби, оставшиеся от убитых программ.
+    init: true
+    environment:
+      RUNNER_MODE: local
+      RUNNER_SLOTS: "4"
+    # Код учеников пишется только во временный каталог в памяти.
+    tmpfs:
+      - /tmp/runner:size=512m,mode=0711,exec,nosuid,nodev
+    # Лимиты на весь runner: защита машины, если что-то пройдёт мимо rlimit'ов слотов.
+    mem_limit: 2g
+    pids_limit: 1024
+    cpus: 2
+    networks: [sandbox]
+
+networks:
+  # internal: у runner нет выхода в интернет, но site до него достаёт.
+  sandbox:
+    internal: true

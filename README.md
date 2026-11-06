@@ -9,8 +9,30 @@
 | `content/` | Уроки: папка на урок с настоящими `.go`-файлами. Формат — [content/README.md](content/README.md) |
 | `tools/lessonlint/` | Проверка структуры и прогон каждого урока |
 | `site/` | Сайт на Astro, собирается из `content/` |
-| `runner/` | Сервис исполнения кода (этап 2) |
+| `runner/` | Сервис исполнения кода: `/api/run`, `/api/test`, `/api/fmt` |
 | `viz/` | Движок визуализаций (этап 4) |
+
+## Запуск в Docker
+
+```sh
+docker compose up --build        # учебник на http://localhost:8080
+```
+
+- `site` — nginx со статикой Astro, `/api/*` проксируется в `runner`.
+- `runner` — Go-тулчейн с прогретым кешем сборки. Каждый запуск идёт в отдельном временном каталоге от имени отдельного uid слота с лимитами: 10 с CPU и реального времени, 256 МБ, 64 процесса, вывод до 64 КБ. После запуска все процессы слота убиваются.
+- У `runner` нет выхода в интернет (сеть `internal`); модули — только из кеша образа.
+- В `site/package-lock.json` записаны адреса корпоративного Artifactory. Образ сайта ставит пакеты из `registry.npmjs.org`, подменяя префикс через `--replace-registry-host`; integrity-хеши проверяются как обычно. Другой реестр: `docker compose build --build-arg NPM_REGISTRY=... site`.
+- Режим `server` (runner внутри gVisor): `docker compose -f docker-compose.yml -f docker-compose.server.yml up -d`, нужен runtime `runsc`.
+
+### API runner
+
+| Запрос | Тело | Ответ |
+| --- | --- | --- |
+| `POST /api/run` | `{"lesson"?, "files": {"main.go": "..."}, "flags"?}` | `stdout`, `stderr`, `exitCode`, `timedOut`, `truncated`, `buildFailed`, `buildOutput`, `durationMs` |
+| `POST /api/test` | `{"lesson", "files": {"task.go": "..."}}` | `passed`, `buildFailed`, `tests: [{name, status, output, elapsed, hidden}]`, `durationMs` |
+| `POST /api/fmt` | `{"files": {...}}` | `files`, `errors` |
+
+Тесты для `/api/test` runner берёт из контента урока, включая `hidden_test.go`; клиент присылает только своё решение.
 
 ## Команды
 
@@ -26,4 +48,10 @@ cd site && npm ci && npm run dev     # http://localhost:4321
 cd site && npm run build             # статика в site/dist
 ```
 
-Нужны Go 1.25+ и Node 24.
+```sh
+# тесты runner; изоляция по uid и тесты fork-бомбы — только под root на Linux
+go test ./runner/...
+docker run --rm --init -v "$PWD:/repo" -w /repo/runner -e GOWORK=off go-tutor/runner:dev go test ./...
+```
+
+Для разработки без Docker нужны Go 1.25+ и Node 24.

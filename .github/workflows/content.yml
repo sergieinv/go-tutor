@@ -12,11 +12,24 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: "1.27.x"
-          cache-dependency-path: tools/lessonlint/go.sum
-      - name: Vet lessonlint
-        run: go vet ./tools/lessonlint
+          cache-dependency-path: "**/go.sum"
+      - name: Vet
+        run: go vet ./tools/lessonlint ./runner/...
       - name: Lint and run lessons
         run: go run ./tools/lessonlint content
+
+  runner:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build runner image
+        run: docker build -f runner/Dockerfile -t go-tutor/runner:ci .
+      # Под root в образе включаются смена uid, rlimit'ы, тесты памяти и fork-бомбы.
+      - name: Sandbox and API tests
+        run: >
+          docker run --rm --init -v "$PWD:/repo" -w /repo/runner
+          -e GOWORK=off -e GOPROXY=https://proxy.golang.org,direct
+          go-tutor/runner:ci go test -count=1 ./...
 
   site:
     runs-on: ubuntu-latest
@@ -27,7 +40,10 @@ jobs:
           node-version: "24"
           cache: npm
           cache-dependency-path: site/package-lock.json
-      - run: npm ci
+      # Адреса в lock-файле — корпоративный Artifactory; в CI ставим из публичного реестра.
+      - run: >
+          npm ci --registry=https://registry.npmjs.org/
+          --replace-registry-host=https://artifactory.s.o3.ru/artifactory/api/npm/npm-all-virtual
         working-directory: site
       - run: npm run build
         working-directory: site
