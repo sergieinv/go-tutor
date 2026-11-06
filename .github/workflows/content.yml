@@ -1,0 +1,33 @@
+name: content
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  lessonlint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.27.x"
+          cache-dependency-path: tools/lessonlint/go.sum
+      - name: Vet lessonlint
+        run: go vet ./tools/lessonlint
+      - name: Lint and run lessons
+        run: go run ./tools/lessonlint content
+
+  site:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: site/package-lock.json
+      - run: npm ci
+        working-directory: site
+      - run: npm run build
+        working-directory: site

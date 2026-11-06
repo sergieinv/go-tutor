@@ -1,0 +1,119 @@
+---
+// Страница урока. Порядок блоков — «Анатомия урока» из плана.
+// Песочница (п. 4) и визуализатор (п. 5) подключаются на этапах 3–4.
+import AnnotatedExample from "../../components/AnnotatedExample.astro";
+import CSharpBridge from "../../components/CSharpBridge.astro";
+import LessonHeader from "../../components/LessonHeader.astro";
+import Quiz from "../../components/Quiz.astro";
+import TaskBlock from "../../components/TaskBlock.astro";
+import Base from "../../layouts/Base.astro";
+import { allLessons, lessonUrl, type Lesson } from "../../lib/content";
+import { renderLessonBody } from "../../lib/markdown";
+
+export function getStaticPaths() {
+  const lessons = allLessons();
+  return lessons.map((lesson, i) => ({
+    params: { module: lesson.module.slug, lesson: lesson.slug },
+    props: { lesson, prev: lessons[i - 1], next: lessons[i + 1] },
+  }));
+}
+
+interface Props {
+  lesson: Lesson;
+  prev?: Lesson;
+  next?: Lesson;
+}
+const { lesson, prev, next } = Astro.props;
+const sections = await renderLessonBody(lesson.body);
+---
+
+<Base title={`${lesson.meta.title} — Go для C#-разработчика`} description={lesson.meta.summary}>
+  <article class="lesson">
+    <LessonHeader lesson={lesson} />
+    <div class="prose intro" set:html={sections.intro} />
+
+    <AnnotatedExample source={lesson.example.source} output={lesson.example.output} />
+
+    {sections.csharp && <CSharpBridge differences={sections.csharp} files={lesson.csharp} />}
+
+    {
+      sections.internals && (
+        <section aria-label="Под капотом">
+          <h2>Под капотом</h2>
+          <div class="prose" set:html={sections.internals} />
+        </section>
+      )
+    }
+
+    {
+      sections.pitfalls.length > 0 && (
+        <section aria-label="Ловушки">
+          <h2>Ловушки для C#-ника</h2>
+          {sections.pitfalls.map((p) => (
+            <div class="pitfall">
+              <h3 set:html={p.title} />
+              <div class="prose" set:html={p.html} />
+            </div>
+          ))}
+        </section>
+      )
+    }
+
+    <Quiz questions={lesson.quiz} />
+
+    {lesson.task && sections.task && <TaskBlock statement={sections.task} task={lesson.task} />}
+
+    <footer class="lesson-footer">
+      {
+        lesson.meta.docs && lesson.meta.docs.length > 0 && (
+          <div class="docs">
+            <h2>Документация</h2>
+            <ul>
+              {lesson.meta.docs.map((d) => (
+                <li>
+                  <a href={d.url}>{d.title}</a>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )
+      }
+      <nav class="pager" aria-label="Навигация по урокам">
+        {
+          prev ? (
+            <a href={lessonUrl(prev)} rel="prev">
+              ← {prev.meta.title}
+            </a>
+          ) : (
+            <span />
+          )
+        }
+        <a href="/">Оглавление</a>
+        {
+          next ? (
+            <a href={lessonUrl(next)} rel="next">
+              {next.meta.title} →
+            </a>
+          ) : (
+            <span />
+          )
+        }
+      </nav>
+    </footer>
+  </article>
+</Base>
+
+<style>
+  .intro {
+    font-size: 1.05rem;
+    max-width: 46rem;
+  }
+  .pager {
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-top: 2.5rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--border);
+  }
+</style>

@@ -1,0 +1,69 @@
+---
+import { lessonById, lessonUrl, type Lesson } from "../lib/content";
+
+interface Props {
+  lesson: Lesson;
+}
+const { lesson } = Astro.props;
+const { meta, module } = lesson;
+const prerequisites = (meta.prerequisites ?? []).map((id) => {
+  const l = lessonById(id);
+  return l ? { title: l.meta.title, url: lessonUrl(l) } : { title: id, url: undefined };
+});
+const dots = "●".repeat(meta.difficulty) + "○".repeat(5 - meta.difficulty);
+---
+
+<header class="lesson-header">
+  <p class="crumbs muted">
+    Модуль {module.number}. {module.title} · урок {lesson.number} из {module.lessons.length}
+  </p>
+  <h1>{meta.title}</h1>
+  <ul class="facts muted">
+    <li title={`Сложность ${meta.difficulty} из 5`}>
+      Сложность <span class="dots" aria-hidden="true">{dots}</span>
+    </li>
+    <li>~{meta.minutes} мин</li>
+    {meta.runner?.race && <li>запускается с <code>-race</code></li>}
+  </ul>
+  {
+    prerequisites.length > 0 && (
+      <p class="prereq muted">
+        Перед уроком:{" "}
+        {prerequisites.map((p, i) => (
+          <>
+            {i > 0 && ", "}
+            {p.url ? <a href={p.url}>{p.title}</a> : <span title="урок ещё не написан">{p.title}</span>}
+          </>
+        ))}
+      </p>
+    )
+  }
+</header>
+
+<style>
+  .lesson-header h1 {
+    margin: 0.25rem 0 0.5rem;
+    font-size: 2.25rem;
+  }
+  .crumbs {
+    margin: 0;
+    font-size: 0.9rem;
+  }
+  .facts {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem 1.5rem;
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    font-size: 0.9rem;
+  }
+  .dots {
+    color: var(--accent);
+    letter-spacing: 1px;
+  }
+  .prereq {
+    font-size: 0.9rem;
+    margin: 0.5rem 0 0;
+  }
+</style>

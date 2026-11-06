@@ -1,0 +1,111 @@
+---
+// Квиз. Пока статический: ответы и объяснения раскрываются вручную.
+// Интерактивная проверка в браузере появится на этапе 3.
+import type { QuizQuestion } from "../lib/content";
+import { highlight, inlineMarkdown } from "../lib/markdown";
+
+interface Props {
+  questions: QuizQuestion[];
+}
+const { questions } = Astro.props;
+
+const rendered = await Promise.all(
+  questions.map(async (q) => {
+    const options =
+      q.kind === "compile"
+        ? [
+            { text: "Скомпилируется", correct: q.compiles === true, explain: "" },
+            { text: "Не скомпилируется", correct: q.compiles === false, explain: "" },
+          ]
+        : (q.options ?? []);
+    return {
+      ...q,
+      prompt: inlineMarkdown(q.prompt),
+      code: q.code ? await highlight(q.code.trimEnd(), "go") : "",
+      multiple: q.kind === "multiple",
+      options: options.map((o) => ({
+        text: inlineMarkdown(o.text),
+        correct: !!o.correct,
+        explain: inlineMarkdown(o.explain ?? ""),
+      })),
+      explain: inlineMarkdown(q.explain ?? ""),
+    };
+  }),
+);
+---
+
+<section class="quiz" aria-label="Квиз">
+  <h2>Проверьте себя</h2>
+  <ol class="questions">
+    {
+      rendered.map((q) => (
+        <li class="question card" id={`quiz-${q.id}`}>
+          <p class="prompt" set:html={q.prompt} />
+          {q.code && <Fragment set:html={q.code} />}
+          <ul class="options">
+            {q.options.map((o) => (
+              <li>
+                <span class="marker">{q.multiple ? "☐" : "○"}</span>
+                <span set:html={o.text} />
+              </li>
+            ))}
+          </ul>
+          <details>
+            <summary>Ответ и разбор</summary>
+            <ul class="answers">
+              {q.options.map((o) => (
+                <li class={o.correct ? "correct" : "wrong"}>
+                  <strong set:html={o.text} />
+                  {o.explain && (
+                    <>
+                      {" — "}
+                      <span set:html={o.explain} />
+                    </>
+                  )}
+                </li>
+              ))}
+            </ul>
+            {q.explain && <p set:html={q.explain} />}
+          </details>
+        </li>
+      ))
+    }
+  </ol>
+</section>
+
+<style>
+  .questions {
+    list-style: none;
+    padding: 0;
+    display: grid;
+    gap: 1rem;
+  }
+  .prompt {
+    margin-top: 0;
+    font-weight: 600;
+  }
+  .options {
+    list-style: none;
+    padding: 0;
+    margin: 0.75rem 0;
+  }
+  .options li {
+    padding: 0.2rem 0;
+  }
+  .marker {
+    color: var(--fg-muted);
+    margin-right: 0.5rem;
+  }
+  .answers {
+    padding-left: 1.25rem;
+  }
+  .answers li {
+    margin: 0.35rem 0;
+  }
+  .correct strong {
+    color: var(--ok);
+  }
+  .wrong strong {
+    color: var(--bad);
+  }
+</style>

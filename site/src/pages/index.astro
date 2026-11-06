@@ -1,0 +1,67 @@
+---
+import Base from "../layouts/Base.astro";
+import { loadCourse, lessonUrl } from "../lib/content";
+
+const modules = loadCourse();
+---
+
+<Base title="Go для C#-разработчика" description="Интерактивный учебник по Go для разработчиков с опытом C#/.NET.">
+  <h1>Go для C#-разработчика</h1>
+  <p class="lead muted">
+    От синтаксиса Go до продакшн-микросервисов на gRPC. В каждом уроке — аннотированный пример, мост из C#, ловушки,
+    квиз и задача с автотестами.
+  </p>
+
+  <ol class="modules">
+    {
+      modules.map((m) => (
+        <li class="module card">
+          <h2>
+            <span class="num">{m.number}</span> {m.title}
+          </h2>
+          <p class="muted">{m.summary}</p>
+          {m.lessons.length > 0 ? (
+            <ol class="lessons">
+              {m.lessons.map((l) => (
+                <li>
+                  <a href={lessonUrl(l)}>{l.meta.title}</a>
+                  <span class="muted"> — {l.meta.summary}</span>
+                </li>
+              ))}
+            </ol>
+          ) : (
+            <p class="muted">Уроки в работе.</p>
+          )}
+        </li>
+      ))
+    }
+  </ol>
+</Base>
+
+<style>
+  .lead {
+    font-size: 1.1rem;
+    max-width: 46rem;
+  }
+  .modules {
+    list-style: none;
+    padding: 0;
+    display: grid;
+    gap: 1rem;
+  }
+  .module h2 {
+    margin: 0 0 0.25rem;
+    border: none;
+    font-size: 1.3rem;
+  }
+  .num {
+    color: var(--accent);
+    margin-right: 0.25rem;
+  }
+  .lessons {
+    padding-left: 1.25rem;
+  }
+  .lessons li {
+    margin: 0.25rem 0;
+  }
+</style>

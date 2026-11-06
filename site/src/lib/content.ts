@@ -1,0 +1,159 @@
+// Загрузка контента курса из ../content при сборке. Формат описан в content/README.md;
+// структуру гарантирует tools/lessonlint, поэтому здесь проверок минимум.
+import fs from "node:fs";
+import path from "node:path";
+import YAML from "yaml";
+
+export const contentDir = path.resolve(process.env.CONTENT_DIR ?? path.join(process.cwd(), "..", "content"));
+
+export interface Module {
+  slug: string;
+  number: number;
+  title: string;
+  summary: string;
+  goals: string[];
+  lessons: Lesson[];
+}
+
+export interface DocLink {
+  title: string;
+  url: string;
+}
+
+export interface RunnerFlags {
+  race?: boolean;
+  gomaxprocs?: number;
+  godebug?: string;
+}
+
+export interface LessonMeta {
+  title: string;
+  summary: string;
+  difficulty: number;
+  minutes: number;
+  prerequisites?: string[];
+  docs?: DocLink[];
+  runner?: RunnerFlags;
+}
+
+export interface QuizOption {
+  text: string;
+  correct?: boolean;
+  explain: string;
+}
+
+export interface QuizQuestion {
+  id: string;
+  kind: "output" | "compile" | "single" | "multiple";
+  prompt: string;
+  code?: string;
+  options?: QuizOption[];
+  compiles?: boolean;
+  explain?: string;
+}
+
+export interface Task {
+  template: string;
+  tests: string;
+  hints: string;
+}
+
+export interface Lesson {
+  id: string; // "02-basics/05-slices"
+  slug: string;
+  number: number;
+  module: Module;
+  meta: LessonMeta;
+  body: string; // markdown без frontmatter
+  example: { source: string; output: string };
+  csharp: { file: string; source: string }[];
+  quiz: QuizQuestion[];
+  task?: Task;
+  hasViz: boolean;
+}
+
+const dirPattern = /^(\d{2})-[a-z0-9-]+$/;
+
+const read = (...p: string[]) => fs.readFileSync(path.join(...p), "utf8");
+const exists = (...p: string[]) => fs.existsSync(path.join(...p));
+const subdirs = (dir: string) =>
+  fs
+    .readdirSync(dir, { withFileTypes: true })
+    .filter((e) => e.isDirectory() && dirPattern.test(e.name))
+    .map((e) => e.name)
+    .sort();
+
+function splitFrontmatter(src: string): { meta: unknown; body: string } {
+  const m = /^---\n([\s\S]*?)\n---\n/.exec(src);
+  if (!m) throw new Error("lesson.md без frontmatter");
+  return { meta: YAML.parse(m[1]), body: src.slice(m[0].length) };
+}
+
+let cache: Module[] | undefined;
+
+export function loadCourse(): Module[] {
+  if (cache) return cache;
+  cache = subdirs(contentDir).map((slug) => {
+    const dir = path.join(contentDir, slug);
+    const info = YAML.parse(read(dir, "module.yaml"));
+    const module: Module = {
+      slug,
+      number: Number(slug.slice(0, 2)),
+      title: info.title,
+      summary: info.summary ?? "",
+      goals: info.goals ?? [],
+      lessons: [],
+    };
+    module.lessons = subdirs(dir).map((ls) => loadLesson(module, ls));
+    return module;
+  });
+  return cache;
+}
+
+function loadLesson(module: Module, slug: string): Lesson {
+  const dir = path.join(contentDir, module.slug, slug);
+  const { meta, body } = splitFrontmatter(read(dir, "lesson.md"));
+  const csharpDir = path.join(dir, "csharp");
+  const csharp = exists(csharpDir)
+    ? fs
+        .readdirSync(csharpDir)
+        .filter((f) => f.endsWith(".cs"))
+        .sort()
+        .map((file) => ({ file, source: read(csharpDir, file) }))
+    : [];
+  // В сайт попадают только шаблон, открытые тесты и подсказки.
+  // hidden_test.go и solution.go остаются на стороне runner.
+  const task = exists(dir, "task")
+    ? {
+        template: read(dir, "task", "task.go"),
+        tests: read(dir, "task", "task_test.go"),
+        hints: read(dir, "task", "hints.md"),
+      }
+    : undefined;
+  return {
+    id: `${module.slug}/${slug}`,
+    slug,
+    number: Number(slug.slice(0, 2)),
+    module,
+    meta: meta as LessonMeta,
+    body,
+    example: {
+      source: read(dir, "example", "main.go"),
+      output: exists(dir, "example", "output.txt") ? read(dir, "example", "output.txt") : "",
+    },
+    csharp,
+    quiz: YAML.parse(read(dir, "quiz.yaml")).questions,
+    task,
+    hasViz: exists(dir, "viz.ts"),
+  };
+}
+
+export function allLessons(): Lesson[] {
+  return loadCourse().flatMap((m) => m.lessons);
+}
+
+export function lessonById(id: string): Lesson | undefined {
+  return allLessons().find((l) => l.id === id);
+}
+
+export const lessonUrl = (l: Lesson) => `/${l.module.slug}/${l.slug}/`;

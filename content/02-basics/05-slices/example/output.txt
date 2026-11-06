@@ -1,0 +1,12 @@
+nil: true 0
+make: [  ] len: 3 cap: 3
+set: [a b c]
+append: [a b c d e f] len: 6 cap: 6
+slice: [c d e]
+shared: [a b C d e f]
+full slice: [b C X] s: [a b C d e f]
+copy: A a
+equal: true
+index: 1
+clone: [g h i]
+2d: [[0] [1 2] [2 3 4]]

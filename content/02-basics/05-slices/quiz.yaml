@@ -1,0 +1,104 @@
+questions:
+  - id: append-into-parent
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func main() {
+      	s := []int{1, 2, 3}
+      	t := s[:2]
+      	t = append(t, 99)
+      	fmt.Println(s)
+      }
+    options:
+      - text: "[1 2 3]"
+        explain: Было бы так, если бы `append` всегда копировал. Но у `t` ёмкость 3, места хватает, и 99 записывается в общий массив.
+      - text: "[1 2 99]"
+        correct: true
+        explain: "`t` смотрит в тот же массив, что и `s`, и у него есть свободная ёмкость. `append` пишет 99 в третью ячейку — её видит и `s`."
+      - text: "[1 2 99 3]"
+        explain: "`append` никогда не вставляет в середину и не сдвигает элементы."
+      - text: panic
+        explain: Выход за границы здесь нет — `s[:2]` и `append` корректны.
+
+  - id: two-appends
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func main() {
+      	a := make([]int, 3, 4)
+      	b := append(a, 1)
+      	c := append(a, 2)
+      	fmt.Println(b[3], c[3])
+      }
+    options:
+      - text: "1 2"
+        explain: Так было бы с `List<T>` и копированием. Но оба `append` пишут в одну и ту же четвёртую ячейку общего массива.
+      - text: "2 2"
+        correct: true
+        explain: У `a` есть место ещё для одного элемента, поэтому `b` и `c` используют один массив. Второй `append` перезаписал значение первого.
+      - text: "1 1"
+        explain: Второй `append` выполнился позже и перезаписал ячейку.
+      - text: panic
+        explain: Ёмкость 4 позволяет индекс 3 у `b` и `c`.
+
+  - id: reslice-beyond-len
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func main() {
+      	s := make([]int, 2, 10)
+      	t := s[1:3]
+      	fmt.Println(len(t), cap(t))
+      }
+    options:
+      - text: panic
+        explain: Срез можно расширять за пределы `len` вплоть до `cap` — индекс 3 не больше 10.
+      - text: "1 9"
+        explain: Длина — это `3 - 1`, а не `len(s) - 1`.
+      - text: "2 9"
+        correct: true
+        explain: Длина `3 - 1 = 2`, ёмкость — от начала окна до конца массива, `10 - 1 = 9`.
+      - text: "2 10"
+        explain: Ёмкость отсчитывается от первого элемента нового среза, а не от начала массива.
+
+  - id: array-to-slice
+    kind: compile
+    prompt: Скомпилируется ли программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func main() {
+      	a := [3]int{1, 2, 3}
+      	var s []int = a
+      	fmt.Println(s)
+      }
+    compiles: false
+    explain: "`[3]int` и `[]int` — разные типы: массив хранит элементы, срез — заголовок. Срез из массива получают явно: `s := a[:]`."
+
+  - id: independent-copy
+    kind: single
+    prompt: Как получить срез `t`, изменения в котором не затронут `s`?
+    options:
+      - text: "t := s"
+        explain: Копируется только заголовок, массив общий.
+      - text: "t := s[:]"
+        explain: Это то же окно в тот же массив.
+      - text: "t := slices.Clone(s)"
+        correct: true
+        explain: "`slices.Clone` выделяет новый массив и копирует элементы."
+      - text: "t := append(s)"
+        explain: "`append` без элементов возвращает тот же заголовок."

@@ -1,0 +1,57 @@
+---
+// Блок «Как это в C#»: различия из lesson.md рядом с кодом из csharp/*.cs.
+import { highlight } from "../lib/markdown";
+
+interface Props {
+  differences: string; // HTML раздела «Как это в C#»
+  files: { file: string; source: string }[];
+}
+const { differences, files } = Astro.props;
+const code = await Promise.all(files.map(async (f) => ({ file: f.file, html: await highlight(f.source, "csharp") })));
+---
+
+<details class="bridge card" open>
+  <summary><h2>Как это в C#</h2></summary>
+  <div class="grid">
+    <div class="prose" set:html={differences} />
+    <div>
+      {
+        code.map((c) => (
+          <figure>
+            <figcaption class="muted">{c.file}</figcaption>
+            <Fragment set:html={c.html} />
+          </figure>
+        ))
+      }
+    </div>
+  </div>
+</details>
+
+<style>
+  .bridge {
+    margin-top: 2.5rem;
+  }
+  summary h2 {
+    display: inline;
+    border: none;
+    font-size: 1.4rem;
+  }
+  .grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 1.5rem;
+    margin-top: 0.75rem;
+  }
+  figure {
+    margin: 0;
+  }
+  figcaption {
+    font-size: 0.85rem;
+    margin-bottom: 0.25rem;
+  }
+  @media (max-width: 760px) {
+    .grid {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>

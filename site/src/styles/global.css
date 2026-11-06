@@ -1,0 +1,142 @@
+:root {
+  --bg: #ffffff;
+  --bg-soft: #f6f8fa;
+  --fg: #1f2328;
+  --fg-muted: #59636e;
+  --border: #d1d9e0;
+  --accent: #00add8; /* цвет гофера */
+  --accent-strong: #007d9c;
+  --warn-bg: #fff8e1;
+  --warn-border: #f0b429;
+  --ok: #1a7f37;
+  --bad: #cf222e;
+  --radius: 8px;
+  --mono: ui-monospace, SFMono-Regular, "JetBrains Mono", Menlo, Consolas, monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  color-scheme: light dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0d1117;
+    --bg-soft: #161b22;
+    --fg: #e6edf3;
+    --fg-muted: #9198a1;
+    --border: #30363d;
+    --accent-strong: #5fd3ef;
+    --warn-bg: #2b2111;
+    --warn-border: #9e6a03;
+    --ok: #3fb950;
+    --bad: #f85149;
+  }
+  .shiki,
+  .shiki span {
+    color: var(--shiki-dark) !important;
+    background-color: var(--shiki-dark-bg) !important;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font: 16px/1.6 var(--sans);
+}
+
+main {
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 1.5rem 1rem 4rem;
+}
+
+a {
+  color: var(--accent-strong);
+}
+
+h1,
+h2,
+h3 {
+  line-height: 1.25;
+}
+
+h2 {
+  margin-top: 2.5rem;
+  padding-bottom: 0.3rem;
+  border-bottom: 1px solid var(--border);
+}
+
+code {
+  font-family: var(--mono);
+  font-size: 0.9em;
+  background: var(--bg-soft);
+  padding: 0.1em 0.3em;
+  border-radius: 4px;
+}
+
+pre.shiki,
+pre.plain {
+  font-family: var(--mono);
+  font-size: 14px;
+  line-height: 1.5;
+  padding: 0.75rem 1rem;
+  margin: 0;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  overflow-x: auto;
+  tab-size: 4;
+}
+
+pre.plain {
+  background: var(--bg-soft);
+}
+
+pre code {
+  background: none;
+  padding: 0;
+  font-size: inherit;
+}
+
+.prose pre {
+  margin: 0.75rem 0;
+}
+
+details > summary {
+  cursor: pointer;
+}
+
+.site-header {
+  border-bottom: 1px solid var(--border);
+  padding: 0.75rem 1rem;
+}
+
+.brand {
+  font-weight: 600;
+  text-decoration: none;
+  color: var(--fg);
+}
+
+.muted {
+  color: var(--fg-muted);
+}
+
+.card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1rem 1.25rem;
+}
+
+.pitfall {
+  background: var(--warn-bg);
+  border-left: 4px solid var(--warn-border);
+  border-radius: var(--radius);
+  padding: 0.75rem 1.25rem;
+  margin: 1rem 0;
+}
+
+.pitfall h3 {
+  margin: 0.25rem 0 0.5rem;
+}

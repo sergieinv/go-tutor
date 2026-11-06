@@ -1,0 +1,72 @@
+---
+// Аннотированный пример: пояснение слева, код справа, сегмент за сегментом.
+import { segments } from "../lib/annotate";
+import { highlight, inlineMarkdown } from "../lib/markdown";
+
+interface Props {
+  source: string;
+  output: string;
+}
+const { source, output } = Astro.props;
+const rows = await Promise.all(
+  segments(source).map(async (s) => ({
+    doc: s.doc.map(inlineMarkdown),
+    code: s.code ? await highlight(s.code, "go") : "",
+  })),
+);
+---
+
+<section class="annotated" aria-label="Аннотированный пример">
+  {
+    rows.map((r) => (
+      <div class="row">
+        <div class="doc">
+          {r.doc.map((p) => (
+            <p set:html={p} />
+          ))}
+        </div>
+        <div class="code" set:html={r.code} />
+      </div>
+    ))
+  }
+  {
+    output && (
+      <div class="row">
+        <div class="doc">
+          <p>Вывод программы:</p>
+        </div>
+        <div class="code">
+          <pre class="plain">{output}</pre>
+        </div>
+      </div>
+    )
+  }
+</section>
+
+<style>
+  .annotated {
+    margin: 1.5rem 0;
+  }
+  .row {
+    display: grid;
+    grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
+    gap: 1.5rem;
+    padding: 0.5rem 0;
+  }
+  .doc p {
+    margin: 0 0 0.5rem;
+    color: var(--fg-muted);
+    font-size: 0.95rem;
+  }
+  .code :global(pre) {
+    border: none;
+    border-radius: 0;
+    border-left: 3px solid var(--border);
+  }
+  @media (max-width: 760px) {
+    .row {
+      grid-template-columns: 1fr;
+      gap: 0.25rem;
+    }
+  }
+</style>

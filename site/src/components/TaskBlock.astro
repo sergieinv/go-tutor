@@ -1,0 +1,66 @@
+---
+// Практическое задание: условие, шаблон, открытые тесты и подсказки.
+// Эталон и скрытые тесты в сборку сайта не попадают.
+import type { Task } from "../lib/content";
+import { highlight, renderHints } from "../lib/markdown";
+
+interface Props {
+  statement: string; // HTML раздела «Задание»
+  task: Task;
+}
+const { statement, task } = Astro.props;
+const template = await highlight(task.template.trimEnd(), "go");
+const tests = await highlight(task.tests.trimEnd(), "go");
+const hints = await renderHints(task.hints);
+---
+
+<section class="task" aria-label="Задание">
+  <h2>Задание</h2>
+  <div class="prose" set:html={statement} />
+  <figure>
+    <figcaption class="muted">task.go — заготовка</figcaption>
+    <Fragment set:html={template} />
+  </figure>
+  <details>
+    <summary>Открытые тесты — task_test.go</summary>
+    <Fragment set:html={tests} />
+  </details>
+  <div class="hints">
+    {
+      hints.map((h, i) => (
+        <details class="hint">
+          <summary>Подсказка {i + 1}</summary>
+          <div class="prose" set:html={h} />
+        </details>
+      ))
+    }
+  </div>
+  <p class="muted note">
+    Проверка решения со скрытыми тестами заработает вместе с runner. Пока решайте локально: скопируйте заготовку и тесты в
+    пустой модуль и запустите <code>go test</code>.
+  </p>
+</section>
+
+<style>
+  figure {
+    margin: 1rem 0;
+  }
+  figcaption {
+    font-size: 0.85rem;
+    margin-bottom: 0.25rem;
+  }
+  details {
+    margin: 0.75rem 0;
+  }
+  .hints {
+    margin-top: 1rem;
+  }
+  .hint {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 0.5rem 1rem;
+  }
+  .note {
+    font-size: 0.9rem;
+  }
+</style>

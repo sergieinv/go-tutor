@@ -1,0 +1,117 @@
+questions:
+  - id: buffered-ready
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func main() {
+      	ch := make(chan int, 1)
+      	ch <- 1
+      	select {
+      	case v := <-ch:
+      		fmt.Println("got", v)
+      	default:
+      		fmt.Println("default")
+      	}
+      }
+    options:
+      - text: got 1
+        correct: true
+        explain: В буфере уже лежит значение, ветка получения готова, и `default` не нужен.
+      - text: default
+        explain: "`default` выполняется, только если не готова ни одна другая ветка."
+      - text: deadlock
+        explain: Буферизованный канал с одним значением не блокирует получение.
+
+  - id: closed-channel
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"time"
+      )
+
+      func main() {
+      	ch := make(chan int)
+      	close(ch)
+      	select {
+      	case v, ok := <-ch:
+      		fmt.Println(v, ok)
+      	case <-time.After(time.Second):
+      		fmt.Println("timeout")
+      	}
+      }
+    options:
+      - text: "0 false"
+        correct: true
+        explain: Закрытый канал всегда готов к получению и отдаёт нулевое значение с `ok == false`.
+      - text: timeout
+        explain: Ждать секунду не придётся — получение из закрытого канала не блокируется.
+      - text: panic
+        explain: Паникует отправка в закрытый канал, а не получение из него.
+
+  - id: nil-channel-send
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func main() {
+      	var ch chan int
+      	select {
+      	case ch <- 1:
+      		fmt.Println("sent")
+      	default:
+      		fmt.Println("default")
+      	}
+      }
+    options:
+      - text: sent
+        explain: Канал не создан (`nil`), отправить в него нельзя.
+      - text: default
+        correct: true
+        explain: Операции с `nil`-каналом никогда не готовы, поэтому `select` выбирает `default`. Вне `select` такая отправка заблокировалась бы навсегда.
+      - text: panic
+        explain: "`nil`-канал не вызывает панику — он просто никогда не готов."
+
+  - id: non-channel-case
+    kind: compile
+    prompt: Скомпилируется ли программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func main() {
+      	x := 1
+      	select {
+      	case x > 0:
+      		fmt.Println("positive")
+      	default:
+      		fmt.Println("other")
+      	}
+      }
+    compiles: false
+    explain: В `select` каждая ветка должна быть операцией отправки или получения. Для условий нужен `switch`.
+
+  - id: both-ready
+    kind: single
+    prompt: В момент входа в `select` готовы обе ветки. Какая выполнится?
+    options:
+      - text: Первая по порядку в коде
+        explain: Так работает `switch`, но не `select`.
+      - text: Последняя по порядку в коде
+        explain: Порядок `case` не влияет на выбор.
+      - text: Случайная из готовых
+        correct: true
+        explain: Спецификация требует равновероятного выбора среди готовых веток — это защищает от голодания одного из каналов.
+      - text: Обе по очереди
+        explain: "`select` всегда выполняет ровно одну ветку."
