@@ -1,0 +1,91 @@
+questions:
+  - id: status-not-error
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"net/http"
+      	"net/http/httptest"
+      	"time"
+      )
+
+      func main() {
+      	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+      		http.Error(w, "сломалось", http.StatusInternalServerError)
+      	}))
+      	defer srv.Close()
+
+      	client := &http.Client{Timeout: time.Second}
+      	resp, err := client.Get(srv.URL)
+      	if err != nil {
+      		fmt.Println("ошибка")
+      		return
+      	}
+      	defer resp.Body.Close()
+      	fmt.Println(err, resp.StatusCode)
+      }
+    options:
+      - text: "<nil> 500"
+        correct: true
+        explain: "`Do`/`Get` возвращают ошибку, только если ответа нет. Ответ 500 получен — значит, `err == nil`, а статус нужно проверять самостоятельно."
+      - text: ошибка
+        explain: "Это поведение `EnsureSuccessStatusCode()` из .NET. В Go статус не превращается в ошибку автоматически."
+      - text: "<nil> 200"
+        explain: "`http.Error` записывает переданный статус — клиент получит 500."
+
+  - id: default-timeout
+    kind: single
+    prompt: "Сервис вызывает `http.Get(url)`, а бэкенд принял соединение и перестал отвечать. Что произойдёт?"
+    options:
+      - text: Вызов будет ждать бесконечно
+        correct: true
+        explain: "`http.Get` использует `http.DefaultClient`, у которого `Timeout == 0`, то есть лимита нет. Если нет и дедлайна в контексте (а у `http.Get` контекста нет вовсе), ждать будем, пока ОС не разорвёт TCP-соединение — это может не случиться никогда."
+      - text: Через 100 секунд вернётся ошибка таймаута
+        explain: "100 секунд — значение `HttpClient.Timeout` по умолчанию в .NET. В Go у клиента по умолчанию таймаута нет."
+      - text: Через 30 секунд вернётся ошибка таймаута
+        explain: "30 секунд — это `Dialer.Timeout` транспорта по умолчанию, лимит только на установку соединения. Соединение уже установлено, дальше ограничений нет."
+
+  - id: limit-reader
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"io"
+      	"strings"
+      )
+
+      func main() {
+      	const max = 5
+      	for _, body := range []string{"12345", "123456"} {
+      		b, _ := io.ReadAll(io.LimitReader(strings.NewReader(body), max+1))
+      		fmt.Print(len(b) > max, " ")
+      	}
+      	b, _ := io.ReadAll(io.LimitReader(strings.NewReader("1234567890"), max))
+      	fmt.Println(len(b))
+      }
+    options:
+      - text: "false true 5"
+        correct: true
+        explain: "Читаем на байт больше лимита: тело из 6 байт даёт `len == 6 > 5` — превышение видно. Без «+1» `LimitReader` молча обрезает поток до 5 байт, и длинное тело не отличить от тела ровно в 5 байт."
+      - text: "false false 5"
+        explain: "Лимит `max+1` пропускает 6-й байт, поэтому для `123456` получится `len == 6`."
+      - text: "false true 10"
+        explain: "`LimitReader` возвращает `EOF` после `max` байт, даже если в источнике есть ещё данные."
+
+  - id: reuse-connection
+    kind: single
+    prompt: "Что нужно сделать с `resp.Body`, чтобы в Go 1.25 HTTP/1.1-соединение вернулось в пул и следующий запрос к тому же хосту его переиспользовал?"
+    options:
+      - text: Дочитать тело до конца и закрыть
+        correct: true
+        explain: "Транспорт возвращает соединение в пул, только когда тело прочитано до `EOF` (или закрыто после `EOF`). Типичный код: `io.Copy(io.Discard, resp.Body)` перед `Close`."
+      - text: Только закрыть, не читая
+        explain: "Закрытие недочитанного тела в Go 1.25 разрывает соединение: в нём ещё лежат байты ответа, и следующий запрос не может его использовать. Утечки нет, но пул не работает."
+      - text: Ничего, транспорт закроет тело сам после ответа
+        explain: "Не закроет: незакрытое тело держит соединение и горутины транспорта — это утечка."

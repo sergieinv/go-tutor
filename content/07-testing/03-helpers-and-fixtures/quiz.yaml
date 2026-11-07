@@ -1,0 +1,80 @@
+questions:
+  - id: cleanup-order
+    kind: output
+    prompt: "Программа запускает «тест» через `testing.Benchmark` — у `*testing.B` те же `Cleanup` и `Helper`, что у `*testing.T`. `SkipNow` в конце нужен, чтобы функция выполнилась один раз. Что она выведет?"
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"testing"
+      )
+
+      func open(b *testing.B, name string) {
+      	b.Helper()
+      	fmt.Println("open", name)
+      	b.Cleanup(func() { fmt.Println("close", name) })
+      	defer fmt.Println("helper done", name)
+      }
+
+      func main() {
+      	testing.Benchmark(func(b *testing.B) {
+      		open(b, "db")
+      		open(b, "cache")
+      		defer fmt.Println("test defer")
+      		b.SkipNow()
+      	})
+      }
+    options:
+      - text: "open db\nhelper done db\nopen cache\nhelper done cache\ntest defer\nclose cache\nclose db"
+        correct: true
+        explain: "`defer` срабатывает при выходе из своей функции: в хелпере — сразу, в тесте — при его завершении. Cleanup-функции выполняются после теста, в обратном порядке регистрации."
+      - text: "open db\nopen cache\nhelper done cache\nhelper done db\ntest defer\nclose cache\nclose db"
+        explain: "`defer` в хелпере привязан к вызову хелпера, а не к тесту: «helper done db» печатается до «open cache»."
+      - text: "open db\nhelper done db\nopen cache\nhelper done cache\nclose db\nclose cache\ntest defer"
+        explain: "Cleanup-функции выполняются после завершения функции теста (то есть после её `defer`) и в порядке LIFO: сначала `cache`, потом `db`."
+
+  - id: helper-line
+    kind: single
+    prompt: "Хелпер `assertEqual(t, got, want)` вызывает `t.Errorf`, но не вызывает `t.Helper()`. Его используют в десяти тестах. Что покажет сообщение о провале?"
+    options:
+      - text: "Файл и строку `t.Errorf` внутри `assertEqual` — одинаковые для всех десяти тестов"
+        correct: true
+        explain: "Без `t.Helper()` `testing` указывает место вызова `Errorf`. С `t.Helper()` хелпер пропускается, и в сообщении окажется строка теста, вызвавшего `assertEqual`."
+      - text: "Строку теста, вызвавшего `assertEqual`"
+        explain: "Так будет только после `t.Helper()` в первой строке хелпера."
+      - text: "Полный стек вызовов"
+        explain: "`t.Errorf` печатает одну позицию `файл:строка`, стек — только паника."
+
+  - id: testmain-exit
+    kind: single
+    prompt: "Что не так с этим `TestMain`?"
+    code: |
+      func TestMain(m *testing.M) {
+      	db := startDB()
+      	defer db.Stop()
+      	os.Exit(m.Run())
+      }
+    options:
+      - text: "`db.Stop()` не выполнится: `os.Exit` завершает процесс, не запуская отложенные вызовы"
+        correct: true
+        explain: "С Go 1.15 можно просто вернуться из `TestMain` — код выхода возьмётся из `m.Run()`. Или `code := m.Run(); db.Stop(); os.Exit(code)`."
+      - text: "Тесты не запустятся: без `flag.Parse()` `m.Run` не работает"
+        explain: "`m.Run` сам разбирает флаги, если этого ещё не сделали. `flag.Parse()` нужен, только если флаги читаются до `m.Run`."
+      - text: "Ничего: `defer` выполнится перед выходом"
+        explain: "`os.Exit` не возвращает управление, отложенные вызовы текущей горутины пропускаются."
+
+  - id: parallel-conflicts
+    kind: multiple
+    prompt: "Какие методы `*testing.T` нельзя использовать в тесте, который вызвал `t.Parallel()`?"
+    options:
+      - text: "`t.Setenv`"
+        correct: true
+        explain: "Окружение общее на весь процесс — параллельный тест увидел бы чужое значение. Вызов паникует."
+      - text: "`t.Chdir`"
+        correct: true
+        explain: "Рабочий каталог тоже общий для процесса, поэтому `t.Chdir` (Go 1.24) запрещён в параллельных тестах."
+      - text: "`t.TempDir`"
+        explain: "Каждый вызов создаёт новый уникальный каталог — параллельным тестам он не мешает."
+      - text: "`t.Cleanup`"
+        explain: "Cleanup-функции привязаны к своему тесту и безопасны для параллельных тестов."

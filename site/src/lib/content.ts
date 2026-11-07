@@ -58,6 +58,38 @@ export interface Task {
   hints: string;
 }
 
+export interface Example {
+  source: string;
+  output: string;
+  /** Файлы данных рядом с main.go (для embed и т.п.): runner получает их как есть. */
+  files: Record<string, string>;
+  /** *_test.go: если они есть, пример запускается через go test, а не go run. */
+  tests: Record<string, string>;
+  /** Есть ли в тестах бенчмарки и какие fuzz-цели — для кнопок песочницы. */
+  bench: boolean;
+  fuzz: string[];
+}
+
+// Те же выражения, что в tools/lessonlint/checks.go.
+const benchFunc = /^func (Benchmark\w*)\(b \*testing\.B\)/m;
+const fuzzFunc = /^func (Fuzz\w*)\(f \*testing\.F\)/gm;
+
+function loadExample(dir: string): Example {
+  const names = fs.readdirSync(path.join(dir, "example")).sort();
+  const pick = (ok: (f: string) => boolean) =>
+    Object.fromEntries(names.filter(ok).map((f) => [f, read(dir, "example", f)]));
+  const tests = pick((f) => f.endsWith("_test.go"));
+  const testSrc = Object.values(tests).join("\n");
+  return {
+    source: read(dir, "example", "main.go"),
+    output: exists(dir, "example", "output.txt") ? read(dir, "example", "output.txt") : "",
+    files: pick((f) => f !== "main.go" && f !== "output.txt" && !f.endsWith("_test.go")),
+    tests,
+    bench: benchFunc.test(testSrc),
+    fuzz: [...testSrc.matchAll(fuzzFunc)].map((m) => m[1]),
+  };
+}
+
 export interface Lesson {
   id: string; // "02-basics/05-slices"
   slug: string;
@@ -65,8 +97,7 @@ export interface Lesson {
   module: Module;
   meta: LessonMeta;
   body: string; // markdown без frontmatter
-  /** files — файлы рядом с main.go (данные для embed и т.п.), их тоже получает runner. */
-  example: { source: string; output: string; files: Record<string, string> };
+  example: Example;
   csharp: { file: string; source: string }[];
   quiz: QuizQuestion[];
   task?: Task;
@@ -138,19 +169,13 @@ function loadLesson(module: Module, slug: string): Lesson {
     module,
     meta: meta as LessonMeta,
     body,
-    example: {
-      source: read(dir, "example", "main.go"),
-      output: exists(dir, "example", "output.txt") ? read(dir, "example", "output.txt") : "",
-      files: Object.fromEntries(
-        fs
-          .readdirSync(path.join(dir, "example"))
-          .filter((f) => f !== "main.go" && f !== "output.txt")
-          .sort()
-          .map((f) => [f, read(dir, "example", f)]),
-      ),
-    },
+    example: loadExample(dir),
     csharp,
-    quiz: YAML.parse(read(dir, "quiz.yaml")).questions,
+    // Варианты вида «true» или «42» YAML читает как bool и число, а сайту нужен текст.
+    quiz: (YAML.parse(read(dir, "quiz.yaml")).questions as QuizQuestion[]).map((q) => ({
+      ...q,
+      options: q.options?.map((o) => ({ ...o, text: String(o.text) })),
+    })),
     task,
     hasViz: exists(dir, "viz.ts"),
   };

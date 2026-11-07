@@ -1,0 +1,8 @@
+сигнал получен: context canceled
+/ready → 503
+Serve вернул: http: Server closed — а запрос ещё идёт
+хуки RegisterOnShutdown вызваны
+Shutdown вернул: <nil>
+медленный запрос: 200 отчёт готов
+новый запрос отклонён: true
+закрываем базу данных

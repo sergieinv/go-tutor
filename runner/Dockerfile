@@ -24,7 +24,7 @@ RUN go build std && go build -race std && go tool test2json < /dev/null
 COPY runner/sandbox/deps.mod /tmp/deps/go.mod
 COPY runner/sandbox/deps.sum /tmp/deps/go.sum
 RUN cd /tmp/deps && GOPROXY=https://proxy.golang.org GOFLAGS= go mod download all \
-    && GOFLAGS= go build golang.org/x/sync/... && rm -rf /tmp/deps
+    && GOFLAGS= go build golang.org/x/sync/... modernc.org/sqlite && rm -rf /tmp/deps
 COPY --from=build /out/runner /usr/local/bin/runner
 COPY content /content
 EXPOSE 8081

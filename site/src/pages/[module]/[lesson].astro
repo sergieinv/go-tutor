@@ -34,11 +34,11 @@ const sections = await renderLessonBody(lesson.body);
     <LessonHeader lesson={lesson} />
     <div class="prose intro" set:html={sections.intro} />
 
-    <AnnotatedExample source={lesson.example.source} output={lesson.example.output} />
+    <AnnotatedExample source={lesson.example.source} output={lesson.example.output} tests={lesson.example.tests} />
 
     {sections.csharp && <CSharpBridge differences={sections.csharp} files={lesson.csharp} />}
 
-    <Playground lesson={lesson.id} code={lesson.example.source} files={lesson.example.files} race={lesson.meta.runner?.race} />
+    <Playground lesson={lesson.id} example={lesson.example} race={lesson.meta.runner?.race} />
 
     {
       sections.internals && (

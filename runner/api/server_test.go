@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"gotutor/runner/livetrace"
@@ -167,5 +168,24 @@ func TestTraceLive(t *testing.T) {
 	var msg map[string]string
 	if code := post(t, srv, "/api/trace", map[string]any{"files": map[string]string{"lib.go": "package lib\n"}}, &msg); code != http.StatusBadRequest {
 		t.Errorf("без main: status %d, %v", code, msg)
+	}
+}
+
+func TestGoTest(t *testing.T) {
+	srv := newTestServer(t)
+	files := map[string]string{
+		"main.go":      "package main\n\nfunc Double(x int) int { return x * 2 }\n\nfunc main() {}\n",
+		"main_test.go": "package main\n\nimport \"testing\"\n\nfunc TestDouble(t *testing.T) {\n\tif Double(2) != 4 {\n\t\tt.Fatal(\"bad\")\n\t}\n}\n",
+	}
+	var res sandbox.GoTestResult
+	if code := post(t, srv, "/api/gotest", map[string]any{"files": files, "mode": "cover"}, &res); code != http.StatusOK {
+		t.Fatalf("status %d", code)
+	}
+	if res.ExitCode != 0 || !strings.Contains(res.Stdout, "--- PASS: TestDouble") || !strings.Contains(res.Coverage, "Double") {
+		t.Errorf("res = %+v", res)
+	}
+	var msg map[string]string
+	if code := post(t, srv, "/api/gotest", map[string]any{"files": files, "mode": "fuzz", "fuzz": "-x"}, &msg); code != http.StatusBadRequest {
+		t.Errorf("плохая цель fuzz: status %d, %v", code, msg)
 	}
 }

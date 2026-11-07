@@ -1,0 +1,11 @@
+GET /                            → 200 главная
+GET /books/42                    → 200 книга 42 (шаблон "GET /books/{id}")
+HEAD /books/42                   → 200 книга 42 (шаблон "GET /books/{id}")
+GET /books/new                   → 200 форма новой книги
+GET /files/docs/2024/report.pdf  → 200 файл "docs/2024/report.pdf"
+GET http://admin.local/          → 200 админка
+GET /about                       → 404 404 page not found
+GET /books/42/pages              → 404 404 page not found
+PUT /books/42                    → 405, Allow: DELETE, GET, HEAD
+GET /files                       → редирект на /files/
+паника: true

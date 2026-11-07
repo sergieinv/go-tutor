@@ -1,0 +1,114 @@
+questions:
+  - id: stream-not-messages
+    kind: output
+    prompt: Что выведет программа? (`net.Pipe` — синхронное соединение в памяти; каждый `Write` ждёт, пока другая сторона прочитает его данные.)
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"io"
+      	"net"
+      )
+
+      func main() {
+      	client, server := net.Pipe()
+      	go func() {
+      		client.Write([]byte("hello"))
+      		client.Write([]byte("world"))
+      		client.Close()
+      	}()
+      	buf := make([]byte, 3)
+      	for {
+      		n, err := server.Read(buf)
+      		if err == io.EOF {
+      			break
+      		}
+      		fmt.Print(string(buf[:n]), "|")
+      	}
+      	fmt.Println()
+      }
+    options:
+      - text: hel|lo|wor|ld|
+        correct: true
+        explain: "Границы `Write` не сохраняются: `Read` отдаёт не больше размера буфера и не больше того, что есть. Протокол сам должен задавать границы сообщений — разделителем или длиной."
+      - text: hello|world|
+        explain: "Буфер — 3 байта, `Read` не может вернуть больше. И даже с большим буфером TCP не обещает, что один `Read` совпадёт с одним `Write`."
+      - text: hel|low|orl|d|
+        explain: "`net.Pipe` отдаёт данные одного `Write` до конца, прежде чем начнётся следующий, поэтому `lo` приходит отдельно. В настоящем TCP данные двух `Write` как раз могут склеиться — тоже ничего не гарантировано."
+
+  - id: readfull
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"io"
+      	"strings"
+      )
+
+      func main() {
+      	buf := make([]byte, 4)
+      	n, err := io.ReadFull(strings.NewReader("ab"), buf)
+      	fmt.Println(n, err)
+      	n, err = io.ReadFull(strings.NewReader(""), buf)
+      	fmt.Println(n, err)
+      }
+    options:
+      - text: |
+          2 unexpected EOF
+          0 EOF
+        correct: true
+        explain: "`ReadFull` различает «поток кончился посередине» (`io.ErrUnexpectedEOF`) и «данных не было вовсе» (`io.EOF`). Это ровно то различие, которое нужно кодеку кадров."
+      - text: |
+          2 <nil>
+          0 EOF
+        explain: "`ReadFull` обязан заполнить весь буфер; если не смог — это ошибка, даже когда что-то прочитано."
+      - text: |
+          2 EOF
+          0 EOF
+        explain: "Для частично прочитанного буфера `ReadFull` возвращает `io.ErrUnexpectedEOF`, а не `io.EOF`."
+
+  - id: accept-closed
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"errors"
+      	"fmt"
+      	"net"
+      )
+
+      func main() {
+      	ln, _ := net.Listen("tcp", "127.0.0.1:0")
+      	done := make(chan error)
+      	go func() {
+      		_, err := ln.Accept()
+      		done <- err
+      	}()
+      	ln.Close()
+      	err := <-done
+      	fmt.Println(errors.Is(err, net.ErrClosed))
+      }
+    options:
+      - text: "true"
+        correct: true
+        explain: "Закрытие listener будит заблокированный `Accept` с ошибкой, которая оборачивает `net.ErrClosed`. Это штатный способ остановить цикл `Accept`."
+      - text: "false"
+        explain: "Ошибка — `*net.OpError`, но внутри неё `net.ErrClosed`, и `errors.Is` его находит. Сравнивать текст ошибки (`use of closed network connection`) не нужно."
+
+  - id: scanner-limit
+    kind: single
+    prompt: "Сервер читает строки через `bufio.NewScanner(conn)`. Клиент присылает строку длиной 100 КБ без `\\n`. Что произойдёт?"
+    options:
+      - text: "`sc.Scan()` вернёт `false`, `sc.Err()` — `bufio.ErrTooLong`: предел строки по умолчанию 64 КБ"
+        correct: true
+        explain: "У `Scanner` есть встроенный лимит `bufio.MaxScanTokenSize`; поменять его можно через `sc.Buffer(buf, max)`. Это защита от бесконечных строк — у `Reader.ReadString` её нет."
+      - text: "`Scanner` вернёт строку частями по 64 КБ"
+        explain: "Так ведёт себя `Reader.ReadLine` (флаг `isPrefix`), а `Scanner` останавливается с ошибкой."
+      - text: "Сервер прочитает все 100 КБ в память и будет ждать `\\n`"
+        explain: "Так сделал бы `ReadString('\\n')` — без ограничения. `Scanner` ограничен."

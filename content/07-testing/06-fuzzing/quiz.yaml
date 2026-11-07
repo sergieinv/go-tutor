@@ -1,0 +1,79 @@
+questions:
+  - id: replaceall-roundtrip
+    kind: output
+    prompt: "Свойство «`unescape(escape(s)) == s`» проверяется на трёх строках. Что выведет программа?"
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"strings"
+      )
+
+      func escape(s string) string {
+      	s = strings.ReplaceAll(s, `\`, `\\`)
+      	return strings.ReplaceAll(s, "\n", `\n`)
+      }
+
+      func unescape(s string) string {
+      	s = strings.ReplaceAll(s, `\n`, "\n")
+      	return strings.ReplaceAll(s, `\\`, `\`)
+      }
+
+      func main() {
+      	for _, s := range []string{"a\nb", `a\b`, `a\nb`} {
+      		fmt.Println(unescape(escape(s)) == s)
+      	}
+      }
+    options:
+      - text: "true\ntrue\nfalse"
+        correct: true
+        explain: "Третья строка — четыре символа `a`, `\\`, `n`, `b`. `escape` даёт `a\\\\nb`, а `unescape` находит `\\n` со второй косой черты и превращает его в перевод строки. Такие входы фаззер находит быстро, а человек в таблицу обычно не пишет."
+      - text: "true\ntrue\ntrue"
+        explain: "Цепочка `ReplaceAll` не знает границ последовательностей: в `\\\\n` она находит `\\n`, начинающийся со второй косой черты."
+      - text: "true\nfalse\nfalse"
+        explain: "`a\\b` проходит: в `a\\\\b` нет `\\n`, а `\\\\` честно схлопывается в `\\`."
+
+  - id: no-fuzz-flag
+    kind: single
+    prompt: "Что делает обычный `go test` (без `-fuzz`) с функцией `FuzzParse(f *testing.F)`?"
+    options:
+      - text: "Прогоняет цель на seed-корпусе из `f.Add` и на файлах из `testdata/fuzz/FuzzParse/`"
+        correct: true
+        explain: "Без `-fuzz` fuzz-тест — обычный параметризованный тест: быстрый и детерминированный, поэтому годится для CI."
+      - text: "Пропускает её — fuzz-тесты запускаются только с `-fuzz`"
+        explain: "Пропускаются только мутации. Корпус проверяется при каждом `go test`."
+      - text: "Фаззит её по умолчанию 10 секунд"
+        explain: "Без флага `-fuzz` никакой генерации входов нет, а длительность задаёт `-fuzztime`."
+      - text: "Прогоняет ещё и все входы из `$GOCACHE/fuzz`"
+        explain: "Кеш в `$GOCACHE/fuzz` используется только при фаззинге. Регрессионный корпус — это `testdata/fuzz`, его и коммитят."
+
+  - id: arg-types
+    kind: multiple
+    prompt: "Какие типы можно использовать как аргументы цели в `f.Fuzz(func(t *testing.T, ...))`?"
+    options:
+      - text: "`[]byte`"
+        correct: true
+        explain: "`string` и `[]byte` — основные типы для фаззинга парсеров и кодеков."
+      - text: "`rune`"
+        correct: true
+        explain: "`rune` — это `int32`, а все целые типы поддерживаются."
+      - text: "`float64`"
+        correct: true
+        explain: "Поддерживаются `float32` и `float64`."
+      - text: "`[]int`"
+        explain: "Срезы, кроме `[]byte`, не поддерживаются. Получите числа из `[]byte` или передайте несколько целых аргументов."
+      - text: "`struct{ X, Y int }`"
+        explain: "Структуры не поддерживаются — передайте поля отдельными аргументами и соберите структуру внутри цели."
+
+  - id: crash-file
+    kind: single
+    prompt: "`go test -fuzz=FuzzParse` нашёл ошибку и записал `testdata/fuzz/FuzzParse/8e1f…`. Что с этим файлом делать?"
+    options:
+      - text: "Закоммитить: он станет регрессионным тестом, и обычный `go test` будет падать, пока ошибку не исправят"
+        correct: true
+        explain: "Файл корпуса — обычный тестовый случай. После исправления он гарантирует, что ошибка не вернётся."
+      - text: "Удалить после исправления — он нужен только фаззеру"
+        explain: "Без файла регрессионной проверки не останется: в CI фаззинг обычно не запускают, корпус — это и есть проверка."
+      - text: "Ничего: такие входы и так хранятся в `$GOCACHE/fuzz` и попадут в CI"
+        explain: "Кеш локален для машины и в репозиторий не попадает."

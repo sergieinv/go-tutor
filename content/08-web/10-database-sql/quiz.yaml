@@ -1,0 +1,131 @@
+questions:
+  - id: memory-pool
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"database/sql"
+      	"fmt"
+
+      	_ "modernc.org/sqlite"
+      )
+
+      func main() {
+      	db, _ := sql.Open("sqlite", ":memory:")
+      	defer db.Close()
+      	db.Exec(`CREATE TABLE t (x INTEGER)`)
+
+      	tx, _ := db.Begin() // занимает единственное открытое соединение
+      	defer tx.Rollback()
+      	_, err1 := tx.Exec(`INSERT INTO t VALUES (1)`)
+      	_, err2 := db.Exec(`INSERT INTO t VALUES (2)`) // пул откроет новое
+      	fmt.Println(err1 == nil, err2 == nil)
+      }
+    options:
+      - text: true false
+        correct: true
+        explain: "Транзакция держит соединение, в котором создана таблица. `db.Exec` получает от пула новое соединение — а с `:memory:` это новая пустая база, где таблицы `t` нет. Лечится `SetMaxOpenConns(1)` или файлом."
+      - text: true true
+        explain: "Было бы так с файловой базой. Для SQLite каждое соединение с `:memory:` — отдельная база в памяти."
+      - text: false false
+        explain: "`tx.Exec` идёт через то же соединение, где выполнялся `CREATE TABLE`: пул вернул его в простаивающие, а `Begin` взял обратно."
+
+  - id: no-rows
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"database/sql"
+      	"errors"
+      	"fmt"
+      	"os"
+      	"path/filepath"
+
+      	_ "modernc.org/sqlite"
+      )
+
+      func main() {
+      	dir, _ := os.MkdirTemp("", "q")
+      	defer os.RemoveAll(dir)
+      	db, _ := sql.Open("sqlite", filepath.Join(dir, "q.db"))
+      	defer db.Close()
+      	db.Exec(`CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)`)
+
+      	name := "аноним"
+      	row := db.QueryRow(`SELECT name FROM users WHERE id = ?`, 1)
+      	fmt.Println(row.Err() == nil)
+      	err := row.Scan(&name)
+      	fmt.Println(errors.Is(err, sql.ErrNoRows), name)
+      }
+    options:
+      - text: |
+          true
+          true аноним
+        correct: true
+        explain: "Пустой результат — не ошибка запроса, поэтому `row.Err()` равен `nil`. `sql.ErrNoRows` возвращает только `Scan`, и переменная остаётся нетронутой."
+      - text: |
+          false
+          true аноним
+        explain: "`Row.Err()` сообщает об ошибке выполнения запроса. «Строк нет» — отдельная ситуация, о ней скажет `Scan`."
+      - text: |
+          true
+          false
+        explain: "`QueryRow` + `Scan` при пустом результате возвращает именно `sql.ErrNoRows` — это способ отличить «не найдено» от сбоя."
+
+  - id: null-scan
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"database/sql"
+      	"fmt"
+
+      	_ "modernc.org/sqlite"
+      )
+
+      func main() {
+      	db, _ := sql.Open("sqlite", ":memory:")
+      	defer db.Close()
+      	db.SetMaxOpenConns(1)
+
+      	var s string
+      	err := db.QueryRow(`SELECT NULL`).Scan(&s)
+      	fmt.Println(err != nil)
+
+      	var ns sql.NullString
+      	var p *string
+      	db.QueryRow(`SELECT NULL, NULL`).Scan(&ns, &p)
+      	fmt.Println(ns.Valid, p == nil)
+      }
+    options:
+      - text: |
+          true
+          false true
+        correct: true
+        explain: "`NULL` нельзя положить в `string` — `Scan` вернёт ошибку `converting NULL to string is unsupported`. Для nullable-колонок — `sql.NullString` (`Valid == false`) или указатель (`nil`)."
+      - text: |
+          false
+          false true
+        explain: "Нулевое значение `\"\"` и `NULL` — разные вещи, и `database/sql` их не смешивает: `Scan` в `string` возвращает ошибку."
+      - text: |
+          true
+          true false
+        explain: "Для `NULL` у `NullString` поле `Valid` равно `false`, а указатель становится `nil`."
+
+  - id: placeholders
+    kind: single
+    prompt: "Почему `db.QueryContext(ctx, \"SELECT * FROM users WHERE name = ?\", name)` безопасен, а `fmt.Sprintf(\"... WHERE name = '%s'\", name)` — нет?"
+    options:
+      - text: "Значение плейсхолдера передаётся драйвером отдельно от текста запроса и никогда не разбирается как SQL"
+        correct: true
+        explain: "Текст запроса и параметры идут к СУБД раздельно (или драйвер кодирует значение как литерал). Кавычки в `name` остаются данными. С `Sprintf` строка `' OR '1'='1` становится частью запроса."
+      - text: "`database/sql` экранирует кавычки в `name` перед подстановкой"
+        explain: "Пакет ничего не подставляет в текст — в этом весь смысл. Самодельное экранирование — ненадёжная защита, его и не нужно."
+      - text: "Разницы нет, если перед запросом проверить `name` регулярным выражением"
+        explain: "Валидация полезна, но защищает от инъекции именно разделение кода и данных. Плейсхолдеры нельзя использовать только для идентификаторов (имён колонок в `ORDER BY`) — там нужен белый список."

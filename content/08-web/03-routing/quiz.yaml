@@ -1,0 +1,114 @@
+questions:
+  - id: root-catches-all
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"net/http"
+      	"net/http/httptest"
+      )
+
+      func main() {
+      	mux := http.NewServeMux()
+      	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
+      		fmt.Fprint(w, "home")
+      	})
+      	mux.HandleFunc("GET /users/{id}", func(w http.ResponseWriter, r *http.Request) {
+      		fmt.Fprint(w, "user ", r.PathValue("id"))
+      	})
+      	for _, p := range []string{"/users/7", "/users/7/posts", "/nope"} {
+      		rec := httptest.NewRecorder()
+      		mux.ServeHTTP(rec, httptest.NewRequest("GET", p, nil))
+      		fmt.Printf("%d %s; ", rec.Code, rec.Body.String())
+      	}
+      	fmt.Println()
+      }
+    options:
+      - text: "200 user 7; 200 home; 200 home;"
+        correct: true
+        explain: "`GET /` — поддерево, оно совпадает с любым путём. `/users/7/posts` не подходит к `{id}` (это ровно один сегмент), поэтому срабатывает `/`. Чтобы получать 404, пишите `GET /{$}`."
+      - text: "200 user 7; 404 404 page not found; 404 404 page not found;"
+        explain: "Так было бы с шаблоном `GET /{$}`. Шаблон `/` без `{$}` ловит все пути."
+      - text: "200 user 7; 200 user 7/posts; 200 home;"
+        explain: "`{id}` совпадает ровно с одним сегментом пути. Остаток пути со слешами ловит только `{id...}`."
+
+  - id: specificity
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"net/http"
+      	"net/http/httptest"
+      )
+
+      func main() {
+      	mux := http.NewServeMux()
+      	reply := func(s string) http.HandlerFunc {
+      		return func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, s) }
+      	}
+      	mux.Handle("/items/{id}", reply("A"))
+      	mux.Handle("GET /items/{id}", reply("B"))
+      	mux.Handle("GET /items/latest", reply("C"))
+      	for _, req := range [][2]string{{"GET", "/items/1"}, {"POST", "/items/1"}, {"GET", "/items/latest"}} {
+      		rec := httptest.NewRecorder()
+      		mux.ServeHTTP(rec, httptest.NewRequest(req[0], req[1], nil))
+      		fmt.Print(rec.Body.String())
+      	}
+      	fmt.Println()
+      }
+    options:
+      - text: "BAC"
+        correct: true
+        explain: "`GET /items/{id}` специфичнее шаблона без метода, а литерал `latest` специфичнее `{id}`. `POST` подходит только к шаблону без метода. Порядок регистрации роли не играет."
+      - text: "AAA"
+        explain: "Выбирает не первый зарегистрированный шаблон, а самый специфичный из подходящих."
+      - text: "BBB"
+        explain: "`POST` не подходит к `GET`-шаблонам, а `/items/latest` совпадает с литеральным шаблоном `C` — он специфичнее `{id}`."
+
+  - id: conflict
+    kind: single
+    prompt: "Роутер регистрирует `GET /posts/{id}`, затем `GET /{kind}/latest`. Что произойдёт?"
+    options:
+      - text: Паника при регистрации второго шаблона
+        correct: true
+        explain: "Оба шаблона совпадают с `/posts/latest`, но ни один не специфичнее другого. `ServeMux` проверяет конфликты в `Handle` и паникует, объясняя, на каком пути они пересекаются."
+      - text: На `/posts/latest` сработает первый зарегистрированный
+        explain: "Порядок регистрации в `ServeMux` никогда не влияет на выбор — поэтому неоднозначность запрещена сразу."
+      - text: Запрос `/posts/latest` получит 500
+        explain: "Конфликт обнаруживается раньше, при регистрации, — до того как сервер примет первый запрос."
+
+  - id: method-not-allowed
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"net/http"
+      	"net/http/httptest"
+      )
+
+      func main() {
+      	mux := http.NewServeMux()
+      	noop := func(http.ResponseWriter, *http.Request) {}
+      	mux.HandleFunc("GET /a/{id}", noop)
+      	mux.HandleFunc("PUT /a/{id}", noop)
+      	rec := httptest.NewRecorder()
+      	mux.ServeHTTP(rec, httptest.NewRequest("DELETE", "/a/1", nil))
+      	fmt.Println(rec.Code, rec.Header().Get("Allow"))
+      }
+    options:
+      - text: "405 GET, HEAD, PUT"
+        correct: true
+        explain: "Путь подходит, метод — нет: `ServeMux` сам отвечает 405 и перечисляет допустимые методы в `Allow`. `GET` автоматически включает `HEAD`."
+      - text: "404 "
+        explain: "404 — когда путь не подходит ни к одному шаблону. Здесь путь подошёл, не подошёл метод."
+      - text: "405 GET, PUT"
+        explain: "Шаблон с `GET` обслуживает и `HEAD`, поэтому `HEAD` тоже попадает в `Allow`."

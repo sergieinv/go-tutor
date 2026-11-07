@@ -1,0 +1,5 @@
+DefaultClient.Timeout = 0s
+200 application/json {Анна go-tutor/1.0} <nil>
+err: <nil> статус: 404 Not Found
+дедлайн: true
+прочитано: 4097 больше лимита: true

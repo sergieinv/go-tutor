@@ -1,0 +1,136 @@
+questions:
+  - id: serve-returns-first
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"context"
+      	"fmt"
+      	"net"
+      	"net/http"
+      	"time"
+      )
+
+      func main() {
+      	started, release := make(chan struct{}), make(chan struct{})
+      	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+      		close(started)
+      		<-release
+      	})}
+      	ln, _ := net.Listen("tcp", "127.0.0.1:0")
+      	serveErr := make(chan error, 1)
+      	go func() { serveErr <- srv.Serve(ln) }()
+      	go http.Get("http://" + ln.Addr().String())
+      	<-started
+
+      	shutdown := make(chan error, 1)
+      	go func() { shutdown <- srv.Shutdown(context.Background()) }()
+      	fmt.Println("Serve:", <-serveErr)
+      	select {
+      	case <-shutdown:
+      		fmt.Println("Shutdown уже вернулся")
+      	case <-time.After(50 * time.Millisecond):
+      		fmt.Println("Shutdown ещё ждёт")
+      	}
+      	close(release)
+      	fmt.Println("Shutdown:", <-shutdown)
+      }
+    options:
+      - text: |
+          Serve: http: Server closed
+          Shutdown ещё ждёт
+          Shutdown: <nil>
+        correct: true
+        explain: "`Serve` возвращает `ErrServerClosed`, как только закрыт слушатель, а `Shutdown` ждёт активный запрос. Поэтому `main` должен ждать `Shutdown`, а не `Serve`."
+      - text: |
+          Serve: <nil>
+          Shutdown ещё ждёт
+          Shutdown: <nil>
+        explain: "После `Shutdown` или `Close` `Serve` всегда возвращает `http.ErrServerClosed`, а не `nil`."
+      - text: |
+          Serve: http: Server closed
+          Shutdown уже вернулся
+          Shutdown: <nil>
+        explain: "`Shutdown` не обрывает активные запросы: хендлер ждёт `release`, и `Shutdown` ждёт его."
+
+  - id: canceled-parent
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"context"
+      	"fmt"
+      	"net"
+      	"net/http"
+      	"time"
+      )
+
+      func main() {
+      	started := make(chan struct{})
+      	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+      		close(started)
+      		time.Sleep(200 * time.Millisecond)
+      	})}
+      	ln, _ := net.Listen("tcp", "127.0.0.1:0")
+      	go srv.Serve(ln)
+      	go http.Get("http://" + ln.Addr().String())
+      	<-started
+
+      	sig, stop := context.WithCancel(context.Background())
+      	stop() // «пришёл SIGTERM»
+      	shCtx, cancel := context.WithTimeout(sig, 5*time.Second)
+      	defer cancel()
+      	fmt.Println(srv.Shutdown(shCtx))
+      }
+    options:
+      - text: context canceled
+        correct: true
+        explain: "`shCtx` — потомок уже отменённого контекста и отменён с рождения. `Shutdown` сразу возвращает его ошибку, не дождавшись запроса. Лимит берут от `context.Background()`."
+      - text: <nil>
+        explain: "Пять секунд хватило бы на запрос в 200 мс, но контекст отменён ещё до вызова `Shutdown`."
+      - text: context deadline exceeded
+        explain: "Таймаут не истёк — контекст отменён родителем, поэтому ошибка — `Canceled`."
+
+  - id: after-shutdown
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"context"
+      	"errors"
+      	"fmt"
+      	"net"
+      	"net/http"
+      )
+
+      func main() {
+      	srv := &http.Server{}
+      	srv.Shutdown(context.Background())
+      	ln, _ := net.Listen("tcp", "127.0.0.1:0")
+      	err := srv.Serve(ln)
+      	fmt.Println(errors.Is(err, http.ErrServerClosed))
+      }
+    options:
+      - text: "true"
+        correct: true
+        explain: "Остановленный сервер повторно не запускается: `Serve` сразу возвращает `ErrServerClosed` (и закрывает переданный слушатель). Для нового запуска нужен новый `http.Server`."
+      - text: "false"
+        explain: "`Shutdown` переводит сервер в состояние «закрыт» навсегда — даже если до этого он ничего не слушал."
+
+  - id: order
+    kind: single
+    prompt: В каком порядке останавливать сервис с HTTP-сервером и пулом соединений с базой?
+    options:
+      - text: "Снять готовность → `srv.Shutdown` → `db.Close()`"
+        correct: true
+        explain: "Сначала балансировщик перестаёт слать трафик, потом сервер дожидается активных запросов (а они ходят в базу), и только потом закрывается база."
+      - text: "`db.Close()` → `srv.Shutdown`"
+        explain: "Активные запросы ещё работают и получат `sql: database is closed` — мягкая остановка превращается в ошибки у клиентов."
+      - text: "`srv.Close()` и `db.Close()` одновременно — так быстрее"
+        explain: "`Close` рвёт активные соединения: клиенты получат обрыв посреди ответа. Скорость остановки не стоит потерянных запросов."

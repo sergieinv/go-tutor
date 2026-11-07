@@ -1,0 +1,114 @@
+questions:
+  - id: spy-value-receiver
+    kind: output
+    prompt: "Шпион должен посчитать вызовы `Notify`. Что выведет программа?"
+    code: |
+      package main
+
+      import "fmt"
+
+      type Notifier interface {
+      	Notify(msg string)
+      }
+
+      type spy struct {
+      	calls int
+      }
+
+      func (s spy) Notify(msg string) { s.calls++ }
+
+      func run(n Notifier) {
+      	n.Notify("a")
+      	n.Notify("b")
+      }
+
+      func main() {
+      	s := spy{}
+      	run(s)
+      	fmt.Println(s.calls)
+      }
+    options:
+      - text: "0"
+        correct: true
+        explain: "Метод с получателем-значением увеличивает поле у копии. Да и `run(s)` получил копию `s` внутри интерфейса. Шпиону нужен получатель-указатель и передача `&s` — тогда тест увидит 2."
+      - text: "2"
+        explain: "Так было бы с `func (s *spy) Notify` и `run(&s)`. Получатель-значение работает с копией структуры."
+      - text: "1"
+        explain: "Каждый вызов работает со своей копией, но `main` печатает поле исходной переменной, которое не менялось ни разу."
+
+  - id: pointer-method-set
+    kind: compile
+    prompt: Скомпилируется ли программа?
+    code: |
+      package main
+
+      type Notifier interface {
+      	Notify(msg string)
+      }
+
+      type spy struct {
+      	calls int
+      }
+
+      func (s *spy) Notify(msg string) { s.calls++ }
+
+      func main() {
+      	var n Notifier = spy{}
+      	n.Notify("x")
+      }
+    compiles: false
+    explain: "Метод объявлен у `*spy`, поэтому интерфейс реализует только указатель: `spy does not implement Notifier (method Notify has pointer receiver)`. Нужно `var n Notifier = &spy{}`. В тестовых файлах такую проверку часто фиксируют строкой `var _ Notifier = (*spy)(nil)`."
+
+  - id: recorder-order
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"net/http"
+      	"net/http/httptest"
+      )
+
+      func main() {
+      	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+      		w.Write([]byte("hi"))
+      		w.WriteHeader(http.StatusTeapot)
+      	})
+      	rec := httptest.NewRecorder()
+      	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+      	fmt.Println(rec.Code, rec.Body.String())
+      }
+    options:
+      - text: "200 hi"
+        correct: true
+        explain: "Первый `Write` сам отправляет заголовки со статусом 200, поздний `WriteHeader` игнорируется (настоящий сервер ещё пишет в лог `superfluous WriteHeader`). `NewRecorder` ведёт себя так же — поэтому такие ошибки и ловят тестами."
+      - text: "418 hi"
+        explain: "Статус нужно задать до первой записи тела: после `Write` заголовки уже «отправлены»."
+      - text: "418"
+        explain: "Тело `hi` записано и попало в `rec.Body`; дело в статусе, а не в теле."
+
+  - id: where-interface
+    kind: single
+    prompt: "Сервис `billing` использует из пакета `storage` один метод `Get(id)`. Тип `storage.DB` экспортирует 15 методов. Где по идиомам Go объявить интерфейс для подмены в тестах?"
+    options:
+      - text: "В пакете `billing`, с одним методом `Get` — его использует потребитель"
+        correct: true
+        explain: "«Accept interfaces, return structs»: `storage` возвращает конкретный `*DB`, а `billing` объявляет маленький интерфейс под свои нужды. `*DB` реализует его неявно, а фейк в тесте — одна функция."
+      - text: "В пакете `storage` рядом с `DB`, со всеми 15 методами"
+        explain: "Так привычно в C# (`IDb` рядом с `Db`), но в Go фейку пришлось бы реализовать 15 методов, а `storage` — поддерживать интерфейс, который ему самому не нужен."
+      - text: "В отдельном пакете `interfaces`, чтобы им пользовались все"
+        explain: "Общий пакет интерфейсов связывает всех со всеми. Неявная реализация позволяет каждому потребителю описать ровно то, что нужно ему."
+
+  - id: server-or-recorder
+    kind: single
+    prompt: "Нужно протестировать код, который сам отправляет HTTP-запросы через `*http.Client`. Что из `httptest` подходит?"
+    options:
+      - text: "`httptest.NewServer`: передать коду `srv.URL` и `srv.Client()`"
+        correct: true
+        explain: "Клиенту нужен настоящий сервер на loopback. Хендлер сервера отдаёт заготовленные ответы и проверяет запрос."
+      - text: "`httptest.NewRecorder`: он записывает ответы и для клиента"
+        explain: "Recorder — это `ResponseWriter` для вызова хендлера напрямую. Клиентского кода он не касается."
+      - text: "`httptest.NewRequest` с адресом настоящего API"
+        explain: "`NewRequest` строит входящий запрос для хендлера. Отправить его клиентом нельзя: `Request.RequestURI can't be set in client requests`. И в тестах не ходят во внешнюю сеть."

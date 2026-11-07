@@ -11,7 +11,7 @@
 | `content/` | Уроки: папка на урок с настоящими `.go`-файлами. Формат — [content/README.md](content/README.md) |
 | `tools/lessonlint/` | Проверка структуры и прогон каждого урока |
 | `site/` | Сайт на Astro, собирается из `content/` |
-| `runner/` | Сервис исполнения кода: `/api/run`, `/api/test`, `/api/fmt`, `/api/trace`, `/api/race` |
+| `runner/` | Сервис исполнения кода: `/api/run`, `/api/test`, `/api/gotest`, `/api/fmt`, `/api/trace`, `/api/race` |
 | `docs/` | План учебника |
 | `viz/` | Движок визуализаций: примитивы SVG, плеер шагов, построители шагов из трассы |
 
@@ -33,6 +33,7 @@ docker compose up --build        # учебник на http://localhost:8080
 | --- | --- | --- |
 | `POST /api/run` | `{"lesson"?, "files": {"main.go": "..."}, "flags"?}` | `stdout`, `stderr`, `exitCode`, `timedOut`, `truncated`, `buildFailed`, `buildOutput`, `durationMs` |
 | `POST /api/test` | `{"lesson", "files": {"task.go": "..."}}` | `passed`, `buildFailed`, `tests: [{name, status, output, elapsed, hidden}]`, `durationMs` |
+| `POST /api/gotest` | `{"lesson"?, "files": {"main.go": "...", "main_test.go": "..."}, "flags"?, "mode": "test" \| "bench" \| "fuzz" \| "cover", "fuzz"?: "FuzzXxx"}` | поля `/api/run` (в `stdout` — вывод `go test` как в терминале) плюс `coverage` — отчёт `go tool cover -func` и `fuzzInputs` — входы, на которых фаззер нашёл ошибку |
 | `POST /api/fmt` | `{"files": {...}}` | `files`, `errors` |
 | `POST /api/solution` | `{"lesson"}` | `files` — эталон; сайт показывает его после успеха или трёх неудачных попыток |
 | `POST /api/trace` | как у `/api/run` | поля `/api/run` плюс `trace`: горутины, операторы `select` со счётчиками веток, события; при сбое — `traceError` |

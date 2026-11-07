@@ -1,0 +1,6 @@
+GET /visits → 200 "визит 1\n" Location="" X-Late=""
+GET /visits → 200 "визит 2\n" Location="" X-Late=""
+GET /items → 405 "только POST\n" Location="" X-Late=""
+журнал сервера: http: superfluous response.WriteHeader call
+POST /items → 201 "создано\n" Location="/items/1" X-Late=""
+shutdown: <nil>

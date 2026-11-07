@@ -1,4 +1,4 @@
-// Package api — HTTP-интерфейс runner: /api/run, /api/test, /api/fmt, /api/trace, /api/race.
+// Package api — HTTP-интерфейс runner: /api/run, /api/test, /api/gotest, /api/fmt, /api/trace, /api/race.
 package api
 
 import (
@@ -39,6 +39,7 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/run", s.handleRun)
 	mux.HandleFunc("POST /api/test", s.handleTest)
+	mux.HandleFunc("POST /api/gotest", s.handleGoTest)
 	mux.HandleFunc("POST /api/fmt", s.handleFmt)
 	mux.HandleFunc("POST /api/solution", s.handleSolution)
 	mux.HandleFunc("POST /api/trace", s.handleTrace)
@@ -140,6 +141,35 @@ func (s *Server) handleRace(w http.ResponseWriter, r *http.Request) {
 	}
 	s.log.Info("race", "lesson", req.Lesson, "ms", res.DurationMs, "exit", res.ExitCode,
 		"buildFailed", res.BuildFailed, "races", len(res.Races))
+	writeJSON(w, http.StatusOK, res)
+}
+
+type goTestRequest struct {
+	runRequest
+	Mode string `json:"mode"`
+	Fuzz string `json:"fuzz,omitempty"`
+}
+
+// handleGoTest запускает go test для примера с тестами: тесты, бенчмарки,
+// fuzzing или покрытие. Как и /run, не кешируется — замеры и находки фаззера
+// от запуска к запуску разные.
+func (s *Server) handleGoTest(w http.ResponseWriter, r *http.Request) {
+	var req goTestRequest
+	if !decode(w, r, &req) {
+		return
+	}
+	flags, ok := s.runFlags(w, req.runRequest)
+	if !ok {
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), s.queueTimeout)
+	defer cancel()
+	res, err := s.exec.GoTest(ctx, req.Files, flags, sandbox.TestOptions{Mode: req.Mode, Fuzz: req.Fuzz})
+	if s.fail(w, r, err) {
+		return
+	}
+	s.log.Info("gotest", "lesson", req.Lesson, "mode", req.Mode, "ms", res.DurationMs, "exit", res.ExitCode,
+		"buildFailed", res.BuildFailed, "timedOut", res.TimedOut)
 	writeJSON(w, http.StatusOK, res)
 }
 

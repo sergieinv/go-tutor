@@ -1,0 +1,5 @@
+=== RUN   TestJoinSame
+--- PASS: TestJoinSame (0.00s)
+=== RUN   TestJoinBuilderAllocs
+--- PASS: TestJoinBuilderAllocs (0.00s)
+PASS

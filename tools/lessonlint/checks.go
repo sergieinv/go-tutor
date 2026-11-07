@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"gotutor/runner/livetrace"
 	"gotutor/runner/sandbox"
@@ -113,7 +114,19 @@ func (c *Checker) checkExample(ctx context.Context, l *Lesson, p *Problems) {
 	if _, ok := files["main.go"]; !ok {
 		return // отсутствие файла уже отмечено при загрузке
 	}
-	res, err := c.Exec.Run(ctx, files, l.Meta.Runner)
+	var res *sandbox.RunResult
+	testMode := hasTests(files)
+	if testMode {
+		var tr *sandbox.GoTestResult
+		tr, err = c.Exec.GoTest(ctx, files, l.Meta.Runner, sandbox.TestOptions{Mode: sandbox.ModeTest})
+		if tr != nil {
+			res = &tr.RunResult
+			// Время тестов от запуска к запуску разное — в output.txt его нет.
+			res.Stdout = maskDurations(res.Stdout)
+		}
+	} else {
+		res, err = c.Exec.Run(ctx, files, l.Meta.Runner)
+	}
 	if err != nil {
 		p.Errorf("example: %v", err)
 		return
@@ -123,8 +136,11 @@ func (c *Checker) checkExample(ctx context.Context, l *Lesson, p *Problems) {
 		p.Errorf("example: не компилируется\n%s", indent(res.BuildOutput))
 		return
 	case res.TimedOut || res.Truncated || res.ExitCode != 0:
-		p.Errorf("example: exit=%d timedOut=%v truncated=%v\n%s", res.ExitCode, res.TimedOut, res.Truncated, indent(res.Stderr))
+		p.Errorf("example: exit=%d timedOut=%v truncated=%v\n%s%s", res.ExitCode, res.TimedOut, res.Truncated, indent(res.Stdout), indent(res.Stderr))
 		return
+	}
+	if testMode {
+		c.checkTestModes(ctx, l, files, p)
 	}
 	outPath := filepath.Join(l.Dir, "example", "output.txt")
 	if c.Update {
@@ -139,6 +155,68 @@ func (c *Checker) checkExample(ctx context.Context, l *Lesson, p *Problems) {
 	}
 	if normalize(string(want)) != normalize(res.Stdout) {
 		p.Errorf("example: вывод не совпадает с output.txt\n--- ожидалось\n%s--- получено\n%s", indent(string(want)), indent(res.Stdout))
+	}
+}
+
+// hasTests — пример с _test.go-файлами запускается через go test, а не go run.
+func hasTests(files sandbox.Files) bool {
+	for name := range files {
+		if strings.HasSuffix(name, "_test.go") {
+			return true
+		}
+	}
+	return false
+}
+
+var (
+	testDuration = regexp.MustCompile(`\(\d+\.\d+s\)`)
+	benchFunc    = regexp.MustCompile(`(?m)^func (Benchmark\w*)\(b \*testing\.B\)`)
+	fuzzFunc     = regexp.MustCompile(`(?m)^func (Fuzz\w*)\(f \*testing\.F\)`)
+)
+
+// maskDurations заменяет время тестов «(0.12s)» на «(0.00s)».
+func maskDurations(s string) string { return testDuration.ReplaceAllString(s, "(0.00s)") }
+
+// checkTestModes прогоняет кнопки песочницы, которые увидит ученик:
+// покрытие всегда, бенчмарки и fuzzing — если в тестах они есть.
+// Сайт находит Benchmark и Fuzz теми же регулярными выражениями.
+func (c *Checker) checkTestModes(ctx context.Context, l *Lesson, files sandbox.Files, p *Problems) {
+	var tests strings.Builder
+	for name, src := range files {
+		if strings.HasSuffix(name, "_test.go") {
+			tests.WriteString(src)
+		}
+	}
+	type mode struct {
+		opts sandbox.TestOptions
+		// mayFail — fuzzing как раз и ищет падения, пример может их показывать.
+		mayFail bool
+	}
+	modes := []mode{{opts: sandbox.TestOptions{Mode: sandbox.ModeCover}}}
+	if benchFunc.MatchString(tests.String()) {
+		modes = append(modes, mode{opts: sandbox.TestOptions{Mode: sandbox.ModeBench}})
+	}
+	for _, m := range fuzzFunc.FindAllStringSubmatch(tests.String(), -1) {
+		modes = append(modes, mode{opts: sandbox.TestOptions{Mode: sandbox.ModeFuzz, Fuzz: m[1], FuzzTime: time.Second}, mayFail: true})
+	}
+	for _, m := range modes {
+		where := "example " + m.opts.Mode
+		if m.opts.Fuzz != "" {
+			where += " " + m.opts.Fuzz
+		}
+		res, err := c.Exec.GoTest(ctx, files, l.Meta.Runner, m.opts)
+		switch {
+		case err != nil:
+			p.Errorf("%s: %v", where, err)
+		case res.BuildFailed:
+			p.Errorf("%s: не компилируется\n%s", where, indent(res.BuildOutput))
+		case res.TimedOut || res.Truncated:
+			p.Errorf("%s: timedOut=%v truncated=%v", where, res.TimedOut, res.Truncated)
+		case res.ExitCode != 0 && !m.mayFail:
+			p.Errorf("%s: exit=%d\n%s%s", where, res.ExitCode, indent(res.Stdout), indent(res.Stderr))
+		case m.opts.Mode == sandbox.ModeCover && res.Coverage == "":
+			p.Errorf("%s: нет отчёта о покрытии", where)
+		}
 	}
 }
 

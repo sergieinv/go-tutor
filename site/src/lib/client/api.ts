@@ -38,6 +38,16 @@ export interface TestResult {
   durationMs: number;
 }
 
+export type GoTestMode = "test" | "bench" | "fuzz" | "cover";
+
+/** Вывод go test как есть; повторяет sandbox.GoTestResult. */
+export interface GoTestResult extends RunResult {
+  /** Отчёт go tool cover -func (режим cover). */
+  coverage?: string;
+  /** Входы из testdata/fuzz, на которых фаззер нашёл ошибку. */
+  fuzzInputs?: { name: string; data: string }[];
+}
+
 export interface FmtResult {
   files: Files;
   errors?: Record<string, string>;
@@ -74,6 +84,10 @@ export const run = (files: Files, lesson?: string, flags?: Flags) =>
   post<RunResult>("run", { files, lesson, flags });
 
 export const test = (lesson: string, files: Files) => post<TestResult>("test", { lesson, files });
+
+/** go test для примера с тестами: файлы ученика целиком, включая _test.go. */
+export const goTest = (files: Files, mode: GoTestMode, lesson?: string, fuzz?: string) =>
+  post<GoTestResult>("gotest", { files, lesson, mode, fuzz });
 
 export const format = (files: Files) => post<FmtResult>("fmt", { files });
 

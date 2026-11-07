@@ -1,0 +1,6 @@
+title: Сеть и веб
+summary: HTTP-клиент и сервер на net/http, маршруты ServeMux, middleware-обёртки, JSON API, graceful shutdown, TCP и database/sql — без фреймворка и конвейера ASP.NET.
+goals:
+  - Писать HTTP-клиенты и серверы с таймаутами, лимитами и корректной обработкой ошибок.
+  - Строить REST + JSON API на http.ServeMux и middleware вида func(http.Handler) http.Handler.
+  - Корректно останавливать серверы и работать с базой через database/sql.

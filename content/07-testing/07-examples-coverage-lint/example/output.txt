@@ -1,0 +1,11 @@
+=== RUN   TestSplitSum
+--- PASS: TestSplitSum (0.00s)
+=== RUN   ExampleAmount_String
+--- PASS: ExampleAmount_String (0.00s)
+=== RUN   ExampleAmount_String_negative
+--- PASS: ExampleAmount_String_negative (0.00s)
+=== RUN   ExampleAmount_Split
+--- PASS: ExampleAmount_Split (0.00s)
+=== RUN   ExampleTotals
+--- PASS: ExampleTotals (0.00s)
+PASS

@@ -1,0 +1,14 @@
+TestMain: подготовка пакета
+=== RUN   TestRender
+    main_test.go:49: render.golden.txt совпал с эталоном
+--- PASS: TestRender (0.00s)
+=== RUN   TestSave
+    main_test.go:66: в файле: "# Склад\nитого: 0\n"
+--- PASS: TestSave (0.00s)
+=== RUN   TestCleanup
+    main_test.go:76: тело теста, ctx.Err() = <nil>
+    main_test.go:75: cleanup 2 — выполнится первым
+    main_test.go:74: cleanup 1, ctx.Err() = context canceled
+--- PASS: TestCleanup (0.00s)
+PASS
+TestMain: уборка

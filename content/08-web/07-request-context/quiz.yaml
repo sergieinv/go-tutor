@@ -1,0 +1,120 @@
+questions:
+  - id: after-return
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"context"
+      	"fmt"
+      	"net/http"
+      	"net/http/httptest"
+      )
+
+      func main() {
+      	var reqCtx, bg context.Context
+      	h := func(w http.ResponseWriter, r *http.Request) {
+      		reqCtx = r.Context()
+      		bg = context.WithoutCancel(r.Context())
+      	}
+      	srv := httptest.NewServer(http.HandlerFunc(h))
+      	defer srv.Close()
+      	resp, err := http.Get(srv.URL)
+      	if err != nil {
+      		panic(err)
+      	}
+      	resp.Body.Close()
+      	<-reqCtx.Done()
+      	fmt.Println(reqCtx.Err(), bg.Err())
+      }
+    options:
+      - text: context canceled <nil>
+        correct: true
+        explain: "Сервер отменяет `r.Context()`, как только `ServeHTTP` вернулся. `WithoutCancel` отвязан от отмены — поэтому фоновую работу после ответа запускают с ним."
+      - text: <nil> <nil>
+        explain: "`<-reqCtx.Done()` дождался закрытия канала, значит `Err()` уже не `nil`: контекст запроса живёт ровно до конца хендлера."
+      - text: context canceled context canceled
+        explain: "`WithoutCancel` сохраняет значения родителя, но не его отмену: `Err()` всегда `nil`."
+
+  - id: timeout-handler
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"net/http"
+      	"net/http/httptest"
+      	"time"
+      )
+
+      func main() {
+      	written := make(chan error, 1)
+      	slow := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+      		time.Sleep(200 * time.Millisecond) // контекст не слушает
+      		_, err := w.Write([]byte("data"))
+      		written <- err
+      	})
+      	h := http.TimeoutHandler(slow, 20*time.Millisecond, "busy")
+      	rec := httptest.NewRecorder()
+      	h.ServeHTTP(rec, httptest.NewRequest("GET", "/", nil))
+      	fmt.Println(rec.Code, rec.Body.String(), <-written)
+      }
+    options:
+      - text: "503 busy http: Handler timeout"
+        correct: true
+        explain: "По истечении лимита `TimeoutHandler` отменяет контекст внутреннего хендлера и сам отвечает `503` с заданным текстом, не дожидаясь его. Опоздавшая запись не попадает в ответ и возвращает `http.ErrHandlerTimeout`."
+      - text: "504 busy http: Handler timeout"
+        explain: "`TimeoutHandler` отвечает именно `503 Service Unavailable`. `504` обычно выбирает сам хендлер, увидев истёкший дедлайн."
+      - text: "200 data <nil>"
+        explain: "Внутренний хендлер пишет через 200 мс, а лимит — 20 мс: к этому моменту ответ уже отдан `TimeoutHandler`. Хендлер, который не слушает контекст, всё равно получает отказ — но продолжает работать впустую."
+
+  - id: cause
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"context"
+      	"errors"
+      	"fmt"
+      	"time"
+      )
+
+      func main() {
+      	slow := errors.New("search budget exceeded")
+      	ctx, cancel := context.WithTimeoutCause(context.Background(), time.Millisecond, slow)
+      	defer cancel()
+      	<-ctx.Done()
+      	fmt.Println(ctx.Err())
+      	fmt.Println(context.Cause(ctx))
+      }
+    options:
+      - text: |
+          context deadline exceeded
+          search budget exceeded
+        correct: true
+        explain: "`Err()` всегда одна из двух стандартных ошибок — код, проверяющий `errors.Is(err, context.DeadlineExceeded)`, продолжает работать. Подробную причину отдаёт `context.Cause`."
+      - text: |
+          search budget exceeded
+          search budget exceeded
+        explain: "`WithTimeoutCause` не меняет `Err()`: иначе сломались бы все проверки `errors.Is(err, context.DeadlineExceeded)`."
+      - text: |
+          context deadline exceeded
+          context deadline exceeded
+        explain: "`Cause` возвращает ошибку, переданную в `WithTimeoutCause`; стандартную — только если причина не задана."
+
+  - id: shutdown-ctx
+    kind: single
+    prompt: "Хендлер ждёт `<-r.Context().Done()` (долгий опрос). Что произойдёт с ним при вызове `srv.Shutdown(ctx)`?"
+    options:
+      - text: "Ничего: `Shutdown` не отменяет контексты запросов и будет ждать хендлер, пока не истечёт его собственный `ctx`"
+        correct: true
+        explain: "`Shutdown` закрывает слушатели и ждёт активные запросы. Чтобы прервать долгие хендлеры, сервер создают с `BaseContext`, возвращающим контекст, который вы отмените при остановке."
+      - text: "`r.Context()` сразу отменяется, хендлер завершается"
+        explain: "Так делает `srv.Close()` (закрывает соединения), но не `Shutdown` — он мягкий и ждёт."
+      - text: "Хендлер получит панику `http.ErrAbortHandler`"
+        explain: "`ErrAbortHandler` — значение, которым хендлер сам может прервать ответ через `panic`; сервер его не бросает."

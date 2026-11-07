@@ -1,0 +1,8 @@
+лог: req-1 GET /orders/42 → 200, 22 байт
+клиент: 200 OK
+recover: заказ 13 сломан
+лог: req-2 GET /orders/13 → 500, 15 байт
+клиент: 500 Internal Server Error
+хендлер: клиент ушёл: context canceled
+лог: req-3 GET /orders/slow → 200, 0 байт
+клиент: ошибка context canceled true

@@ -1,5 +1,5 @@
 // Отрисовка результатов runner. Вывод программ — только через textContent.
-import type { RunResult, TestResult } from "./api.ts";
+import type { GoTestMode, GoTestResult, RunResult, TestResult } from "./api.ts";
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, className?: string, text?: string) {
   const e = document.createElement(tag);
@@ -45,6 +45,41 @@ export function showRun(target: HTMLElement, r: RunResult) {
   if (r.stdout) parts.push(block("stdout", r.stdout, "out"));
   if (r.stderr) parts.push(block("stderr", r.stderr, "err"));
   if (!r.stdout && !r.stderr) parts.push(el("p", "muted", "Программа ничего не вывела."));
+  target.replaceChildren(...parts);
+}
+
+/** Результат go test для примера: вывод как в терминале плюс покрытие или найденные фаззером входы. */
+export function showGoTest(target: HTMLElement, r: GoTestResult, mode: GoTestMode) {
+  target.removeAttribute("aria-busy");
+  if (r.buildFailed) {
+    target.replaceChildren(status("Ошибка компиляции", "bad"), block("go test", r.buildOutput ?? "", "err"));
+    return;
+  }
+  const parts: HTMLElement[] = [];
+  const found = r.fuzzInputs?.length ?? 0;
+  if (r.timedOut) parts.push(status("Прервано: превышен лимит времени", "bad", r.durationMs));
+  else if (r.truncated) parts.push(status("Прервано: слишком большой вывод (лимит 64 КБ)", "bad", r.durationMs));
+  else if (mode === "fuzz" && found > 0) parts.push(status("Фаззер нашёл вход, на котором тест падает", "bad", r.durationMs));
+  else if (r.exitCode !== 0) parts.push(status(mode === "bench" ? "Бенчмарк упал" : "Тесты не прошли", "bad", r.durationMs));
+  else {
+    const ok: Record<GoTestMode, string> = {
+      test: "Тесты пройдены",
+      bench: "Бенчмарки выполнены",
+      fuzz: "Fuzzing не нашёл ошибок",
+      cover: "Тесты пройдены, покрытие посчитано",
+    };
+    parts.push(status(ok[mode], "ok", r.durationMs));
+  }
+  const cmd: Record<GoTestMode, string> = {
+    test: "go test -v",
+    bench: "go test -bench=. -benchmem",
+    fuzz: "go test -fuzz",
+    cover: "go test -v -cover",
+  };
+  if (r.stdout) parts.push(block(cmd[mode], r.stdout, "out"));
+  if (r.coverage) parts.push(block("go tool cover -func", r.coverage, "out"));
+  for (const f of r.fuzzInputs ?? []) parts.push(block(f.name, f.data, "err"));
+  if (r.stderr) parts.push(block("stderr", r.stderr, "err"));
   target.replaceChildren(...parts);
 }
 

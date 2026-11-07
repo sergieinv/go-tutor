@@ -1,0 +1,25 @@
+=== RUN   TestSlug
+=== RUN   TestSlug/простой
+=== RUN   TestSlug/пробелы_по_краям
+=== RUN   TestSlug/знаки_подряд
+=== RUN   TestSlug/цифры
+=== RUN   TestSlug/пусто
+--- PASS: TestSlug (0.00s)
+    --- PASS: TestSlug/простой (0.00s)
+    --- PASS: TestSlug/пробелы_по_краям (0.00s)
+    --- PASS: TestSlug/знаки_подряд (0.00s)
+    --- PASS: TestSlug/цифры (0.00s)
+    --- PASS: TestSlug/пусто (0.00s)
+=== RUN   TestWords
+=== RUN   TestWords/два_слова
+=== RUN   TestWords/пусто
+--- PASS: TestWords (0.00s)
+    --- PASS: TestWords/два_слова (0.00s)
+    --- PASS: TestWords/пусто (0.00s)
+=== RUN   TestFreq
+=== RUN   TestFreq/базовый
+=== RUN   TestFreq/разные_слова
+--- PASS: TestFreq (0.00s)
+    --- PASS: TestFreq/базовый (0.00s)
+    --- PASS: TestFreq/разные_слова (0.00s)
+PASS

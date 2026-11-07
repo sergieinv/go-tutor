@@ -1,0 +1,20 @@
+=== RUN   TestParallel
+=== RUN   TestParallel/писатели
+=== PAUSE TestParallel/писатели
+=== RUN   TestParallel/последовательный
+    main_test.go:33: идёт сразу, пока параллельный на паузе
+=== NAME  TestParallel
+    main_test.go:35: defer родителя: подтест ещё не запускался
+=== CONT  TestParallel/писатели
+=== NAME  TestParallel
+    main_test.go:21: cleanup родителя: записей 10
+--- PASS: TestParallel (0.00s)
+    --- PASS: TestParallel/последовательный (0.00s)
+    --- PASS: TestParallel/писатели (0.00s)
+=== RUN   TestTTL
+    main_test.go:55: прошло 1m0s, начало 2000-01-01
+--- PASS: TestTTL (0.00s)
+=== RUN   TestJanitor
+    main_test.go:72: через 10s записей: 0
+--- PASS: TestJanitor (0.00s)
+PASS

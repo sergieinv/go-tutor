@@ -2,6 +2,7 @@ package sandbox
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -407,5 +408,116 @@ func TestDepsAvailable(t *testing.T) {
 	}
 	if res.BuildFailed || res.Stdout != "<nil>\n" {
 		t.Fatalf("res = %+v", res)
+	}
+}
+
+// SQLite на чистом Go из deps.mod работает без cgo.
+func TestDepsSQLite(t *testing.T) {
+	e := newExecutor(t)
+	src := "package main\n\nimport (\n\t\"database/sql\"\n\t\"fmt\"\n\n\t_ \"modernc.org/sqlite\"\n)\n\nfunc main() {\n\tdb, _ := sql.Open(\"sqlite\", \":memory:\")\n\tvar n int\n\tfmt.Println(db.QueryRow(\"select 1 + 1\").Scan(&n), n)\n}\n"
+	res, err := e.Run(context.Background(), Files{"main.go": src}, Flags{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.BuildFailed || res.Stdout != "<nil> 2\n" {
+		t.Fatalf("res = %+v", res)
+	}
+}
+
+const revSrc = `package main
+
+// Reverse переворачивает строку побайтово — и ломает многобайтовые руны.
+func Reverse(s string) string {
+	b := []byte(s)
+	for i, j := 0, len(b)-1; i < j; i, j = i+1, j-1 {
+		b[i], b[j] = b[j], b[i]
+	}
+	return string(b)
+}
+
+func main() {}
+`
+
+const revTest = `package main
+
+import (
+	"testing"
+	"unicode/utf8"
+)
+
+func TestReverse(t *testing.T) {
+	if got := Reverse("abc"); got != "cba" {
+		t.Errorf("Reverse = %q", got)
+	}
+}
+
+func BenchmarkReverse(b *testing.B) {
+	for b.Loop() {
+		Reverse("hello")
+	}
+}
+
+func FuzzReverse(f *testing.F) {
+	f.Add("abc")
+	f.Fuzz(func(t *testing.T, s string) {
+		if utf8.ValidString(s) && !utf8.ValidString(Reverse(s)) {
+			t.Errorf("Reverse(%q) — невалидный UTF-8", s)
+		}
+	})
+}
+`
+
+func TestGoTestModes(t *testing.T) {
+	e := newExecutor(t)
+	files := Files{"main.go": revSrc, "main_test.go": revTest}
+	ctx := context.Background()
+
+	res, err := e.GoTest(ctx, files, Flags{}, TestOptions{Mode: ModeTest})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.BuildFailed || res.ExitCode != 0 || !strings.Contains(res.Stdout, "--- PASS: TestReverse") || strings.Contains(res.Stdout, "Benchmark") {
+		t.Fatalf("test: %+v", res)
+	}
+
+	res, err = e.GoTest(ctx, files, Flags{}, TestOptions{Mode: ModeBench})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.ExitCode != 0 || !strings.Contains(res.Stdout, "BenchmarkReverse") || !strings.Contains(res.Stdout, "allocs/op") || strings.Contains(res.Stdout, "TestReverse") {
+		t.Fatalf("bench: %+v", res)
+	}
+
+	res, err = e.GoTest(ctx, files, Flags{}, TestOptions{Mode: ModeCover})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.ExitCode != 0 || !strings.Contains(res.Stdout, "coverage:") || !strings.Contains(res.Coverage, "main.go:4:") || strings.Contains(res.Coverage, "lesson/") {
+		t.Fatalf("cover: %+v", res)
+	}
+
+	res, err = e.GoTest(ctx, files, Flags{}, TestOptions{Mode: ModeFuzz, Fuzz: "FuzzReverse", FuzzTime: 2 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.ExitCode == 0 || len(res.FuzzInputs) != 1 || !strings.HasPrefix(res.FuzzInputs[0].Name, "testdata/fuzz/FuzzReverse/") ||
+		!strings.Contains(res.FuzzInputs[0].Data, "go test fuzz v1") {
+		t.Fatalf("fuzz: %+v", res)
+	}
+}
+
+func TestGoTestRejectsBadOptions(t *testing.T) {
+	e := newExecutor(t)
+	files := Files{"main.go": revSrc, "main_test.go": revTest}
+	for _, opts := range []TestOptions{{Mode: "vet"}, {Mode: ModeFuzz, Fuzz: "FuzzX$ -test.run=."}, {Mode: ModeFuzz}} {
+		_, err := e.GoTest(context.Background(), files, Flags{}, opts)
+		var in *InputError
+		if !errors.As(err, &in) {
+			t.Errorf("%+v: err = %v, want InputError", opts, err)
+		}
+	}
+	res, err := e.GoTest(context.Background(), Files{"main.go": revSrc}, Flags{}, TestOptions{Mode: ModeTest})
+	if err != nil || !res.BuildFailed || !strings.Contains(res.BuildOutput, "нет тестов") {
+		t.Fatalf("без тестов: %+v, %v", res, err)
 	}
 }

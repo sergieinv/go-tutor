@@ -1,39 +1,56 @@
 ---
 // Аннотированный пример: пояснение слева, код справа, сегмент за сегментом.
+// У примера с тестами файлов несколько: main.go и *_test.go, каждый под своим заголовком.
 import { segments } from "../lib/annotate";
 import { highlight, inlineMarkdown } from "../lib/markdown";
 
 interface Props {
   source: string;
   output: string;
+  tests?: Record<string, string>;
 }
-const { source, output } = Astro.props;
-const rows = await Promise.all(
-  segments(source).map(async (s) => ({
-    doc: s.doc.map(inlineMarkdown),
-    code: s.code ? await highlight(s.code, "go") : "",
+const { source, output, tests = {} } = Astro.props;
+const testMode = Object.keys(tests).length > 0;
+const files = await Promise.all(
+  Object.entries({ "main.go": source, ...tests }).map(async ([name, src]) => ({
+    name,
+    rows: await Promise.all(
+      segments(src).map(async (s) => ({
+        doc: s.doc.map(inlineMarkdown),
+        code: s.code ? await highlight(s.code, "go") : "",
+      })),
+    ),
   })),
 );
 ---
 
 <section class="annotated" aria-label="Аннотированный пример">
   {
-    rows.map((r) => (
-      <div class="row">
-        <div class="doc">
-          {r.doc.map((p) => (
-            <p set:html={p} />
-          ))}
-        </div>
-        <div class="code" set:html={r.code} />
-      </div>
+    files.map((f) => (
+      <>
+        {testMode && (
+          <h3 class="file">
+            <code>{f.name}</code>
+          </h3>
+        )}
+        {f.rows.map((r) => (
+          <div class="row">
+            <div class="doc">
+              {r.doc.map((p) => (
+                <p set:html={p} />
+              ))}
+            </div>
+            <div class="code" set:html={r.code} />
+          </div>
+        ))}
+      </>
     ))
   }
   {
     output && (
       <div class="row">
         <div class="doc">
-          <p>Вывод программы:</p>
+          <p>{testMode ? <>Вывод <code>go test -v</code>:</> : "Вывод программы:"}</p>
         </div>
         <div class="code">
           <pre class="plain">{output}</pre>
@@ -46,6 +63,10 @@ const rows = await Promise.all(
 <style>
   .annotated {
     margin: 1.5rem 0;
+  }
+  .file {
+    margin: 1.25rem 0 0.25rem;
+    font-size: 1rem;
   }
   .row {
     display: grid;

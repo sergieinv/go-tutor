@@ -1,0 +1,8 @@
+клиент: true
+report: context canceled
+/search → 504 "timeout\n"
+search: context deadline exceeded / лимит 50 мс на поиск
+/export → 503 "слишком долго"
+export: context deadline exceeded / http: Handler timeout
+/orders → 200
+аудит req-42: запрос context canceled, фон <nil>

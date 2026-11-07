@@ -1,31 +1,50 @@
 ---
 // Песочница: редактор с кодом примера, запуск в runner, вывод.
+// Пример с *_test.go запускается через go test: редактируются и main.go, и тесты,
+// а кнопки запускают тесты, бенчмарки, fuzzing и покрытие.
 // Без JS остаётся подсвеченный код — пример читается и так.
+import type { Example } from "../lib/content";
 import { highlight, scriptJSON } from "../lib/markdown";
 
 interface Props {
   lesson: string;
-  code: string;
-  /** Файлы рядом с main.go: уходят в runner как есть, в редакторе не меняются. */
-  files?: Record<string, string>;
+  example: Example;
   race?: boolean;
 }
-const { lesson, code, files = {}, race } = Astro.props;
-const fallback = await highlight(code.trimEnd(), "go");
+const { lesson, example, race } = Astro.props;
+const editable: Record<string, string> = { "main.go": example.source, ...example.tests };
+const testMode = Object.keys(example.tests).length > 0;
+const multi = Object.keys(editable).length > 1;
+const fallbacks = await Promise.all(
+  Object.entries(editable).map(async ([name, src]) => ({ name, html: await highlight(src.trimEnd(), "go") })),
+);
+const files = example.files;
 ---
 
-<section class="playground" aria-label="Песочница" data-playground data-lesson={lesson}>
+<section class="playground" aria-label="Песочница" data-playground data-lesson={lesson} data-test-mode={testMode ? "" : undefined}>
   <h2>Песочница</h2>
   <p class="muted hint">
-    Измените пример и запустите его. <kbd>Ctrl</kbd>/<kbd>⌘</kbd>+<kbd>Enter</kbd> — запуск, <kbd>Tab</kbd> — отступ,
+    {testMode ? "Измените код или тесты и запустите их." : "Измените пример и запустите его."}
+    <kbd>Ctrl</kbd>/<kbd>⌘</kbd>+<kbd>Enter</kbd> — {testMode ? "тесты" : "запуск"}, <kbd>Tab</kbd> — отступ,
     <kbd>Esc</kbd> и затем <kbd>Tab</kbd> — выйти из редактора.
     {race && <> Код собирается с детектором гонок <code>-race</code>.</>}
   </p>
-  <script type="application/json" data-initial set:html={scriptJSON(code)} />
+  <script type="application/json" data-initial set:html={scriptJSON(editable)} />
   <script type="application/json" data-files set:html={scriptJSON(files)} />
-  <div class="editor" data-editor>
-    <Fragment set:html={fallback} />
-  </div>
+  {
+    fallbacks.map((f) => (
+      <figure class="file-editor">
+        {multi && (
+          <figcaption>
+            <code>{f.name}</code>
+          </figcaption>
+        )}
+        <div class="editor" data-editor={f.name}>
+          <Fragment set:html={f.html} />
+        </div>
+      </figure>
+    ))
+  }
   {
     Object.keys(files).length > 0 && (
       <details class="extra-files">
@@ -42,7 +61,32 @@ const fallback = await highlight(code.trimEnd(), "go");
     )
   }
   <div class="toolbar" role="toolbar" aria-label="Действия с кодом">
-    <button type="button" class="primary" data-action="run" disabled>Запустить</button>
+    {
+      testMode ? (
+        <>
+          <button type="button" class="primary" data-action="run" data-mode="test" disabled>
+            Запустить тесты
+          </button>
+          {example.bench && (
+            <button type="button" data-action="run" data-mode="bench" disabled>
+              Бенчмарки
+            </button>
+          )}
+          {example.fuzz.map((f) => (
+            <button type="button" data-action="run" data-mode="fuzz" data-fuzz={f} disabled>
+              Fuzzing{example.fuzz.length > 1 && <>: {f}</>}
+            </button>
+          ))}
+          <button type="button" data-action="run" data-mode="cover" disabled>
+            Покрытие
+          </button>
+        </>
+      ) : (
+        <button type="button" class="primary" data-action="run" disabled>
+          Запустить
+        </button>
+      )
+    }
     <button type="button" data-action="format" disabled>Формат</button>
     <button type="button" data-action="reset" disabled>Сбросить</button>
     <button type="button" data-action="share" disabled>Поделиться</button>
@@ -52,70 +96,107 @@ const fallback = await highlight(code.trimEnd(), "go");
 </section>
 
 <script>
-  import { format, run, RunnerError } from "../lib/client/api.ts";
+  import { format, goTest, run, RunnerError, type GoTestMode } from "../lib/client/api.ts";
   import { createEditor, getDoc, setDoc } from "../lib/client/editor.ts";
   import { loadDraft, saveDraft, storage } from "../lib/client/progress.ts";
-  import { showError, showPending, showRun } from "../lib/client/render.ts";
+  import { showError, showGoTest, showPending, showRun } from "../lib/client/render.ts";
   import { fromHash, shareURL } from "../lib/client/share.ts";
+  import type { EditorView } from "@codemirror/view";
 
   const kv = storage();
 
+  const pending: Record<GoTestMode, string> = {
+    test: "Сборка и запуск тестов…",
+    bench: "Бенчмарки идут несколько секунд…",
+    fuzz: "Fuzzing идёт несколько секунд…",
+    cover: "Тесты с подсчётом покрытия…",
+  };
+
+  // Слот черновика: у main.go — прежний "example", чтобы старые черновики не потерялись.
+  const draftSlot = (name: string) => (name === "main.go" ? "example" : `example:${name}`);
+
+  /** Код из ссылки «Поделиться»: один файл — текст, несколько — JSON {имя: код}. */
+  function sharedFiles(text: string, names: string[]): Record<string, string> | null {
+    if (names.length === 1) return { [names[0]]: text };
+    try {
+      const parsed = JSON.parse(text);
+      if (parsed && typeof parsed === "object" && names.every((n) => typeof parsed[n] === "string")) return parsed;
+    } catch {
+      // Ссылка из одиночного примера или битая — игнорируем.
+    }
+    return null;
+  }
+
   for (const root of document.querySelectorAll<HTMLElement>("[data-playground]")) {
     const lesson = root.dataset.lesson!;
-    const initial: string = JSON.parse(root.querySelector("[data-initial]")!.textContent!);
+    const testMode = root.hasAttribute("data-test-mode");
+    const initial: Record<string, string> = JSON.parse(root.querySelector("[data-initial]")!.textContent!);
     const extra: Record<string, string> = JSON.parse(root.querySelector("[data-files]")!.textContent!);
-    const host = root.querySelector<HTMLElement>("[data-editor]")!;
+    const names = Object.keys(initial);
     const result = root.querySelector<HTMLElement>("[data-result]")!;
     const note = root.querySelector<HTMLElement>("[data-note]")!;
-    const button = (a: string) => root.querySelector<HTMLButtonElement>(`[data-action="${a}"]`)!;
+    const buttons = (a: string) => [...root.querySelectorAll<HTMLButtonElement>(`[data-action="${a}"]`)];
 
     // Код из ссылки «Поделиться» важнее черновика.
-    const shared = await fromHash(location.hash);
-    const start = shared ?? loadDraft(kv, lesson, "example") ?? initial;
+    const hash = await fromHash(location.hash);
+    const shared = hash === null ? null : sharedFiles(hash, names);
     if (shared) note.textContent = "Код загружен из ссылки.";
 
-    host.replaceChildren();
     let busy = false;
-    const editor = createEditor(host, {
-      doc: start,
-      label: "Код примера",
-      onSubmit: () => void doRun(),
-      onChange: (doc) => saveDraft(kv, lesson, "example", doc, initial),
-    });
+    const editors = new Map<string, EditorView>();
+    for (const name of names) {
+      const host = root.querySelector<HTMLElement>(`[data-editor="${CSS.escape(name)}"]`)!;
+      host.replaceChildren();
+      editors.set(
+        name,
+        createEditor(host, {
+          doc: shared?.[name] ?? loadDraft(kv, lesson, draftSlot(name)) ?? initial[name],
+          label: names.length > 1 ? `Файл ${name}` : "Код примера",
+          onSubmit: () => void doRun(testMode ? "test" : undefined),
+          onChange: (doc) => saveDraft(kv, lesson, draftSlot(name), doc, initial[name]),
+        }),
+      );
+    }
+    const current = () => Object.fromEntries(names.map((n) => [n, getDoc(editors.get(n)!)]));
 
-    async function doRun() {
+    async function doRun(mode?: GoTestMode, fuzz?: string) {
       if (busy) return;
       busy = true;
-      button("run").disabled = true;
-      showPending(result, "Сборка и запуск…");
+      for (const b of buttons("run")) b.disabled = true;
+      showPending(result, mode ? pending[mode] : "Сборка и запуск…");
       try {
-        showRun(result, await run({ ...extra, "main.go": getDoc(editor) }, lesson));
+        const files = { ...extra, ...current() };
+        if (mode) showGoTest(result, await goTest(files, mode, lesson, fuzz), mode);
+        else showRun(result, await run(files, lesson));
       } catch (e) {
         showError(result, e instanceof RunnerError ? e.message : String(e));
       } finally {
         busy = false;
-        button("run").disabled = false;
+        for (const b of buttons("run")) b.disabled = false;
       }
     }
 
-    button("run").addEventListener("click", doRun);
-    button("format").addEventListener("click", async () => {
+    for (const b of buttons("run")) {
+      b.addEventListener("click", () => doRun(b.dataset.mode as GoTestMode | undefined, b.dataset.fuzz));
+    }
+    buttons("format")[0].addEventListener("click", async () => {
       try {
-        const r = await format({ "main.go": getDoc(editor) });
-        const err = r.errors?.["main.go"];
-        if (err) showError(result, `gofmt: ${err}`);
-        else setDoc(editor, r.files["main.go"]);
+        const r = await format(current());
+        const errors = Object.entries(r.errors ?? {});
+        if (errors.length) showError(result, errors.map(([n, e]) => `gofmt ${n}: ${e}`).join("\n"));
+        for (const [name, view] of editors) if (!r.errors?.[name]) setDoc(view, r.files[name]);
       } catch (e) {
         showError(result, e instanceof RunnerError ? e.message : String(e));
       }
     });
-    button("reset").addEventListener("click", () => {
-      setDoc(editor, initial);
+    buttons("reset")[0].addEventListener("click", () => {
+      for (const [name, view] of editors) setDoc(view, initial[name]);
       result.replaceChildren();
       note.textContent = "Код возвращён к исходному примеру.";
     });
-    button("share").addEventListener("click", async () => {
-      const url = await shareURL(getDoc(editor), location.href);
+    buttons("share")[0].addEventListener("click", async () => {
+      const files = current();
+      const url = await shareURL(names.length === 1 ? files[names[0]] : JSON.stringify(files), location.href);
       history.replaceState(null, "", url);
       try {
         await navigator.clipboard.writeText(url);
@@ -131,6 +212,13 @@ const fallback = await highlight(code.trimEnd(), "go");
 <style>
   .hint {
     margin-top: -0.5rem;
+    font-size: 0.9rem;
+  }
+  .file-editor {
+    margin: 0 0 0.75rem;
+  }
+  .file-editor figcaption {
+    margin-bottom: 0.25rem;
     font-size: 0.9rem;
   }
   .extra-files {

@@ -1,0 +1,115 @@
+questions:
+  - id: nil-vs-empty
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"maps"
+      	"reflect"
+      	"slices"
+      )
+
+      // long оставляет слова длиннее n букв.
+      func long(words []string, n int) []string {
+      	var out []string
+      	for _, w := range words {
+      		if len(w) > n {
+      			out = append(out, w)
+      		}
+      	}
+      	return out
+      }
+
+      func main() {
+      	got := long([]string{"go", "vet"}, 5)
+      	want := []string{}
+      	fmt.Println(slices.Equal(got, want), reflect.DeepEqual(got, want))
+
+      	var m map[string]int
+      	fmt.Println(maps.Equal(m, map[string]int{}), reflect.DeepEqual(m, map[string]int{}))
+      }
+    options:
+      - text: "true false\ntrue false"
+        correct: true
+        explain: "`long` ничего не нашла, `append` не вызывался — вернулся `nil`. `slices.Equal` и `maps.Equal` сравнивают только длину и элементы, а `reflect.DeepEqual` отличает `nil` от пустого среза и map."
+      - text: "true true\ntrue true"
+        explain: "`reflect.DeepEqual` считает `nil`-срез и пустой срез разными значениями — так же и для map."
+      - text: "false false\nfalse false"
+        explain: "`slices.Equal` и `maps.Equal` смотрят на содержимое: у обоих нет элементов, значит, они равны."
+
+  - id: slice-compare
+    kind: compile
+    prompt: Скомпилируется ли тест-хелпер?
+    code: |
+      package main
+
+      import "fmt"
+
+      func check(got, want []string) {
+      	if got != want {
+      		fmt.Printf("got %q, want %q\n", got, want)
+      	}
+      }
+
+      func main() {
+      	check([]string{"a"}, []string{"a"})
+      }
+    compiles: false
+    explain: "Срезы сравниваются через `==` только с `nil`: `invalid operation: got != want (slice can only be compared to nil)`. Для сравнения содержимого — `slices.Equal`, для вложенных структур — `reflect.DeepEqual`."
+
+  - id: run-subtest
+    kind: multiple
+    prompt: "В `TestSlug` есть подтест `t.Run(\"пустая строка\", ...)`. Какие команды его запустят?"
+    options:
+      - text: "`go test -run 'TestSlug/пустая_строка'`"
+        correct: true
+        explain: "Пробелы в имени подтеста заменяются на `_`, полное имя — `TestSlug/пустая_строка`."
+      - text: "`go test -run 'Slug/пустая'`"
+        correct: true
+        explain: "Каждая часть шаблона — регулярное выражение без якорей для своего уровня: `Slug` подходит к `TestSlug`, `пустая` — к `пустая_строка`."
+      - text: "`go test -run 'пустая_строка'`"
+        explain: "Шаблон без `/` сравнивается только с именами верхнего уровня (`TestSlug`), а там нет `пустая_строка`. Ни один тест не запустится."
+      - text: "`go test -run 'TestSlug/^строка'`"
+        explain: "`^строка` требует, чтобы имя подтеста начиналось со `строка`. Запустится только сам `TestSlug` без подтестов."
+
+  - id: fatal-in-subtest
+    kind: single
+    prompt: "Таблица из пяти случаев, каждый — подтест `t.Run`. Во втором случае сработал `t.Fatalf`. Что будет с остальными?"
+    options:
+      - text: "Третий, четвёртый и пятый случаи выполнятся; упадут второй подтест и родительский тест"
+        correct: true
+        explain: "`Fatalf` завершает горутину подтеста, `t.Run` возвращает `false`, и цикл продолжается. Провал подтеста делает упавшим и родителя."
+      - text: "Тест остановится на втором случае, остальные не выполнятся"
+        explain: "Так было бы без `t.Run` — `Fatalf` в цикле теста остановил бы весь тест. У подтеста своя горутина."
+      - text: "Упадёт только второй подтест, родительский тест будет PASS"
+        explain: "Провал подтеста распространяется на родителя: `--- FAIL: TestSlug` с вложенным `--- FAIL: TestSlug/...`."
+
+  - id: loopvar
+    kind: output
+    prompt: "Модель параллельных подтестов: замыкания создаются в цикле, а выполняются позже, после цикла. Что выведет программа (модуль с `go 1.25`)?"
+    code: |
+      package main
+
+      import "fmt"
+
+      func main() {
+      	var run []func()
+      	for _, tt := range []string{"a", "b", "c"} {
+      		run = append(run, func() { fmt.Print(tt) })
+      	}
+      	for _, f := range run {
+      		f()
+      	}
+      	fmt.Println()
+      }
+    options:
+      - text: abc
+        correct: true
+        explain: "С Go 1.22 переменная цикла своя на каждой итерации, каждое замыкание видит своё значение. Поэтому `tt := tt` перед `t.Parallel()` больше не нужен."
+      - text: ccc
+        explain: "Так было до Go 1.22: одна переменная на весь цикл, и все отложенные замыкания видели последнее значение."
+      - text: cba
+        explain: "Функции вызываются в порядке добавления в срез."

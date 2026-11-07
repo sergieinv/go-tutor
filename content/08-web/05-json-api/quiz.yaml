@@ -1,0 +1,105 @@
+questions:
+  - id: trailing-data
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"encoding/json"
+      	"fmt"
+      	"strings"
+      )
+
+      func main() {
+      	var v struct{ Name string }
+      	dec := json.NewDecoder(strings.NewReader(`{"Name":"a"} {"Name":"b"}`))
+      	err := dec.Decode(&v)
+      	fmt.Println(v.Name, err)
+      }
+    options:
+      - text: "a <nil>"
+        correct: true
+        explain: "`Decoder.Decode` читает одно значение из потока и не проверяет, что после него. Для API это дыра: проверьте, что следующий `Decode` возвращает `io.EOF`. `json.Unmarshal`, наоборот, вернул бы ошибку."
+      - text: "b <nil>"
+        explain: "Второй объект не прочитан: `Decode` останавливается после первого значения."
+      - text: "a invalid character '{' after top-level value"
+        explain: "Такую ошибку вернёт `json.Unmarshal` для всего буфера. `Decoder` рассчитан на поток значений и хвост не трогает."
+
+  - id: null-into-struct
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"encoding/json"
+      	"fmt"
+      	"strings"
+      )
+
+      type input struct {
+      	Name string `json:"name"`
+      }
+
+      func main() {
+      	var a input
+      	errA := json.NewDecoder(strings.NewReader(`null`)).Decode(&a)
+      	var b *input
+      	errB := json.NewDecoder(strings.NewReader(`null`)).Decode(&b)
+      	fmt.Println(errA, b == nil, errB)
+      }
+    options:
+      - text: "<nil> true <nil>"
+        correct: true
+        explain: "`null` — валидный JSON, и в структуру он декодируется без ошибки, оставляя её как есть. Отличить `null` от `{}` можно, декодируя в указатель: после `null` он остаётся `nil`."
+      - text: "json: cannot unmarshal null into Go value of type main.input true <nil>"
+        explain: "Для `null` пакет делает исключение: значение просто не меняется, ошибки нет — ни для структуры, ни для указателя."
+      - text: "<nil> false <nil>"
+        explain: "`null` в указатель записывает `nil` — память под структуру не выделяется."
+
+  - id: status-codes
+    kind: single
+    prompt: "Клиент прислал `POST /users` с `Content-Type: application/json` и телом `{\"name\":\"\",\"email\":\"a@b\"}`. JSON синтаксически верен, поля известные, но имя пустое. Какой код ответа принят для такой ошибки в REST API?"
+    options:
+      - text: 422 Unprocessable Entity
+        correct: true
+        explain: "Запрос разобран, но данные не проходят проверку предметной области. `400` обычно оставляют для того, что не удалось разобрать: синтаксис, типы, лишние поля."
+      - text: 415 Unsupported Media Type
+        explain: "`415` — когда сервер не принимает формат тела, то есть `Content-Type` запроса. Здесь он верный."
+      - text: 409 Conflict
+        explain: "`409` — конфликт с текущим состоянием ресурса, например такой email уже занят. Пустое имя от состояния сервера не зависит."
+      - text: 404 Not Found
+        explain: "Ресурс `/users` существует; проблема в содержимом запроса."
+
+  - id: omitempty-zero
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"encoding/json"
+      	"fmt"
+      )
+
+      type item struct {
+      	ID   int  `json:"id"`
+      	Qty  int  `json:"qty,omitempty"`
+      	Done bool `json:"done,omitempty"`
+      	Left *int `json:"left,omitempty"`
+      }
+
+      func main() {
+      	zero := 0
+      	b, _ := json.Marshal(item{ID: 1, Left: &zero})
+      	fmt.Println(string(b))
+      }
+    options:
+      - text: "{\"id\":1,\"left\":0}"
+        correct: true
+        explain: "`omitempty` пропускает нулевые `qty` и `done` — клиент не узнает, что количество равно 0. Указатель на ноль не пустой (`nil` — пустой), поэтому `left` выводится."
+      - text: "{\"id\":1,\"qty\":0,\"done\":false,\"left\":0}"
+        explain: "С `omitempty` нулевые значения `0` и `false` пропускаются. Так было бы без этого тега."
+      - text: "{\"id\":1}"
+        explain: "`left` — указатель, и он не `nil`. Для указателя «пустой» означает только `nil`."

@@ -1,0 +1,116 @@
+questions:
+  - id: header-after-write
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"net/http"
+      	"net/http/httptest"
+      )
+
+      func main() {
+      	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+      		w.Header().Set("X-A", "1")
+      		fmt.Fprint(w, "ok")
+      		w.Header().Set("X-B", "2")
+      		w.WriteHeader(http.StatusTeapot)
+      	})
+      	rec := httptest.NewRecorder()
+      	h.ServeHTTP(rec, httptest.NewRequest("GET", "/", nil))
+      	res := rec.Result()
+      	fmt.Println(res.StatusCode, res.Header.Get("X-A"), res.Header.Get("X-B") == "")
+      }
+    options:
+      - text: "200 1 true"
+        correct: true
+        explain: "Первый `Write` неявно отправляет статус 200 вместе с текущими заголовками. `X-B`, заданный позже, в ответ не попадает, а `WriteHeader(418)` — лишний вызов, который игнорируется."
+      - text: "418 1 false"
+        explain: "Статус отправляется один раз — при первом `Write` или `WriteHeader`. Здесь первым был `Write`, значит 200."
+      - text: "418 1 true"
+        explain: "Поздний `WriteHeader` не меняет уже отправленный статус: в журнал пишется `superfluous response.WriteHeader call`."
+
+  - id: missing-return
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"net/http"
+      	"net/http/httptest"
+      )
+
+      func main() {
+      	h := func(w http.ResponseWriter, r *http.Request) {
+      		if r.URL.Query().Get("id") == "" {
+      			http.Error(w, "нет id", http.StatusBadRequest)
+      		}
+      		fmt.Fprintln(w, "готово")
+      	}
+      	rec := httptest.NewRecorder()
+      	h(rec, httptest.NewRequest("GET", "/", nil))
+      	fmt.Printf("%d %q\n", rec.Code, rec.Body.String())
+      }
+    options:
+      - text: "400 \"нет id\\nготово\\n\""
+        correct: true
+        explain: "`http.Error` не прерывает хендлер: он только пишет статус и строку. Без `return` выполнение продолжается, и «готово» дописывается к телу ошибки."
+      - text: "400 \"нет id\\n\""
+        explain: "Так было бы с `return` после `http.Error`. Здесь его нет."
+      - text: "200 \"готово\\n\""
+        explain: "`http.Error` уже отправил статус 400, поздняя запись тела его не меняет."
+
+  - id: server-timeouts
+    kind: single
+    prompt: "Какой таймаут `http.Server` защищает от клиента, который открывает соединение и присылает заголовки запроса по одному байту раз в 10 секунд?"
+    options:
+      - text: ReadHeaderTimeout
+        correct: true
+        explain: "Лимит на чтение заголовков запроса. Если он не задан, используется `ReadTimeout`, а если нет и его — ждать можно сколько угодно. Поэтому `ReadHeaderTimeout` — минимум для любого сервера."
+      - text: WriteTimeout
+        explain: "`WriteTimeout` ограничивает запись ответа; до неё дело не дойдёт, пока заголовки запроса не прочитаны."
+      - text: IdleTimeout
+        explain: "`IdleTimeout` — сколько ждать следующего запроса на keep-alive соединении. Медленные заголовки уже идущего запроса он не ограничивает."
+      - text: Никакой, у http.Server есть таймаут по умолчанию 30 секунд
+        explain: "У `http.Server` все таймауты по умолчанию нулевые, то есть без лимита. 30 секунд — значение `RequestHeadersTimeout` у Kestrel."
+
+  - id: handler-copy
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"net/http"
+      	"net/http/httptest"
+      )
+
+      type hits struct{ n int }
+
+      func (h hits) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+      	h.n++
+      	fmt.Fprint(w, h.n)
+      }
+
+      func main() {
+      	var h http.Handler = hits{}
+      	for range 3 {
+      		rec := httptest.NewRecorder()
+      		h.ServeHTTP(rec, httptest.NewRequest("GET", "/", nil))
+      		fmt.Print(rec.Body.String(), " ")
+      	}
+      	fmt.Println()
+      }
+    options:
+      - text: "1 1 1 "
+        correct: true
+        explain: "Ресивер по значению: каждый вызов увеличивает копию. Хендлер с состоянием — указатель (`*hits`), а в реальном сервере ещё и мьютекс: вызовы идут из разных горутин."
+      - text: "1 2 3 "
+        explain: "Так было бы с ресивером `*hits` и значением `&hits{}`. Метод с ресивером по значению меняет копию."
+      - text: "0 0 0 "
+        explain: "Копия увеличивается до 1 и печатается внутри метода — до того, как изменение потеряется."

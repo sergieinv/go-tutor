@@ -1,0 +1,14 @@
+POST /tasks → 201 application/json Location: /tasks/1
+  {"id":1,"title":"купить хлеб","done":false}
+GET /tasks/1 → 200 application/json
+  {"id":1,"title":"купить хлеб","done":false}
+GET /tasks/9 → 404 application/problem+json
+  {"type":"about:blank","title":"Not Found","status":404,"detail":"нет задачи 9"}
+POST /tasks → 415 application/problem+json
+  {"type":"about:blank","title":"Unsupported Media Type","status":415,"detail":"нужен application/json"}
+POST /tasks → 400 application/problem+json
+  {"type":"about:blank","title":"Bad Request","status":400,"detail":"json: unknown field \"prio\""}
+POST /tasks → 400 application/problem+json
+  {"type":"about:blank","title":"Bad Request","status":400,"detail":"лишние данные после объекта"}
+POST /tasks → 422 application/problem+json
+  {"type":"about:blank","title":"Unprocessable Entity","status":422,"detail":"title пустой"}

@@ -1,0 +1,133 @@
+questions:
+  - id: typed-nil
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      type FieldErrors map[string]string
+
+      func (fe FieldErrors) Error() string { return fmt.Sprint(len(fe), " errors") }
+
+      func validate(name string) error {
+      	var errs FieldErrors
+      	if name == "" {
+      		errs = FieldErrors{"name": "required"}
+      	}
+      	return errs
+      }
+
+      func main() {
+      	err := validate("Анна")
+      	fmt.Println(err == nil, err)
+      }
+    options:
+      - text: false 0 errors
+        correct: true
+        explain: "`return errs` кладёт в интерфейс `error` тип `FieldErrors` и nil-карту. Интерфейс с типом — не `nil`, хотя ошибок нет. Нужно явное `return nil`."
+      - text: true <nil>
+        explain: Так было бы при `return nil`. Здесь в интерфейсе лежит типизированное значение.
+      - text: true 0 errors
+        explain: "Если бы `err == nil`, `Println` напечатал бы `<nil>`, а не вызвал `Error()`."
+
+  - id: rune-count
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"unicode/utf8"
+      )
+
+      func main() {
+      	name := "Ёжик"
+      	fmt.Println(len(name) <= 5, utf8.RuneCountInString(name) <= 5)
+      }
+    options:
+      - text: false true
+        correct: true
+        explain: "`len` считает байты UTF-8: кириллица — 2 байта на букву, итого 8. Символов — 4. Правило «не длиннее 5 символов» через `len` отвергнет корректное имя."
+      - text: true true
+        explain: "`len` для строки — байты, а не символы."
+      - text: false false
+        explain: "`RuneCountInString` считает руны: их 4."
+
+  - id: as-through-join
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"errors"
+      	"fmt"
+      )
+
+      type FieldErrors map[string]string
+
+      func (fe FieldErrors) Error() string { return "invalid fields" }
+
+      func main() {
+      	err := fmt.Errorf("signup: %w", errors.Join(
+      		errors.New("db: duplicate"),
+      		FieldErrors{"email": "taken"},
+      	))
+      	var fe FieldErrors
+      	fmt.Println(errors.As(err, &fe), fe["email"])
+      }
+    options:
+      - text: true taken
+        correct: true
+        explain: "`errors.As` обходит всё дерево: `%w` даёт `Unwrap() error`, `errors.Join` — `Unwrap() []error`. Найденное значение копируется в `fe`."
+      - text: "false"
+        explain: "Обёртка `%w` и `errors.Join` сохраняют цепочку — `As` идёт внутрь обеих."
+      - text: "true"
+        explain: "`Println` печатает два значения: после `true` идёт сообщение из найденной карты."
+
+  - id: url-parse
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"net/url"
+      )
+
+      func main() {
+      	for _, s := range []string{"javascript:alert(1)", "example.com/a"} {
+      		u, err := url.Parse(s)
+      		fmt.Printf("%v %q %q\n", err == nil, u.Scheme, u.Host)
+      	}
+      }
+    options:
+      - text: |
+          true "javascript" ""
+          true "" ""
+        correct: true
+        explain: "`url.Parse` — парсер, а не валидатор: обе строки корректны по RFC 3986. Вторая — относительная ссылка, `example.com` попал в `Path`. Схему и хост проверяйте сами."
+      - text: |
+          false "" ""
+          true "" "example.com"
+        explain: "`javascript:` — допустимая схема, а без `//` хоста нет: `example.com/a` — путь."
+      - text: |
+          true "javascript" ""
+          true "" "example.com"
+        explain: "Хост распознаётся только после `//` (`https://example.com/a` или `//example.com/a`)."
+
+  - id: status-codes
+    kind: single
+    prompt: "Клиент прислал `{\"age\": \"тридцать\"}`, а поле `Age int`. Какой ответ уместен по соглашению из урока?"
+    options:
+      - text: "400 — `json.Decode` вернул `*json.UnmarshalTypeError`, до `Validate` дело не дошло"
+        correct: true
+        explain: "Тело не разобралось в DTO — это ошибка формата запроса. `422` — для разобранных значений, нарушающих правила."
+      - text: "422 — значение поля неверное"
+        explain: "Значение не попало в структуру: декодер не смог положить строку в `int`. Соглашение `400`/`422` разделяет именно «не разобрали» и «разобрали, но не годится»."
+      - text: "500 — ошибка декодирования на сервере"
+        explain: "Виноват клиент, а не сервер: коды `5xx` здесь вводят в заблуждение мониторинг и клиента."

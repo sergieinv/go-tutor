@@ -1,0 +1,13 @@
+=== RUN   TestNormalizeSKU
+--- PASS: TestNormalizeSKU (0.00s)
+=== RUN   TestDiscount
+--- PASS: TestDiscount (0.00s)
+=== RUN   TestDiscountBadPercent
+--- PASS: TestDiscountBadPercent (0.00s)
+=== RUN   TestDiscountRounding
+    main_test.go:52: скидка 50% от 999 = 499: дробная часть отброшена, цена 500
+--- PASS: TestDiscountRounding (0.00s)
+=== RUN   TestWithDatabase
+    main_test.go:62: SHOP_DSN не задана — интеграционный тест пропущен
+--- SKIP: TestWithDatabase (0.00s)
+PASS

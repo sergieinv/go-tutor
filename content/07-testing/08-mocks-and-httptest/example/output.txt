@@ -1,0 +1,13 @@
+=== RUN   TestConverterCache
+--- PASS: TestConverterCache (0.00s)
+=== RUN   TestHandler
+=== RUN   TestHandler/ok
+=== RUN   TestHandler/bad_amount
+=== RUN   TestHandler/no_rate
+--- PASS: TestHandler (0.00s)
+    --- PASS: TestHandler/ok (0.00s)
+    --- PASS: TestHandler/bad_amount (0.00s)
+    --- PASS: TestHandler/no_rate (0.00s)
+=== RUN   TestHTTPSource
+--- PASS: TestHTTPSource (0.00s)
+PASS

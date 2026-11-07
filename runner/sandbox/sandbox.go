@@ -8,6 +8,7 @@ package sandbox
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	_ "embed"
 	"errors"
@@ -166,7 +167,12 @@ var cgoImport = regexp.MustCompile(`(?m)^\s*import\s+(\(\s*)?"C"`)
 type workspace struct {
 	dir string
 	uid int
+	// fileLimit — RLIMIT_FSIZE программы; 0 — defaultFileLimit.
+	fileLimit int64
 }
+
+// defaultFileLimit — предел размера файла, который может записать программа.
+const defaultFileLimit = 16 << 20
 
 func (e *Executor) newWorkspace(uid int, files Files) (*workspace, error) {
 	if err := files.Validate(); err != nil {
@@ -248,8 +254,8 @@ func (e *Executor) Run(ctx context.Context, files Files, flags Flags) (*RunResul
 }
 
 // maxCollect — предел файла, который RunCollect забирает из рабочего каталога.
-// RLIMIT_FSIZE программы — 16 МБ, так что больше там не бывает.
-const maxCollect = 16 << 20
+// RLIMIT_FSIZE программы — defaultFileLimit, так что больше там не бывает.
+const maxCollect = defaultFileLimit
 
 // RunCollect как Run, но после запуска читает файл collect из рабочего
 // каталога программы (например, трассу runtime/trace). Нет файла — nil.
@@ -342,7 +348,7 @@ func (e *Executor) exec(ctx context.Context, ws *workspace, flags Flags, prog st
 	if e.cfg.Launcher != "" {
 		largs := []string{"launch",
 			"-cpu", strconv.Itoa(int(e.cfg.CPUTime.Seconds())),
-			"-fsize", strconv.Itoa(16 << 20),
+			"-fsize", strconv.FormatInt(cmp.Or(ws.fileLimit, defaultFileLimit), 10),
 			"-nofile", "256",
 		}
 		// Адресное пространство с запасом: рантайм Go резервирует больше, чем

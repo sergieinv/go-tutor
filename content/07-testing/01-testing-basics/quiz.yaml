@@ -1,0 +1,90 @@
+questions:
+  - id: fail-vs-failnow
+    kind: output
+    prompt: "`t.Error` — это `Log` + `Fail`, `t.Fatal` — `Log` + `FailNow`. Программа запускает функцию через `testing.Benchmark` (у `*testing.B` те же методы, что у `*testing.T`). Что она выведет?"
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"testing"
+      )
+
+      func main() {
+      	testing.Benchmark(func(b *testing.B) {
+      		defer fmt.Println("defer")
+      		fmt.Println("1")
+      		b.Fail()
+      		fmt.Println("2")
+      		b.FailNow()
+      		fmt.Println("3")
+      	})
+      }
+    options:
+      - text: "1\n2\ndefer"
+        correct: true
+        explain: "`Fail` только помечает провал, выполнение продолжается. `FailNow` останавливает горутину через `runtime.Goexit` — до `3` дело не доходит, но отложенные вызовы выполняются."
+      - text: "1\ndefer"
+        explain: "`Fail` (и `Error`, который его вызывает) не останавливает тест — `2` будет напечатано."
+      - text: "1\n2\n3\ndefer"
+        explain: "`FailNow` (как и `Fatal`) завершает горутину теста, строка `3` не выполнится."
+      - text: "1\n2"
+        explain: "`runtime.Goexit` выполняет отложенные вызовы перед выходом из горутины, поэтому `defer` напечатается."
+
+  - id: test-names
+    kind: multiple
+    prompt: "Какие функции в `cart_test.go` `go test` запустит как тесты?"
+    options:
+      - text: "`func TestTotal(t *testing.T)`"
+        correct: true
+        explain: Канонический вид.
+      - text: "`func Test_total(t *testing.T)`"
+        correct: true
+        explain: "После `Test` не должна идти строчная буква; `_` — не строчная, так что это тест."
+      - text: "`func Testtotal(t *testing.T)`"
+        explain: "После `Test` — строчная `t`: функция не считается тестом. С Go 1.24 `go test` вообще не соберёт тесты — анализатор `tests` сообщит о неправильном имени."
+      - text: "`func TestTotal(t testing.T)`"
+        explain: "Параметр должен быть `*testing.T`, а не значением. Тестом такая функция не станет: `go test` откажется работать с ошибкой `wrong signature for TestTotal`."
+      - text: "`func Test(t *testing.T)`"
+        correct: true
+        explain: "Голое `Test` — допустимое имя теста: суффикс может быть пустым."
+
+  - id: run-regexp
+    kind: multiple
+    prompt: "В пакете тесты `TestSum`, `TestSumAll`, `TestCheckSum` и `TestTotal`. Какие запустит `go test -run Sum`?"
+    options:
+      - text: "`TestSum`"
+        correct: true
+        explain: Имя содержит `Sum`.
+      - text: "`TestSumAll`"
+        correct: true
+        explain: "`-run` — регулярное выражение без якорей: совпадения подстроки достаточно. Только `TestSum` даст `-run '^TestSum$'`."
+      - text: "`TestCheckSum`"
+        correct: true
+        explain: "Совпадение может быть в любом месте имени."
+      - text: "`TestTotal`"
+        explain: "В имени нет `Sum`."
+
+  - id: external-package
+    kind: single
+    prompt: "В каталоге `shop` лежит `shop.go` (`package shop`) с неэкспортируемой функцией `parse`. Тест в `shop_test.go` объявлен как `package shop_test`. Что будет при вызове `parse` из этого теста?"
+    options:
+      - text: "Ошибка компиляции: `parse` не видна из пакета `shop_test`"
+        correct: true
+        explain: "`shop_test` — отдельный пакет, который импортирует `shop` как любой внешний код. Неэкспортированное ему недоступно; для таких тестов используют `package shop`."
+      - text: "Всё работает: тестовые файлы одного каталога видят друг друга"
+        explain: "Так работает только внутренний тестовый пакет `package shop`. Суффикс `_test` в имени пакета делает его внешним."
+      - text: "Компилируется, но `go vet` выдаст предупреждение"
+        explain: "Это ошибка компиляции, а не предупреждение: видимость по регистру первой буквы проверяет компилятор."
+
+  - id: cached
+    kind: single
+    prompt: "Интеграционный тест ходит в базу по сети. База упала, но `go test ./...` печатает `ok example.com/shop (cached)`. Что сделать?"
+    options:
+      - text: "Запустить `go test -count=1 ./...`"
+        correct: true
+        explain: "`-count=1` — идиоматичный способ отключить кеш результатов. Кеш учитывает исходники, флаги, переменные окружения и прочитанные тестом файлы, но не состояние базы или сети."
+      - text: "Запустить `go clean -modcache`"
+        explain: "Это кеш загруженных модулей, к результатам тестов он не относится (их чистит `go clean -testcache`)."
+      - text: "Добавить `-v`"
+        explain: "Флаг `-v` не отключает кеш: кешированный результат будет показан вместе с сохранённым подробным выводом."

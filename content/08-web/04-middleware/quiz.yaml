@@ -1,0 +1,135 @@
+questions:
+  - id: wrap-order
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"net/http"
+      	"net/http/httptest"
+      )
+
+      func tag(name string) func(http.Handler) http.Handler {
+      	return func(next http.Handler) http.Handler {
+      		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+      			fmt.Print(name, " ")
+      			next.ServeHTTP(w, r)
+      			fmt.Print("/", name, " ")
+      		})
+      	}
+      }
+
+      func main() {
+      	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Print("H ") })
+      	app := tag("A")(tag("B")(h))
+      	app.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("GET", "/", nil))
+      	fmt.Println()
+      }
+    options:
+      - text: "A B H /B /A"
+        correct: true
+        explain: "`A` — внешняя обёртка: она получает запрос первой и заканчивает работу последней. Это обычный стек вызовов."
+      - text: "B A H /A /B"
+        explain: "Снаружи та middleware, что применена последней, — здесь `tag(\"A\")`, она оборачивает всё остальное."
+      - text: "A B H /A /B"
+        explain: "Код после `next.ServeHTTP` выполняется при возврате из вложенных вызовов — в обратном порядке: сначала `B`, потом `A`."
+
+  - id: recover-order
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"net/http"
+      	"net/http/httptest"
+      )
+
+      func logging(next http.Handler) http.Handler {
+      	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+      		next.ServeHTTP(w, r)
+      		fmt.Print("log ")
+      	})
+      }
+
+      func recoverer(next http.Handler) http.Handler {
+      	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+      		defer func() {
+      			if recover() != nil {
+      				w.WriteHeader(500)
+      				fmt.Print("recovered ")
+      			}
+      		}()
+      		next.ServeHTTP(w, r)
+      	})
+      }
+
+      func main() {
+      	boom := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { panic("x") })
+      	rec := httptest.NewRecorder()
+      	recoverer(logging(boom)).ServeHTTP(rec, httptest.NewRequest("GET", "/", nil))
+      	fmt.Println(rec.Code)
+      }
+    options:
+      - text: "recovered 500"
+        correct: true
+        explain: "Паника раскручивает стек до `defer` в `recoverer`, и код `logging` после `next.ServeHTTP` не выполняется. Поэтому логирование ставят снаружи `recoverer`: `logging(recoverer(h))`."
+      - text: "log recovered 500"
+        explain: "`logging` находится внутри: паника пролетает сквозь неё, строка после `next.ServeHTTP` пропускается."
+      - text: "recovered log 500"
+        explain: "После `recover` выполнение продолжается после вызова `recoverer`, а не внутри `logging` — её кадр стека уже раскручен."
+
+  - id: pattern-copy
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"context"
+      	"fmt"
+      	"net/http"
+      	"net/http/httptest"
+      )
+
+      type key struct{}
+
+      func withID(next http.Handler) http.Handler {
+      	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+      		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), key{}, "42")))
+      	})
+      }
+
+      func main() {
+      	mux := http.NewServeMux()
+      	mux.HandleFunc("GET /orders/{id}", func(http.ResponseWriter, *http.Request) {})
+      	for _, h := range []http.Handler{mux, withID(mux)} {
+      		r := httptest.NewRequest("GET", "/orders/7", nil)
+      		h.ServeHTTP(httptest.NewRecorder(), r)
+      		fmt.Printf("%q %v; ", r.Pattern, r.Context().Value(key{}))
+      	}
+      	fmt.Println()
+      }
+    options:
+      - text: "\"GET /orders/{id}\" <nil>; \"\" <nil>;"
+        correct: true
+        explain: "`ServeMux` записывает `Pattern` в тот `*Request`, который получил. `WithContext` создаёт копию, поэтому во втором случае шаблон попадает в копию, а исходный `r` не меняется — ни шаблон, ни контекст."
+      - text: "\"GET /orders/{id}\" <nil>; \"GET /orders/{id}\" 42;"
+        explain: "`WithContext` не меняет исходный запрос, а возвращает новый. Внешний код видит свой `r` без изменений."
+      - text: "\"\" <nil>; \"\" <nil>;"
+        explain: "Без промежуточной обёртки `mux` получает тот же `r` и записывает в него `Pattern`."
+
+  - id: flusher-lost
+    kind: single
+    prompt: "Обёртка `type sw struct{ http.ResponseWriter; status int }` переопределяет `WriteHeader`. Хендлер за ней делает `f, ok := w.(http.Flusher)`. Что получится и как правильно?"
+    options:
+      - text: "ok == false; добавить обёртке Unwrap() http.ResponseWriter и в хендлере вызывать http.NewResponseController(w).Flush()"
+        correct: true
+        explain: "Встроенный интерфейс приносит только свои методы: `Header`, `Write`, `WriteHeader`. `Flush` у `*sw` нет. `ResponseController` (Go 1.20) разворачивает обёртки через `Unwrap` и находит `Flush` у исходного writer."
+      - text: "ok == true: встраивание передаёт все методы исходного значения"
+        explain: "Встраивание переносит методы статического типа поля — интерфейса `http.ResponseWriter`. Методы динамического значения внутри него недоступны."
+      - text: "Паника при утверждении типа"
+        explain: "Форма `v, ok := x.(T)` не паникует: при несовпадении `ok == false`."

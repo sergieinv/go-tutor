@@ -1,0 +1,7 @@
+PING → PONG
+UPPER привет, tcp → ПРИВЕТ, TCP
+HELLO → ERR unknown command
+QUIT → BYE
+после QUIT: EOF
+молчаливый клиент: EOF
+сервер остановлен
