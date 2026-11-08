@@ -89,6 +89,23 @@ export const test = (lesson: string, files: Files) => post<TestResult>("test", {
 export const goTest = (files: Files, mode: GoTestMode, lesson?: string, fuzz?: string) =>
   post<GoTestResult>("gotest", { files, lesson, mode, fuzz });
 
+/** Отчёт govulncheck; повторяет sandbox.VulncheckResult. */
+export interface VulncheckResult {
+  output: string;
+  exitCode: number;
+  /** Код вызывает уязвимые функции. */
+  found: boolean;
+  /** govulncheck не смог проверить код. */
+  failed: boolean;
+  timedOut: boolean;
+  /** Дата снимка базы уязвимостей в образе runner, ГГГГ-ММ-ДД. */
+  dbModified?: string;
+  durationMs: number;
+}
+
+/** govulncheck по модулю примера: код не запускается, только анализируется. */
+export const vulncheck = (files: Files, lesson?: string) => post<VulncheckResult>("vulncheck", { files, lesson });
+
 export const format = (files: Files) => post<FmtResult>("fmt", { files });
 
 export const solution = (lesson: string) => post<{ files: Files }>("solution", { lesson });

@@ -1,0 +1,135 @@
+questions:
+  - id: cop-methods
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"net/http"
+      	"net/http/httptest"
+      )
+
+      func main() {
+      	cop := http.NewCrossOriginProtection()
+      	for _, m := range []string{"GET", "POST"} {
+      		r := httptest.NewRequest(m, "https://bank.example/transfer", nil)
+      		r.Header.Set("Sec-Fetch-Site", "cross-site")
+      		r.Header.Set("Origin", "https://evil.test")
+      		fmt.Println(m, cop.Check(r) == nil)
+      	}
+      }
+    options:
+      - text: |
+          GET true
+          POST false
+        correct: true
+        explain: "`GET`, `HEAD` и `OPTIONS` считаются безопасными и пропускаются без проверки — поэтому `GET` не должен менять состояние. Кросс-сайтовый `POST` отклоняется по `Sec-Fetch-Site`."
+      - text: |
+          GET false
+          POST false
+        explain: "Безопасные методы `CrossOriginProtection` не проверяет вовсе: иначе сломались бы ссылки на ваш сайт с чужих страниц."
+      - text: |
+          GET true
+          POST true
+        explain: "`Sec-Fetch-Site: cross-site` у `POST` — ровно тот случай, который защита отклоняет."
+
+  - id: cop-no-headers
+    kind: output
+    prompt: "Что выведет программа? Запрос без `Sec-Fetch-Site`, как от старого браузера или curl."
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"net/http"
+      	"net/http/httptest"
+      )
+
+      func main() {
+      	cop := http.NewCrossOriginProtection()
+      	for _, origin := range []string{"", "https://bank.example", "https://evil.test"} {
+      		r := httptest.NewRequest("POST", "https://bank.example/transfer", nil)
+      		if origin != "" {
+      			r.Header.Set("Origin", origin)
+      		}
+      		fmt.Println(cop.Check(r) == nil)
+      	}
+      }
+    options:
+      - text: |
+          true
+          true
+          false
+        correct: true
+        explain: "Без `Sec-Fetch-Site` решает `Origin`: нет его — это не браузер, CSRF невозможен; хост совпадает с `Host` — тот же сайт; не совпадает — кросс-доменный запрос, отказ."
+      - text: |
+          false
+          true
+          false
+        explain: "Запрос без `Origin` и `Sec-Fetch-Site` пропускается: так ходят curl и сервисы, а браузер к изменяющим запросам `Origin` прикладывает."
+      - text: |
+          false
+          false
+          false
+        explain: "Без `Sec-Fetch-Site` защита сравнивает хост из `Origin` с `Host` запроса — для `bank.example` они совпадают."
+
+  - id: cookie-attrs
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"net/http"
+      )
+
+      func main() {
+      	c := &http.Cookie{Name: "session", Value: "abc", HttpOnly: true, Secure: true, SameSite: http.SameSiteStrictMode}
+      	fmt.Println(c.String())
+      	fmt.Println((&http.Cookie{Name: "theme", Value: "dark"}).String())
+      }
+    options:
+      - text: |
+          session=abc; HttpOnly; Secure; SameSite=Strict
+          theme=dark
+        correct: true
+        explain: "Атрибуты попадают в `Set-Cookie`, только если их задали. Кука без `SameSite` в Chrome ведёт себя как `Lax`, в других браузерах — по-разному: для сессии задавайте атрибут явно."
+      - text: |
+          session=abc; HttpOnly; Secure; SameSite=Strict
+          theme=dark; SameSite=Lax
+        explain: "Go не добавляет `SameSite` по умолчанию: нулевое значение поля — атрибута нет."
+      - text: |
+          session=abc; Secure; HttpOnly; SameSite=Strict; Path=/
+          theme=dark; Path=/
+        explain: "`Path` не задан — его нет в строке; порядок атрибутов фиксирован: `HttpOnly` перед `Secure`."
+
+  - id: cors-form
+    kind: single
+    prompt: "API отвечает `Access-Control-Allow-Origin` только для `https://app.example`. Страница на `evil.test` отправляет на API HTML-форму `POST` с `Content-Type: application/x-www-form-urlencoded`. Что произойдёт без `CrossOriginProtection`?"
+    options:
+      - text: "Запрос уйдёт с куками и выполнится; evil.test лишь не сможет прочитать ответ"
+        correct: true
+        explain: "Форма — «простой» запрос: preflight нет, и CORS не мешает его отправке. Same-origin policy и CORS управляют только чтением ответа. Если кука сессии без `SameSite`, перевод выполнится."
+      - text: "Браузер сначала отправит preflight `OPTIONS`, получит отказ и не отправит форму"
+        explain: "Preflight делается для методов кроме `GET`/`HEAD`/`POST` и «непростых» заголовков и типов вроде `application/json`. Форма с `x-www-form-urlencoded` — простой запрос."
+      - text: "Браузер заблокирует запрос: origin не в списке CORS"
+        explain: "CORS не блокирует отправку. Он разрешает или не разрешает скрипту читать ответ."
+
+  - id: cors-null
+    kind: multiple
+    prompt: "Какие проверки `Origin` в CORS-middleware уязвимы, если разрешён только `https://app.example`?"
+    options:
+      - text: "`strings.HasSuffix(origin, \"app.example\")`"
+        correct: true
+        explain: "Пропустит `https://evilapp.example` — домен, который может зарегистрировать кто угодно."
+      - text: "`strings.HasPrefix(origin, \"https://app.example\")`"
+        correct: true
+        explain: "Пропустит `https://app.example.evil.test` — поддомен сайта атакующего."
+      - text: "`origin == \"https://app.example\" || origin == \"null\"`"
+        correct: true
+        explain: "`null` шлют sandbox-iframe и `file://` — атакующему получить его легко."
+      - text: "`allowed[origin]`, где `allowed` — `map[string]bool{\"https://app.example\": true}`"
+        explain: "Точное сравнение со списком — правильный способ."

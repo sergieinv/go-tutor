@@ -1,7 +1,8 @@
 ---
 // Песочница: редактор с кодом примера, запуск в runner, вывод.
 // Пример с *_test.go запускается через go test: редактируются и main.go, и тесты,
-// а кнопки запускают тесты, бенчмарки, fuzzing и покрытие.
+// а кнопки запускают тесты, бенчмарки, fuzzing и покрытие. У примера со своим go.mod
+// он тоже редактируется; govulncheck проверяет модуль по снимку базы уязвимостей.
 // Без JS остаётся подсвеченный код — пример читается и так.
 import type { Example } from "../lib/content";
 import { highlight, scriptJSON } from "../lib/markdown";
@@ -10,9 +11,14 @@ interface Props {
   lesson: string;
   example: Example;
   race?: boolean;
+  vulncheck?: boolean;
 }
-const { lesson, example, race } = Astro.props;
-const editable: Record<string, string> = { "main.go": example.source, ...example.tests };
+const { lesson, example, race, vulncheck } = Astro.props;
+const editable: Record<string, string> = {
+  "main.go": example.source,
+  ...example.tests,
+  ...(example.mod ? { "go.mod": example.mod } : {}),
+};
 const testMode = Object.keys(example.tests).length > 0;
 const multi = Object.keys(editable).length > 1;
 const fallbacks = await Promise.all(
@@ -87,6 +93,13 @@ const files = example.files;
         </button>
       )
     }
+    {
+      vulncheck && (
+        <button type="button" data-action="run" data-mode="vulncheck" disabled>
+          govulncheck
+        </button>
+      )
+    }
     <button type="button" data-action="format" disabled>Формат</button>
     <button type="button" data-action="reset" disabled>Сбросить</button>
     <button type="button" data-action="share" disabled>Поделиться</button>
@@ -96,16 +109,17 @@ const files = example.files;
 </section>
 
 <script>
-  import { format, goTest, run, RunnerError, type GoTestMode } from "../lib/client/api.ts";
+  import { format, goTest, run, RunnerError, vulncheck, type GoTestMode } from "../lib/client/api.ts";
   import { createEditor, getDoc, setDoc } from "../lib/client/editor.ts";
   import { loadDraft, saveDraft, storage } from "../lib/client/progress.ts";
-  import { showError, showGoTest, showPending, showRun } from "../lib/client/render.ts";
+  import { showError, showGoTest, showPending, showRun, showVulncheck } from "../lib/client/render.ts";
   import { fromHash, shareURL } from "../lib/client/share.ts";
   import type { EditorView } from "@codemirror/view";
 
   const kv = storage();
 
-  const pending: Record<GoTestMode, string> = {
+  const pending: Record<GoTestMode | "vulncheck", string> = {
+    vulncheck: "govulncheck сверяет вызовы с базой уязвимостей…",
     test: "Сборка и запуск тестов…",
     bench: "Бенчмарки идут несколько секунд…",
     fuzz: "Fuzzing идёт несколько секунд…",
@@ -159,14 +173,15 @@ const files = example.files;
     }
     const current = () => Object.fromEntries(names.map((n) => [n, getDoc(editors.get(n)!)]));
 
-    async function doRun(mode?: GoTestMode, fuzz?: string) {
+    async function doRun(mode?: GoTestMode | "vulncheck", fuzz?: string) {
       if (busy) return;
       busy = true;
       for (const b of buttons("run")) b.disabled = true;
       showPending(result, mode ? pending[mode] : "Сборка и запуск…");
       try {
         const files = { ...extra, ...current() };
-        if (mode) showGoTest(result, await goTest(files, mode, lesson, fuzz), mode);
+        if (mode === "vulncheck") showVulncheck(result, await vulncheck(files, lesson));
+        else if (mode) showGoTest(result, await goTest(files, mode, lesson, fuzz), mode);
         else showRun(result, await run(files, lesson));
       } catch (e) {
         showError(result, e instanceof RunnerError ? e.message : String(e));
@@ -177,7 +192,7 @@ const files = example.files;
     }
 
     for (const b of buttons("run")) {
-      b.addEventListener("click", () => doRun(b.dataset.mode as GoTestMode | undefined, b.dataset.fuzz));
+      b.addEventListener("click", () => doRun(b.dataset.mode as GoTestMode | "vulncheck" | undefined, b.dataset.fuzz));
     }
     buttons("format")[0].addEventListener("click", async () => {
       try {

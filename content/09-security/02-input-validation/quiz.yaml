@@ -1,0 +1,121 @@
+questions:
+  - id: duplicate-key
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"encoding/json"
+      	"fmt"
+      	"strings"
+      )
+
+      type Refund struct {
+      	Amount int64 `json:"amount"`
+      }
+
+      func main() {
+      	dec := json.NewDecoder(strings.NewReader(`{"amount": 100, "Amount": -5}`))
+      	dec.DisallowUnknownFields()
+      	var r Refund
+      	err := dec.Decode(&r)
+      	fmt.Println(r.Amount, err)
+      }
+    options:
+      - text: -5 <nil>
+        correct: true
+        explain: "`encoding/json` сопоставляет ключ с тегом без учёта регистра, так что `Amount` — то же поле, а не неизвестное. Повтор ключа не ошибка: побеждает последнее значение. Защита — проверка значения после разбора: `amount > 0`."
+      - text: 100 <nil>
+        explain: "Первым побеждает, например, парсер в некоторых прокси и WAF — и это опасное расхождение. `encoding/json` записывает поле каждый раз, когда встречает ключ, и остаётся последнее значение."
+      - text: "0 json: unknown field \"Amount\""
+        explain: "Без точного совпадения декодер ищет поле без учёта регистра и находит `amount`. `DisallowUnknownFields` ругается только на ключи, которым не подошло ни одно поле."
+
+  - id: trailing
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"encoding/json"
+      	"fmt"
+      	"strings"
+      )
+
+      func main() {
+      	dec := json.NewDecoder(strings.NewReader(`{"to":"bob"} {"to":"eve"}`))
+      	var v struct{ To string }
+      	err := dec.Decode(&v)
+      	fmt.Println(v.To, err == nil, dec.More())
+      }
+    options:
+      - text: bob true true
+        correct: true
+        explain: "`Decode` читает ровно одно значение и останавливается. Хвост с `eve` остаётся непрочитанным, и о нём говорит только `More()` или следующий `Token()`. Строгое чтение проверяет, что после объекта — `io.EOF`."
+      - text: "bob false false"
+        explain: "Ошибки нет: синтаксически первое значение корректно, а до второго `Decode` не доходит."
+      - text: eve true false
+        explain: "Декодер не склеивает объекты и не читает дальше первого. `eve` можно получить только вторым вызовом `Decode`."
+
+  - id: truncation
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func main() {
+      	var n int64 = 2147483648
+      	var m int64 = 70000
+      	fmt.Println(int32(n), int16(m))
+      }
+    options:
+      - text: -2147483648 4464
+        correct: true
+        explain: "Преобразование целых в Go никогда не паникует: старшие биты отбрасываются. 2³¹ в `int32` — минимальное значение, 70000 − 65536 = 4464. Проверяйте диапазон до преобразования или разбирайте строку сразу в нужную битность: `strconv.ParseInt(s, 10, 32)` вернёт `ErrRange`."
+      - text: 2147483647 32767
+        explain: "Насыщения до максимума в Go нет — так ведёт себя `strconv.ParseInt` при ошибке диапазона, а не преобразование типа."
+      - text: паника
+        explain: "Переполнение при преобразовании и арифметике целых — не паника в Go, а заворачивание. Паникует только деление на ноль."
+
+  - id: sign-check
+    kind: output
+    prompt: "Проверка «если сумма отрицательная — было переполнение». Что выведет программа?"
+    code: |
+      package main
+
+      import "fmt"
+
+      func total(qty, price int64) (int64, bool) {
+      	t := qty * price
+      	if t < 0 {
+      		return 0, false
+      	}
+      	return t, true
+      }
+
+      func main() {
+      	fmt.Println(total(1<<62+1, 4))
+      }
+    options:
+      - text: 4 true
+        correct: true
+        explain: "(2⁶² + 1) × 4 = 2⁶⁴ + 4, по модулю 2⁶⁴ это 4 — положительное число. После переполнения знак может оказаться любым, поэтому проверка знака ничего не гарантирует. Надёжно — границы множителей до умножения или проверка `price != 0 && t/price != qty`."
+      - text: 0 false
+        explain: "Произведение завернулось в маленькое положительное число, а не в отрицательное."
+      - text: 18446744073709551620 true
+        explain: "Такое число не помещается в `int64` (максимум около 9,2·10¹⁸) — арифметика идёт по модулю 2⁶⁴."
+
+  - id: body-limit
+    kind: single
+    prompt: "Тело запроса ограничено `http.MaxBytesReader` в 1 МиБ. Поле `ids []int64` — список товаров для массовой операции. Что ещё нужно ограничить?"
+    options:
+      - text: "Число элементов `ids`: в 1 МиБ помещается около полумиллиона чисел `1,`, и каждое станет запросом к базе"
+        correct: true
+        explain: "Лимит размера защищает парсер, но не то, что идёт после. Стоимость обработки растёт с количеством элементов — нужен свой лимит на длину массива, строк и глубину вложенности (OWASP API4:2023, Unrestricted Resource Consumption)."
+      - text: "Ничего: 1 МиБ — уже достаточно маленький лимит"
+        explain: "1 МиБ JSON вида `[1,1,1,...]` — это полмиллиона элементов. Если каждый порождает запрос к базе или письмо, это DoS."
+      - text: "Глубину вложенности: `encoding/json` падает со stack overflow на глубоком JSON"
+        explain: "`encoding/json` сам ограничивает вложенность 10000 уровнями и возвращает ошибку `exceeded max depth`, а не падает. Ограничивать стоит количество элементов, которое обработает ваш код."

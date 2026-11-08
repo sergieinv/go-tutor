@@ -11,7 +11,7 @@
 | `content/` | Уроки: папка на урок с настоящими `.go`-файлами. Формат — [content/README.md](content/README.md) |
 | `tools/lessonlint/` | Проверка структуры и прогон каждого урока |
 | `site/` | Сайт на Astro, собирается из `content/` |
-| `runner/` | Сервис исполнения кода: `/api/run`, `/api/test`, `/api/gotest`, `/api/fmt`, `/api/trace`, `/api/race` |
+| `runner/` | Сервис исполнения кода: `/api/run`, `/api/test`, `/api/gotest`, `/api/vulncheck`, `/api/fmt`, `/api/trace`, `/api/race` |
 | `docs/` | План учебника |
 | `viz/` | Движок визуализаций: примитивы SVG, плеер шагов, построители шагов из трассы |
 
@@ -23,7 +23,7 @@ docker compose up --build        # учебник на http://localhost:8080
 
 - `site` — nginx со статикой Astro, `/api/*` проксируется в `runner`.
 - `runner` — Go-тулчейн с прогретым кешем сборки. Каждый запуск идёт в отдельном временном каталоге от имени отдельного uid слота с лимитами: 10 с CPU и реального времени, 256 МБ, 64 процесса, вывод до 64 КБ. После запуска все процессы слота убиваются.
-- У `runner` нет выхода в интернет (сеть `internal`); модули — только из кеша образа. Сторонние модули, доступные урокам, перечислены в `runner/sandbox/deps.mod` (сейчас `golang.org/x/sync`).
+- У `runner` нет выхода в интернет (сеть `internal`); модули — только из кеша образа. Сторонние модули, доступные урокам, перечислены в `runner/sandbox/deps.mod` (сейчас `golang.org/x/sync`, `golang.org/x/crypto` и SQLite `modernc.org/sqlite`). Модули из `go.sum` примеров со своим `go.mod` тоже скачиваются при сборке образа. В образе есть `govulncheck` и снимок базы уязвимостей vuln.go.dev, который обновляется при каждой пересборке.
 - В `site/package-lock.json` записаны адреса корпоративного Artifactory. Образ сайта ставит пакеты из `registry.npmjs.org`, подменяя префикс через `--replace-registry-host`; integrity-хеши проверяются как обычно. Другой реестр: `docker compose build --build-arg NPM_REGISTRY=... site`.
 - Режим `server` (runner внутри gVisor): `docker compose -f docker-compose.yml -f docker-compose.server.yml up -d`, нужен runtime `runsc`.
 
@@ -34,6 +34,7 @@ docker compose up --build        # учебник на http://localhost:8080
 | `POST /api/run` | `{"lesson"?, "files": {"main.go": "..."}, "flags"?}` | `stdout`, `stderr`, `exitCode`, `timedOut`, `truncated`, `buildFailed`, `buildOutput`, `durationMs` |
 | `POST /api/test` | `{"lesson", "files": {"task.go": "..."}}` | `passed`, `buildFailed`, `tests: [{name, status, output, elapsed, hidden}]`, `durationMs` |
 | `POST /api/gotest` | `{"lesson"?, "files": {"main.go": "...", "main_test.go": "..."}, "flags"?, "mode": "test" \| "bench" \| "fuzz" \| "cover", "fuzz"?: "FuzzXxx"}` | поля `/api/run` (в `stdout` — вывод `go test` как в терминале) плюс `coverage` — отчёт `go tool cover -func` и `fuzzInputs` — входы, на которых фаззер нашёл ошибку |
+| `POST /api/vulncheck` | `{"lesson"?, "files": {"main.go": "...", "go.mod"?: "...", "go.sum"?: "..."}}` | `output` — отчёт `govulncheck ./...`, `found` — код вызывает уязвимые функции, `failed` — проверить не удалось, `dbModified` — дата снимка базы; 501, если в runner нет `govulncheck` |
 | `POST /api/fmt` | `{"files": {...}}` | `files`, `errors` |
 | `POST /api/solution` | `{"lesson"}` | `files` — эталон; сайт показывает его после успеха или трёх неудачных попыток |
 | `POST /api/trace` | как у `/api/run` | поля `/api/run` плюс `trace`: горутины, операторы `select` со счётчиками веток, события; при сбое — `traceError` |

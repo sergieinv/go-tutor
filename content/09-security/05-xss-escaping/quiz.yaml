@@ -1,0 +1,122 @@
+questions:
+  - id: href-filter
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"html/template"
+      	"os"
+      )
+
+      func main() {
+      	t := template.Must(template.New("a").Parse(`<a href="{{.}}">x</a> <a href="/s?q={{.}}">y</a>` + "\n"))
+      	t.Execute(os.Stdout, "javascript:alert(1)")
+      }
+    options:
+      - text: '<a href="#ZgotmplZ">x</a> <a href="/s?q=javascript%3aalert%281%29">y</a>'
+        correct: true
+        explain: "В начале `href` значение задаёт схему ссылки — фильтр пропускает только `http`, `https`, `mailto` и относительные адреса, остальное заменяет на `#ZgotmplZ`. В параметре запроса схема уже задана шаблоном, и значение просто кодируется как часть URL."
+      - text: '<a href="javascript:alert(1)">x</a> <a href="/s?q=javascript:alert(1)">y</a>'
+        explain: "Так вывел бы `text/template`. `html/template` знает, что начало `href` — это URL, и проверяет схему."
+      - text: '<a href="#ZgotmplZ">x</a> <a href="/s?q=#ZgotmplZ">y</a>'
+        explain: "Во втором атрибуте значение стоит после `?` — это параметр, а не схема. Фильтр работает только в начале URL; здесь значение экранируется как часть запроса."
+
+  - id: trusted-type
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"html/template"
+      	"os"
+      )
+
+      func main() {
+      	t := template.Must(template.New("p").Parse("<p>{{.A}}</p><p>{{.B}}</p>\n"))
+      	s := "<b>hi</b>"
+      	t.Execute(os.Stdout, map[string]any{"A": s, "B": template.HTML(s)})
+      }
+    options:
+      - text: "<p>&lt;b&gt;hi&lt;/b&gt;</p><p><b>hi</b></p>"
+        correct: true
+        explain: "Оба действия получили одинаковый экранировщик, но значение типа `template.HTML` он пропускает без изменений — тип означает «я ручаюсь за эту разметку». Приведение строки пользователя к нему — XSS."
+      - text: "<p>&lt;b&gt;hi&lt;/b&gt;</p><p>&lt;b&gt;hi&lt;/b&gt;</p>"
+        explain: "`template.HTML` — метка доверия: экранировщик видит этот тип и оставляет строку как есть."
+      - text: "<p><b>hi</b></p><p><b>hi</b></p>"
+        explain: "Обычная `string` в тексте HTML экранируется — `<` становится `&lt;`."
+
+  - id: script-json
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"html/template"
+      	"os"
+      )
+
+      type User struct {
+      	Name string `json:"name"`
+      }
+
+      func main() {
+      	t := template.Must(template.New("s").Parse("<script>const u = {{.}};</script>\n"))
+      	t.Execute(os.Stdout, User{Name: "</script>"})
+      }
+    options:
+      - text: '<script>const u = {"name":"\u003c/script\u003e"};</script>'
+        correct: true
+        explain: "В JS-контексте значение кодируется в JSON (с учётом тегов `json`), а `<` и `>` заменяются на `\\u003c`, `\\u003e`. Для JavaScript это та же строка, а браузер не увидит в тексте `</script>`."
+      - text: '<script>const u = {"name":"</script>"};</script>'
+        explain: "Так вышло бы с `template.JS` из JSON, закодированного с `SetEscapeHTML(false)`: тег закрылся бы на середине строки."
+      - text: '<script>const u = {{</script>}};</script>'
+        explain: "Структура в JS-контексте не печатается через `fmt`, а кодируется в JSON."
+      - text: '<script>const u = &#34;{Name:&lt;/script&gt;}&#34;;</script>'
+        explain: "HTML-экранирование в `<script>` не работает: браузер не раскодирует `&lt;` внутри скрипта. Поэтому `html/template` выбирает для этого контекста другой экранировщик — JSON."
+
+  - id: sniffed-type
+    kind: output
+    prompt: Какой `Content-Type` получит ответ?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"net/http"
+      	"net/http/httptest"
+      )
+
+      func main() {
+      	h := func(w http.ResponseWriter, r *http.Request) {
+      		w.Write([]byte("<html><body onload=alert(1)>"))
+      	}
+      	rec := httptest.NewRecorder()
+      	h(rec, httptest.NewRequest("GET", "/avatar.png", nil))
+      	fmt.Println(rec.Header().Get("Content-Type"))
+      }
+    options:
+      - text: "text/html; charset=utf-8"
+        correct: true
+        explain: "Если хендлер не задал `Content-Type`, первый `Write` вызывает `http.DetectContentType` по первым 512 байтам. Расширение в пути роли не играет. Для пользовательских файлов тип задают явно из белого списка и добавляют `X-Content-Type-Options: nosniff`."
+      - text: "image/png"
+        explain: "`net/http` не смотрит на путь запроса — только на содержимое ответа."
+      - text: "application/octet-stream"
+        explain: "Это тип для нераспознанных двоичных данных. Здесь `DetectContentType` узнал HTML по `<html`."
+      - text: "(пустая строка)"
+        explain: "Пустым заголовок не останется: без явного типа `net/http` угадывает его при первой записи."
+
+  - id: csp-role
+    kind: single
+    prompt: "Сервер отдаёт `Content-Security-Policy: script-src 'self'`. Что это даёт?"
+    options:
+      - text: Браузер не выполнит встроенные `<script>` и `onerror=…` в странице — даже если XSS-нагрузка в неё попала
+        correct: true
+        explain: "CSP — второй рубеж: экранирование не даёт нагрузке попасть в страницу, а политика не даёт ей выполниться, если экранирование где-то пропустили. Свои встроенные скрипты при такой политике выносят в файлы или помечают `nonce`."
+      - text: Сервер сам удалит из ответа теги `<script>`, пришедшие от пользователя
+        explain: "CSP — заголовок для браузера, сервер по нему ничего не фильтрует."
+      - text: Экранирование в шаблонах можно не делать
+        explain: "Политику легко ослабить (`'unsafe-inline'`), старые браузеры поддерживают её частично, а HTML-инъекция без скриптов (поддельная форма входа) CSP `script-src` не мешает. Экранирование остаётся основной защитой."

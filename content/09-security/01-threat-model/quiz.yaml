@@ -1,0 +1,102 @@
+questions:
+  - id: bola
+    kind: single
+    prompt: "Пользователь вошёл в систему, открыл `/api/invoices/1041` и поменял `id` на `1040` — сервер вернул чужой счёт. Какая это категория OWASP API Security Top 10:2023?"
+    options:
+      - text: "API1 — Broken Object Level Authorization"
+        correct: true
+        explain: "Пользователь известен, но доступ к конкретному объекту не проверен. Это и есть IDOR, в API Top 10 — первая строчка; в OWASP Top 10:2025 — A01 Broken Access Control."
+      - text: "API2 — Broken Authentication"
+        explain: "Аутентификация сработала правильно: сервер точно знает, кто пришёл. Сломана авторизация — проверка права на объект."
+      - text: "API5 — Broken Function Level Authorization"
+        explain: "Это про функции, недоступные роли (например, `/admin/...` для обычного пользователя). Здесь функция «читать свой счёт» разрешена — не проверен объект."
+
+  - id: mass-assignment
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"encoding/json"
+      	"fmt"
+      )
+
+      type User struct {
+      	Name  string `json:"name"`
+      	Admin bool   `json:"admin"`
+      }
+
+      func main() {
+      	u := User{Name: "bob"}
+      	body := `{"name": "Bob", "Admin": true}`
+      	if err := json.Unmarshal([]byte(body), &u); err != nil {
+      		fmt.Println("ошибка:", err)
+      		return
+      	}
+      	fmt.Println(u.Name, u.Admin)
+      }
+    options:
+      - text: Bob true
+        correct: true
+        explain: "Декодер заполняет любые экспортированные поля, а имена ключей сравнивает без учёта регистра — `Admin` попал в поле с тегом `admin`. Профиль из тела запроса нельзя декодировать прямо в модель с правами: нужен отдельный DTO только с разрешёнными полями (API3:2023, Broken Object Property Level Authorization)."
+      - text: Bob false
+        explain: "`encoding/json` сопоставляет ключи и теги без учёта регистра, если точного совпадения нет. `Admin` подошёл к полю `admin`."
+      - text: "ошибка: json: unknown field \"Admin\""
+        explain: "Неизвестные поля вызывают ошибку только с `Decoder.DisallowUnknownFields()`. Да и неизвестным этот ключ не является — он совпал с полем без учёта регистра."
+
+  - id: zero-owner
+    kind: output
+    prompt: "Функция `canDelete` проверяет право на удаление. Что выведет программа?"
+    code: |
+      package main
+
+      import "fmt"
+
+      type Note struct{ Owner string }
+
+      var notes = map[int]Note{1: {Owner: "alice"}}
+
+      func canDelete(user string, id int) bool {
+      	n := notes[id]
+      	return n.Owner == user
+      }
+
+      func main() {
+      	fmt.Println(canDelete("bob", 1), canDelete("", 7), canDelete("alice", 7))
+      }
+    options:
+      - text: false true false
+        correct: true
+        explain: "Для отсутствующего ключа карта возвращает нулевое `Note{}` с пустым `Owner` — и он «совпадает» с пустым именем анонима. Проверка доступа должна различать «нет объекта» (`n, ok := notes[id]`) и требовать непустого пользователя."
+      - text: false false false
+        explain: "`notes[7]` — нулевая структура с `Owner == \"\"`, а пустой `user` с ней совпадает."
+      - text: false true true
+        explain: "У отсутствующей заметки `Owner` пустой, а `\"alice\"` с пустой строкой не совпадает."
+
+  - id: identity-source
+    kind: multiple
+    prompt: "Хендлер решает, чьи данные показать. Откуда можно брать идентификатор текущего пользователя?"
+    options:
+      - text: "Из контекста запроса, куда его положила middleware аутентификации после проверки токена или сессии"
+        correct: true
+        explain: "Значение выставил сервер после проверки — клиент не может его подделать."
+      - text: "Из заголовка `X-User-ID`, который присылает фронтенд"
+        explain: "Любой заголовок пишет клиент: `curl -H 'X-User-ID: 1'`. Исключение — заголовок, который ставит доверенный прокси, а сервис недоступен в обход него; но и тогда это осознанное решение, а не значение от фронтенда."
+      - text: "Из параметра `?user=alice` в URL"
+        explain: "Строку запроса меняет кто угодно — это ровно IDOR, только в другом месте."
+      - text: "Из поля `sub` подписанного токена, если middleware проверила подпись, срок `exp` и аудиторию `aud`"
+        correct: true
+        explain: "После проверки подписи и сроков содержимое токена — утверждение сервера-эмитента, а не клиента. Как проверять токены — в уроке 07."
+
+  - id: not-found
+    kind: single
+    prompt: "Почему на запрос чужого документа хендлер из урока отвечает `404`, а не `403`?"
+    options:
+      - text: "`403` подтверждает, что объект с таким `id` существует, — это помогает перебору"
+        correct: true
+        explain: "По разнице `403`/`404` атакующий узнаёт, какие `id` заняты, сколько записей в системе и когда появляются новые. Одинаковый ответ для «нет» и «не твоё» этого не выдаёт. `403` уместен, когда сам факт существования не секрет — например, для запрещённой функции `/admin/...`."
+      - text: "`403` в Go нельзя вернуть без middleware авторизации"
+        explain: "`http.Error(w, \"forbidden\", http.StatusForbidden)` — обычный вызов, как любой другой статус."
+      - text: "По RFC 9110 `403` разрешён только при отсутствии аутентификации"
+        explain: "Наоборот: без аутентификации — `401`, а `403` — «вы известны, но нельзя». RFC 9110 прямо разрешает вместо `403` отвечать `404`, чтобы скрыть существование ресурса."

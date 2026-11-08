@@ -1,0 +1,13 @@
+sh -c: привет, Анна
+ВЗЛОМ
+argv:  привет, Анна; echo ВЗЛОМ
+без --:
+  archive: delete=true файлы=[]
+с --:
+  archive: delete=false файлы=["-delete"]
+hello.txt      IsLocal=true  Join: прочитан Root: прочитан
+../secret.txt  IsLocal=false Join: прочитан Root: openat ../secret.txt: path escapes from parent
+avatar.png     IsLocal=true  Join: прочитан Root: openat avatar.png: path escapes from parent
+распаковка docs/a.txt   записан
+распаковка ../evil.txt  mkdirat ..: path escapes from parent
+evil.txt снаружи создан: false

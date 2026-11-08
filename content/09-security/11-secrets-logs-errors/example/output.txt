@@ -1,0 +1,12 @@
+секрет SMTP_PASSWORD не задан
+{127.0.0.1:8080 [REDACTED] [REDACTED]}
+{Addr:127.0.0.1:8080 DBPassword:[REDACTED] APIToken:[REDACTED]}
+main.Config{Addr:"127.0.0.1:8080", DBPassword:[REDACTED], APIToken:[REDACTED]}
+[REDACTED]
+для подключения: 7 символов
+{"level":"INFO","msg":"config","cfg":{"Addr":"127.0.0.1:8080","DBPassword":"[REDACTED]","APIToken":"[REDACTED]"},"api":"[REDACTED]"}
+{"level":"INFO","msg":"login","user":"bob","req":{"Authorization":"[REDACTED]"},"password":"[REDACTED]"}
+{"level":"ERROR","msg":"request failed","request_id":"req-1","path":"/orders/42","err":"load order 42: pq: password authentication failed for user \"app\""}
+клиент: 500 {"error":"internal error","request_id":"req-1"}
+{"level":"ERROR","msg":"panic","request_id":"req-2","panic":"assignment to entry in nil map"}
+клиент: 500 {"error":"internal error","request_id":"req-2"}

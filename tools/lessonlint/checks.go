@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"go/format"
 	"os"
 	"path/filepath"
@@ -28,6 +29,9 @@ func (c *Checker) CheckLesson(ctx context.Context, l *Lesson, p *Problems) {
 		c.checkTask(ctx, l, p)
 	}
 	c.checkQuiz(ctx, l, p)
+	if l.Meta.Govulncheck != nil {
+		c.checkVulncheck(ctx, l, p)
+	}
 	if l.HasLive {
 		c.checkLive(ctx, l, p)
 	}
@@ -83,6 +87,33 @@ func (c *Checker) checkLive(ctx context.Context, l *Lesson, p *Problems) {
 		p.Errorf("viz.ts: неизвестный builder %q", builder)
 	case res.Trace.Total > livetrace.MaxEvents:
 		p.Warnf("live: %d событий, показаны будут первые %d — сократите программу", res.Trace.Total, livetrace.MaxEvents)
+	}
+}
+
+// checkVulncheck прогоняет govulncheck по примеру, как кнопка в песочнице,
+// и требует найти перечисленные в frontmatter уязвимости. Новые записи
+// в базе вывод меняют, поэтому сверяются только id, а не весь текст.
+func (c *Checker) checkVulncheck(ctx context.Context, l *Lesson, p *Problems) {
+	files, err := exampleFiles(l)
+	if err != nil {
+		return // уже отмечено в checkExample
+	}
+	res, err := c.Exec.Vulncheck(ctx, files)
+	switch {
+	case errors.Is(err, sandbox.ErrNoVulncheck):
+		p.Errorf("govulncheck: не найден — go install golang.org/x/vuln/cmd/govulncheck@v1.9.0 или флаг -govulncheck")
+		return
+	case err != nil:
+		p.Errorf("govulncheck: %v", err)
+		return
+	case res.Failed:
+		p.Errorf("govulncheck: не смог проверить пример (exit=%d)\n%s", res.ExitCode, indent(res.Output))
+		return
+	}
+	for _, id := range l.Meta.Govulncheck.Expect {
+		if !res.Found || !strings.Contains(res.Output, id+"\n") {
+			p.Errorf("govulncheck: не нашёл в вызовах примера %s\n%s", id, indent(res.Output))
+		}
 	}
 }
 
@@ -275,8 +306,57 @@ func (c *Checker) checkTask(ctx context.Context, l *Lesson, p *Problems) {
 		p.Errorf("task: шаблон task.go не компилируется с тестами\n%s", indent(res.BuildOutput))
 	case res.Passed:
 		p.Errorf("task: шаблон task.go проходит все тесты — задача решена заранее")
+	default:
+		checkExploits(l, files, res, p)
 	}
 }
+
+var exploitFunc = regexp.MustCompile(`(?m)^func (TestExploit\w*)\(t \*testing\.T\)`)
+
+// checkExploits проверяет задачи по безопасности: каждый эксплойт
+// (TestExploit… в hidden_test.go) срабатывает на шаблоне — тест падает, —
+// а на эталоне не срабатывает (это уже проверено: эталон проходит всё).
+// В задаче «найди и почини» (taskKind: fix) шаблон вдобавок проходит все
+// остальные тесты: уязвимый код работает, его надо починить, а не дописать.
+func checkExploits(l *Lesson, files sandbox.Files, res *sandbox.TestResult, p *Problems) {
+	exploits := map[string]bool{}
+	for _, m := range exploitFunc.FindAllStringSubmatch(files["hidden_test.go"], -1) {
+		exploits[m[1]] = true
+	}
+	if l.Meta.TaskKind == "fix" && len(exploits) == 0 {
+		p.Errorf("task: в задаче «найди и почини» нет эксплойтов func TestExploitXxx(t *testing.T) в hidden_test.go")
+	}
+	if len(exploits) == 0 {
+		return
+	}
+	status := map[string]string{}
+	for _, tc := range res.Tests {
+		if !strings.Contains(tc.Name, "/") {
+			status[tc.Name] = tc.Status
+		}
+	}
+	for name := range exploits {
+		switch status[name] {
+		case "fail":
+		case "":
+			p.Errorf("task: эксплойт %s не запускался на шаблоне — паника в другом тесте?%s", name, describeFailures(res))
+		default:
+			p.Errorf("task: эксплойт %s не срабатывает на шаблоне (%s)", name, status[name])
+		}
+	}
+	if l.Meta.TaskKind != "fix" {
+		return
+	}
+	for _, src := range []string{files["task_test.go"], files["hidden_test.go"]} {
+		for _, m := range testFunc.FindAllStringSubmatch(src, -1) {
+			if name := m[1]; !exploits[name] && status[name] != "pass" {
+				p.Errorf("task: шаблон «найди и почини» должен проходить функциональный тест %s, а он %q%s", name, status[name], describeFailures(res))
+			}
+		}
+	}
+}
+
+var testFunc = regexp.MustCompile(`(?m)^func (Test\w*)\(t \*testing\.T\)`)
 
 func describeFailures(res *sandbox.TestResult) string {
 	var b strings.Builder

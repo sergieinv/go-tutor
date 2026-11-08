@@ -35,12 +35,18 @@ func main() {
 		fmt.Fprint(w, "форма новой книги")
 	})
 
-	// `{path...}` — остаток пути вместе со слешами.
+	// `{path...}` — остаток пути вместе со слешами. Это
+	// ввод клиента: перед открытием файла проверяйте его
+	// (`filepath.IsLocal`, `os.Root`), иначе `..` выведет
+	// за пределы каталога.
 	mux.HandleFunc("GET /files/{path...}", func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, "файл %q", r.PathValue("path"))
 	})
 
 	// Хост в шаблоне: такие маршруты проверяются первыми.
+	// Хост берётся из заголовка `Host`, который задаёт клиент,
+	// — это маршрутизация, а не защита: проверку доступа к
+	// админке он не заменяет.
 	mux.HandleFunc("GET admin.local/{$}", func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, "админка")
 	})

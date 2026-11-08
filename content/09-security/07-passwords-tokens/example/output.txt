@@ -1,0 +1,12 @@
+bcrypt: $2a$10$ длина 60
+  верный: true
+  неверный: crypto/bcrypt: hashedPassword is not the hash of the given password
+  74 байта: bcrypt: password length exceeds 72 bytes
+argon2id: $argon2id$v=19$m=19456,t=2,p=1$…
+  верный: true неверный: false
+токен: 26 символов, в хранилище: 64
+  сессия: alice
+подписан: alice|1767229200
+  в срок: "alice" true
+  подмена: "" false
+  истёк: "" false

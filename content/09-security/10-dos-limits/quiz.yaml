@@ -1,0 +1,112 @@
+questions:
+  - id: redos
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"regexp"
+      	"strings"
+      )
+
+      func main() {
+      	re := regexp.MustCompile(`^(a+)+$`)
+      	input := strings.Repeat("a", 100_000) + "!"
+      	fmt.Println(re.MatchString(input))
+      }
+    options:
+      - text: "false"
+        correct: true
+        explain: "`regexp` построен на RE2: время линейно от длины входа, катастрофического возврата нет. Сто тысяч символов проверяются за миллисекунды. Длину входа ограничивать всё равно нужно — линейное время на гигабайте тоже велико."
+      - text: "true"
+        explain: "Строка кончается на `!`, а шаблон требует только `a` до конца строки (`$`)."
+      - text: Программа превысит лимит времени
+        explain: "Так было бы в движке с backtracking (.NET без `NonBacktracking`, PCRE, JavaScript). Go-`regexp` не делает возвратов."
+
+  - id: limit-reader-truncates
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"io"
+      	"strings"
+      )
+
+      func main() {
+      	body := strings.NewReader("0123456789")
+      	data, err := io.ReadAll(io.LimitReader(body, 4))
+      	fmt.Println(string(data), err)
+      }
+    options:
+      - text: 0123 <nil>
+        correct: true
+        explain: "`LimitReader` после лимита возвращает `io.EOF`, а `ReadAll` превращает его в `nil`. Слишком большое тело молча обрезано — превышение надо обнаружить самим: читать `max+1` и сравнить длину."
+      - text: "0123 EOF"
+        explain: "`io.ReadAll` не возвращает `io.EOF` — для него это нормальный конец."
+      - text: "0123 http: request body too large"
+        explain: "Эту ошибку возвращает `http.MaxBytesReader`, а не `io.LimitReader`."
+
+  - id: max-bytes-error
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"errors"
+      	"fmt"
+      	"io"
+      	"net/http"
+      	"net/http/httptest"
+      	"strings"
+      )
+
+      func main() {
+      	rec := httptest.NewRecorder()
+      	body := http.MaxBytesReader(rec, io.NopCloser(strings.NewReader("hello, world")), 5)
+      	data, err := io.ReadAll(body)
+      	var tooBig *http.MaxBytesError
+      	fmt.Println(len(data), errors.As(err, &tooBig), tooBig.Limit)
+      }
+    options:
+      - text: 5 true 5
+        correct: true
+        explain: "`MaxBytesReader` отдаёт ровно `Limit` байт и затем ошибку типа `*http.MaxBytesError` с полем `Limit` — по ней хендлер отвечает `413`."
+      - text: 0 true 5
+        explain: "Прочитанные до лимита байты возвращаются — ошибка приходит после них."
+      - text: 12 false 0
+        explain: "Тело длиннее лимита: чтение прервётся ошибкой."
+
+  - id: slowloris-timeout
+    kind: single
+    prompt: Клиент открывает тысячи соединений и в каждое шлёт заголовки по байту в 10 секунд. Какое поле `http.Server` прямо предназначено против этого?
+    options:
+      - text: "`ReadHeaderTimeout`"
+        correct: true
+        explain: "Ограничивает время чтения заголовков: не уложился — соединение закрыто. В отличие от `ReadTimeout`, не мешает медленной загрузке большого тела, у которой своё ограничение."
+      - text: "`IdleTimeout`"
+        explain: "Ограничивает простой keep-alive-соединения между запросами. Медленный клиент не простаивает — он всё время «шлёт» запрос."
+      - text: "`WriteTimeout`"
+        explain: "Ограничивает запись ответа. До ответа медленный клиент не доходит."
+      - text: "`MaxHeaderBytes`"
+        explain: "Ограничивает размер заголовков, а не время. Атака держит соединения, отправляя мало данных."
+
+  - id: server-defaults
+    kind: multiple
+    prompt: "Что верно для `&http.Server{Handler: h}` без других полей?"
+    options:
+      - text: Таймауты чтения, записи и простоя не ограничены
+        correct: true
+        explain: "Нулевые `ReadHeaderTimeout`, `ReadTimeout`, `WriteTimeout` и `IdleTimeout` — «без лимита» (`IdleTimeout` и `ReadHeaderTimeout` берут `ReadTimeout`, а он тоже ноль)."
+      - text: Заголовки ограничены примерно мегабайтом
+        correct: true
+        explain: "Нулевой `MaxHeaderBytes` означает `http.DefaultMaxHeaderBytes` — 1 МБ (плюс небольшой запас буфера). Сверх — ответ `431`."
+      - text: Тело запроса ограничено 30 МБ, как в Kestrel
+        explain: "Лимита на тело у `http.Server` нет — только `http.MaxBytesReader` или `http.MaxBytesHandler`."
+      - text: "Сервер распаковывает тело с `Content-Encoding: gzip`"
+        explain: "Сервер не трогает `Content-Encoding` запроса — распаковывает (и ограничивает) хендлер."

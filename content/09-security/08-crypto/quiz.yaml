@@ -1,0 +1,92 @@
+questions:
+  - id: gcm-sizes
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"bytes"
+      	"crypto/aes"
+      	"crypto/cipher"
+      	"fmt"
+      )
+
+      func main() {
+      	block, _ := aes.NewCipher(make([]byte, 32))
+      	a, _ := cipher.NewGCM(block)
+      	r, _ := cipher.NewGCMWithRandomNonce(block)
+      	fmt.Println(a.NonceSize(), a.Overhead(), r.NonceSize(), r.Overhead())
+
+      	msg := []byte("hi")
+      	box := r.Seal(nil, nil, msg, nil)
+      	fmt.Println(len(box), bytes.Equal(box, r.Seal(nil, nil, msg, nil)))
+      }
+    options:
+      - text: "12 16 0 28\n30 false"
+        correct: true
+        explain: "Обычный GCM ждёт 12-байтовый nonce от вызывающего и добавляет 16 байт тега. `NewGCMWithRandomNonce` (Go 1.24) сам генерирует nonce из `crypto/rand` и кладёт его перед шифртекстом, поэтому снаружи nonce не передаётся (`NonceSize` 0), а накладные расходы — 12 + 16 = 28 байт. 2 + 28 = 30, и каждый вызов даёт новый шифртекст."
+      - text: "12 16 12 16\n30 false"
+        explain: "У обёртки со случайным nonce `NonceSize` равен 0: передавать nonce в `Seal` нельзя (будет паника), он уже входит в `Overhead`."
+      - text: "12 16 0 28\n30 true"
+        explain: "Одинаковый шифртекст для одного и того же текста означал бы повтор nonce. Здесь nonce каждый раз новый, поэтому результаты различаются."
+      - text: "12 16 0 16\n18 false"
+        explain: "Nonce не исчезает — он записан в начало результата, и `Overhead` это учитывает: 28, а не 16."
+
+  - id: nonce-reuse
+    kind: output
+    prompt: "Два сообщения зашифрованы одним ключом и **одним** nonce. Что выведет программа?"
+    code: |
+      package main
+
+      import (
+      	"bytes"
+      	"crypto/aes"
+      	"crypto/cipher"
+      	"fmt"
+      )
+
+      func main() {
+      	block, _ := aes.NewCipher(make([]byte, 32))
+      	gcm, _ := cipher.NewGCM(block)
+      	nonce := make([]byte, 12)
+      	c1 := gcm.Seal(nil, nonce, []byte("yes"), nil)
+      	c2 := gcm.Seal(nil, nonce, []byte("no!"), nil)
+      	fmt.Println(c1[0]^c2[0] == 'y'^'n', bytes.Equal(c1[3:], c2[3:]))
+      }
+    options:
+      - text: "true false"
+        correct: true
+        explain: "Шифртекст GCM — открытый текст XOR гамма, а гамма определяется ключом и nonce. С одинаковым nonce гамма одна, и XOR шифртекстов равен XOR открытых текстов. Теги (`[3:]`) различаются: они зависят от шифртекста. Но по двум таким тегам атакующий может вычислить ключ аутентификации и подделывать сообщения."
+      - text: "false false"
+        explain: "AES-GCM не перемешивает текст блоками — это потоковый режим (CTR) плюс тег. Байт шифртекста зависит только от своего байта текста и гаммы."
+      - text: "true true"
+        explain: "Тег считается по шифртексту, а шифртексты разные — значит, и теги разные."
+
+  - id: self-signed-internal
+    kind: single
+    prompt: "Внутренний сервис отвечает по HTTPS с сертификатом от корпоративного CA, и клиент на Go падает с `x509: certificate signed by unknown authority`. Как правильно?"
+    options:
+      - text: "Добавить сертификат корпоративного CA в `x509.CertPool` и передать его в `tls.Config{RootCAs: pool}`"
+        correct: true
+        explain: "Клиент по-прежнему проверяет цепочку, имя хоста и срок — просто доверяет вашему CA. Вместе с системными CA можно так: `pool, _ := x509.SystemCertPool()` и `pool.AppendCertsFromPEM(caPEM)`."
+      - text: "`InsecureSkipVerify: true` — сеть внутренняя, атакующего в ней нет"
+        explain: "Без проверки сертификата TLS шифрует канал до кого угодно: любой, кто может перехватить трафик (скомпрометированный под, ARP-спуфинг, неверный DNS), читает и меняет запросы. «Внутренняя сеть безопасна» — та самая граница доверия, которой нет."
+      - text: "Перейти на `http://` внутри кластера, раз проверка мешает"
+        explain: "Это тот же отказ от защиты, только честнее. Шифрование и аутентификация сервера нужны и внутри: о mTLS в сервис-мешах говорят именно поэтому."
+      - text: "`InsecureSkipVerify: true` и `MinVersion: tls.VersionTLS13`"
+        explain: "Версия протокола не заменяет проверку сертификата: TLS 1.3 с неизвестным собеседником защищает от пассивного прослушивания, но не от подмены сервера."
+
+  - id: hash-not-mac
+    kind: single
+    prompt: "Ссылку подписывают так: `sig = sha256(secret + url)`, секрет длинный и случайный. Что не так?"
+    options:
+      - text: "Зная `sig` и длину `secret + url`, атакующий вычисляет подпись для `url + padding + \"&admin=1\"` без секрета (length extension)"
+        correct: true
+        explain: "SHA-256 построен по схеме Меркла — Дамгора: хеш — это внутреннее состояние после последнего блока. Из него можно продолжить вычисление, дописав данные. HMAC (`hmac.New(sha256.New, key)`) устроен иначе — два вложенных хеша с ключом, — и такой атаки у него нет."
+      - text: "SHA-256 обратим, и из подписи можно восстановить секрет"
+        explain: "Обратить SHA-256 нельзя. Проблема не в стойкости хеша, а в том, что хеш — не MAC."
+      - text: "Ничего: длинный случайный секрет делает подпись стойкой"
+        explain: "Длина секрета не помогает против length extension: атакующему не нужно знать секрет, достаточно его длины (её подбирают перебором небольших значений)."
+      - text: "Нужно `sha256(url + secret)` — секрет в конце защищает"
+        explain: "От length extension это спасает, но открывает другие проблемы: коллизия в `url` даёт коллизию подписей. Не изобретайте — используйте HMAC."

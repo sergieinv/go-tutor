@@ -1,0 +1,125 @@
+questions:
+  - id: join-escapes
+    kind: output
+    prompt: "Что выведет программа (Linux)?"
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"path/filepath"
+      )
+
+      func main() {
+      	name := "img/../../../etc/passwd"
+      	fmt.Println(filepath.Join("/srv/files", name))
+      	fmt.Println(filepath.IsLocal(name), filepath.IsLocal("img/../a.png"), filepath.IsLocal("-rf"))
+      }
+    options:
+      - text: |
+          /etc/passwd
+          false true true
+        correct: true
+        explain: "`Join` чистит путь: `img/..` сокращается, следующие два `..` съедают `files` и `srv`. `IsLocal` проверяет как раз это — после очистки путь не должен уйти вверх. `-rf` — обычное локальное имя: от инъекции в аргументы `IsLocal` не защищает."
+      - text: |
+          /srv/files/img/../../../etc/passwd
+          false true true
+        explain: "`Join` всегда вызывает `Clean` для результата — `..` сокращаются."
+      - text: |
+          /srv/etc/passwd
+          false true false
+        explain: "Три `..` поднимаются из `img`, `files` и `srv`: остаётся `/etc/passwd`. А `-rf` для `IsLocal` — просто имя файла."
+
+  - id: flag-stops
+    kind: output
+    prompt: "Утилита разбирает аргументы пакетом `flag`. Что выведет программа?"
+    code: |
+      package main
+
+      import (
+      	"flag"
+      	"fmt"
+      )
+
+      func parse(args ...string) {
+      	fs := flag.NewFlagSet("tool", flag.ContinueOnError)
+      	del := fs.Bool("delete", false, "")
+      	fs.Parse(args)
+      	fmt.Println(*del, fs.Args())
+      }
+
+      func main() {
+      	parse("-delete", "a.txt")
+      	parse("--", "-delete")
+      	parse("a.txt", "-delete")
+      }
+    options:
+      - text: |
+          true [a.txt]
+          false [-delete]
+          false [a.txt -delete]
+        correct: true
+        explain: "`--` заканчивает флаги, и `-delete` становится именем файла. Кроме того, `flag` прекращает разбор на первом позиционном аргументе — поэтому в третьем вызове `-delete` тоже имя. Другие парсеры (GNU getopt) переставляют аргументы и найдут флаг и после имени, так что полагаться на порядок нельзя — ставьте `--`."
+      - text: |
+          true [a.txt]
+          false [-delete]
+          true [a.txt]
+        explain: "Так ведут себя парсеры в стиле GNU getopt, а пакет `flag` останавливается на первом позиционном аргументе."
+      - text: |
+          true [a.txt]
+          true []
+          true [a.txt]
+        explain: "`--` для `flag` — конец флагов: всё после него попадает в `Args()`."
+
+  - id: no-shell
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"os/exec"
+      )
+
+      func main() {
+      	name := "Анна; echo $HOME"
+      	out, _ := exec.Command("echo", "привет,", name).Output()
+      	fmt.Print(string(out))
+      }
+    options:
+      - text: "привет, Анна; echo $HOME"
+        correct: true
+        explain: "Оболочки нет: `exec.Command` передаёт `name` одним элементом `argv`, и `;` и `$HOME` — просто символы. Инъекция в оболочку возможна, только если вы сами вызвали `sh -c` со вклеенным вводом."
+      - text: |
+          привет, Анна
+          /root
+        explain: "Так было бы с `exec.Command(\"/bin/sh\", \"-c\", \"echo привет, \"+name)` — оболочка разделила бы команды по `;` и раскрыла `$HOME`."
+      - text: "привет, Анна; echo /root"
+        explain: "Переменные раскрывает оболочка, а её здесь нет — `$HOME` дойдёт до `echo` как есть."
+
+  - id: symlink-defense
+    kind: single
+    prompt: "В каталоге загрузок лежит `avatar.png` — симлинк на `../config/secrets.env`. Пользователь просит файл `avatar.png`. Что не даст его прочитать?"
+    options:
+      - text: "`root, _ := os.OpenRoot(dir)` и `root.ReadFile(name)`"
+        correct: true
+        explain: "`os.Root` разбирает путь по элементам относительно дескриптора каталога и возвращает ошибку `path escapes from parent`, если симлинк ведёт наружу."
+      - text: "`filepath.IsLocal(name)` перед `os.ReadFile(filepath.Join(dir, name))`"
+        explain: "`IsLocal` смотрит только на строку: `avatar.png` — локальное имя. Куда ведёт симлинк, он не знает."
+      - text: "`strings.HasPrefix(filepath.Clean(filepath.Join(dir, name)), dir+\"/\")`"
+        explain: "`Clean` тоже работает со строкой и симлинки не раскрывает: путь `dir/avatar.png` проходит проверку."
+      - text: "`filepath.EvalSymlinks`, проверка префикса и затем `os.ReadFile`"
+        explain: "Этот вариант поймает симлинк, но между проверкой и открытием файл можно подменить (TOCTOU). Надёжная защита — проверка в момент открытия, как в `os.Root`."
+
+  - id: zip-default
+    kind: single
+    prompt: "Что сделает `zip.NewReader` (без настроек `GODEBUG`) с архивом, где есть запись `../../.bashrc`?"
+    options:
+      - text: Вернёт читатель без ошибки — имя проверяет тот, кто распаковывает
+        correct: true
+        explain: "Проверка имён включается только с `GODEBUG=zipinsecurepath=0`, и даже тогда `NewReader` возвращает читатель вместе с `zip.ErrInsecurePath`. Распаковка — ваш код, и проверка тоже."
+      - text: Вернёт ошибку `zip.ErrInsecurePath` и не отдаст читатель
+        explain: "Ошибку `ErrInsecurePath` даёт только `GODEBUG=zipinsecurepath=0`, и читатель при этом всё равно возвращается."
+      - text: Молча очистит имя до `.bashrc`
+        explain: "`archive/zip` не меняет имена записей — `f.Name` будет ровно таким, как в архиве."

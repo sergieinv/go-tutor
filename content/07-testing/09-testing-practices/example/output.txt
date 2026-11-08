@@ -1,0 +1,16 @@
+=== RUN   TestPlace
+--- PASS: TestPlace (0.00s)
+=== RUN   TestPlaceInvalid
+=== RUN   TestPlaceInvalid/пустой_клиент
+=== RUN   TestPlaceInvalid/нулевая_сумма
+=== RUN   TestPlaceInvalid/отрицательная_сумма
+--- PASS: TestPlaceInvalid (0.00s)
+    --- PASS: TestPlaceInvalid/пустой_клиент (0.00s)
+    --- PASS: TestPlaceInvalid/нулевая_сумма (0.00s)
+    --- PASS: TestPlaceInvalid/отрицательная_сумма (0.00s)
+=== RUN   TestHistory
+--- PASS: TestHistory (0.00s)
+=== RUN   TestRepoIntegration
+    main_test.go:154: интеграционный: нужна ORDERS_TEST_DSN и запуск без -short
+--- SKIP: TestRepoIntegration (0.00s)
+PASS

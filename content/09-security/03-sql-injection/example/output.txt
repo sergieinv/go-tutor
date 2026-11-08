@@ -1,0 +1,21 @@
+склейка:
+  SQL:  SELECT name FROM users WHERE name = '' OR 1=1 --'
+  args: []
+  → строк: 3 ["alice" "bob" "100%_real"]
+плейсхолдер:
+  SQL:  SELECT name FROM users WHERE name = ?
+  args: ["' OR 1=1 --"]
+  → строк: 0 []
+сортировка:
+  SQL:  SELECT name FROM users ORDER BY age DESC, id
+  args: []
+  → строк: 3 ["100%_real" "alice" "bob"]
+  сортировка "age; DROP TABLE users" не из списка — отказ
+LIKE:
+  SQL:  SELECT name FROM users WHERE name LIKE ? ESCAPE '\' ORDER BY id
+  args: ["%\\%\\_%"]
+  → строк: 1 ["100%_real"]
+IN:
+  SQL:  SELECT name FROM users WHERE id IN (?,?) ORDER BY id
+  args: [3, 1]
+  → строк: 2 ["alice" "100%_real"]

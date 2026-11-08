@@ -1,6 +1,7 @@
 ---
 // Аннотированный пример: пояснение слева, код справа, сегмент за сегментом.
-// У примера с тестами файлов несколько: main.go и *_test.go, каждый под своим заголовком.
+// У примера с тестами или своим go.mod файлов несколько: main.go, *_test.go и go.mod,
+// каждый под своим заголовком.
 import { segments } from "../lib/annotate";
 import { highlight, inlineMarkdown } from "../lib/markdown";
 
@@ -8,11 +9,14 @@ interface Props {
   source: string;
   output: string;
   tests?: Record<string, string>;
+  mod?: string;
 }
-const { source, output, tests = {} } = Astro.props;
+const { source, output, tests = {}, mod } = Astro.props;
 const testMode = Object.keys(tests).length > 0;
+const all: Record<string, string> = { "main.go": source, ...tests, ...(mod ? { "go.mod": mod } : {}) };
+const multi = Object.keys(all).length > 1;
 const files = await Promise.all(
-  Object.entries({ "main.go": source, ...tests }).map(async ([name, src]) => ({
+  Object.entries(all).map(async ([name, src]) => ({
     name,
     rows: await Promise.all(
       segments(src).map(async (s) => ({
@@ -28,7 +32,7 @@ const files = await Promise.all(
   {
     files.map((f) => (
       <>
-        {testMode && (
+        {multi && (
           <h3 class="file">
             <code>{f.name}</code>
           </h3>

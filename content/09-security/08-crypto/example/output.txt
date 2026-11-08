@@ -1,0 +1,8 @@
+49 байт = 12 nonce + 21 текст + 16 тег → card=4111111111111111 <nil>
+чужой aad: cipher: message authentication failed
+изменён бит: cipher: message authentication failed
+повтор nonce, без ключа: "pay mallory 9000"
+случайный nonce, восстановлено: false
+подпись чужого пути совпала: false
+клиент по умолчанию: отказ = true
+свой RootCAs: 200 ok TLS 1.3

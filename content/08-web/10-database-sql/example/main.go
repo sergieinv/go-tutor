@@ -96,6 +96,11 @@ func main() {
 }
 
 func transfer(ctx context.Context, db *sql.DB, from, to, amount int64) error {
+	// Отрицательная сумма развернула бы перевод: списала
+	// бы с `to` в пользу `from`. Ввод проверяем до базы.
+	if amount <= 0 || from == to {
+		return errors.New("некорректная сумма или счёт")
+	}
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return err

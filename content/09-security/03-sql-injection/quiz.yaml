@@ -1,0 +1,141 @@
+questions:
+  - id: escape-quotes
+    kind: output
+    prompt: "Разработчик «экранирует» ввод, удваивая кавычки. Что выведет программа?"
+    code: |
+      package main
+
+      import (
+      	"database/sql"
+      	"fmt"
+      	"strings"
+
+      	_ "modernc.org/sqlite"
+      )
+
+      func main() {
+      	db, _ := sql.Open("sqlite", ":memory:")
+      	db.SetMaxOpenConns(1)
+      	db.Exec(`CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT);
+      		INSERT INTO users (name) VALUES ('carol'), ('alice'), ('bob')`)
+
+      	id := "0 OR 1=1" // пришло из ?id=
+      	safe := strings.ReplaceAll(id, "'", "''")
+      	var n int
+      	// УЯЗВИМО: склейка, «экранирование» не помогает
+      	err := db.QueryRow("SELECT count(*) FROM users WHERE id = " + safe).Scan(&n)
+      	fmt.Println(n, err)
+      }
+    options:
+      - text: 3 <nil>
+        correct: true
+        explain: "Удвоение кавычек защищает только внутри строкового литерала. Здесь значение стоит в числовом контексте без кавычек, и `0 OR 1=1` — уже SQL. Самодельное экранирование всегда отстаёт от грамматики конкретной СУБД; плейсхолдер `id = ?` работает в любом контексте."
+      - text: 0 <nil>
+        explain: "Строки с `id = 0` нет, но условие `id = 0 OR 1=1` истинно для всех строк."
+      - text: "0 SQL logic error: near \"OR\": syntax error"
+        explain: "Синтаксис корректен: `WHERE id = 0 OR 1=1` — обычное логическое выражение."
+
+  - id: order-placeholder
+    kind: output
+    prompt: "Сортировку передали плейсхолдером. Что выведет программа?"
+    code: |
+      package main
+
+      import (
+      	"database/sql"
+      	"fmt"
+
+      	_ "modernc.org/sqlite"
+      )
+
+      func main() {
+      	db, _ := sql.Open("sqlite", ":memory:")
+      	db.SetMaxOpenConns(1)
+      	db.Exec(`CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT);
+      		INSERT INTO users (name) VALUES ('carol'), ('alice'), ('bob')`)
+
+      	rows, err := db.Query(`SELECT name FROM users ORDER BY ?`, "name")
+      	if err != nil {
+      		fmt.Println("ошибка:", err)
+      		return
+      	}
+      	defer rows.Close()
+      	var names []string
+      	for rows.Next() {
+      		var n string
+      		rows.Scan(&n)
+      		names = append(names, n)
+      	}
+      	fmt.Println(names)
+      }
+    options:
+      - text: "[carol alice bob]"
+        correct: true
+        explain: "Плейсхолдер — всегда значение, а не идентификатор: `ORDER BY 'name'` сортирует по константной строке, одинаковой у всех строк, и порядок остаётся порядком чтения таблицы. Ни ошибки, ни сортировки. Имена колонок и `ASC`/`DESC` выбирают из allowlist."
+      - text: "[alice bob carol]"
+        explain: "Так было бы с `ORDER BY name` в тексте запроса. Связанный параметр не может стать именем колонки — в этом и смысл плейсхолдера."
+      - text: "ошибка: SQL logic error"
+        explain: "Выражение-константа в `ORDER BY` синтаксически допустимо, SQLite ошибку не вернёт — поэтому такую ошибку легко не заметить."
+
+  - id: like-wildcard
+    kind: output
+    prompt: "Поиск по подстроке с плейсхолдером. Пользователь ввёл `_`. Что выведет программа?"
+    code: |
+      package main
+
+      import (
+      	"database/sql"
+      	"fmt"
+
+      	_ "modernc.org/sqlite"
+      )
+
+      func main() {
+      	db, _ := sql.Open("sqlite", ":memory:")
+      	db.SetMaxOpenConns(1)
+      	db.Exec(`CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT);
+      		INSERT INTO users (name) VALUES ('carol'), ('alice'), ('bob')`)
+
+      	input := "_"
+      	var n int
+      	err := db.QueryRow(`SELECT count(*) FROM users WHERE name LIKE ?`, "%"+input+"%").Scan(&n)
+      	fmt.Println(n, err)
+      }
+    options:
+      - text: 3 <nil>
+        correct: true
+        explain: "Инъекции нет — значение пришло плейсхолдером, — но внутри `LIKE` у значения свои метасимволы: `_` — любой один символ, `%` — любая строка. Ввод `_` находит все непустые имена. Экранируйте `\\`, `%`, `_` и пишите `LIKE ? ESCAPE '\\'`."
+      - text: 0 <nil>
+        explain: "Так было бы, если бы `_` искался буквально. Без экранирования это шаблон «хотя бы один символ»."
+      - text: "0 SQL logic error"
+        explain: "Шаблон `%_%` корректен; ошибки нет, есть неожиданно широкий результат."
+
+  - id: why-placeholder
+    kind: single
+    prompt: "Почему плейсхолдер `?` защищает от SQL-инъекции?"
+    options:
+      - text: "Значение не участвует в разборе SQL: структура запроса определена до подстановки, а значение занимает готовый слот"
+        correct: true
+        explain: "СУБД разбирает текст с `?` и строит план; значение передаётся отдельно и сравнивается как данные. Даже драйверы, которые подставляют значения на стороне клиента (например, MySQL с `interpolateParams=true`), делают это по правилам литералов СУБД, а не вашей склейкой."
+      - text: "`database/sql` удаляет из значений кавычки и точки с запятой"
+        explain: "Значение сохраняется байт в байт: `' OR 1=1 --` попадёт в базу и найдётся ровно таким. Ничего не удаляется — значение просто не разбирается как SQL."
+      - text: "Драйвер проверяет значения регулярным выражением на SQL-ключевые слова"
+        explain: "Никаких чёрных списков нет — и они бы не работали: `OR` бывает в имени «Oregon». Защита структурная, а не фильтрующая."
+
+  - id: not-placeholders
+    kind: multiple
+    prompt: "Какие части запроса нельзя передать плейсхолдером — только выбрать из allowlist?"
+    options:
+      - text: "Имя таблицы"
+        correct: true
+        explain: "Идентификаторы — часть структуры запроса; СУБД должна знать их на этапе подготовки."
+      - text: "Колонка в `ORDER BY`"
+        correct: true
+        explain: "Плейсхолдер в `ORDER BY` станет константой, а не колонкой — см. вопрос выше."
+      - text: "`ASC` / `DESC`"
+        correct: true
+        explain: "Ключевые слова — синтаксис. Карта `\"-price\" → \"price DESC\"` решает обе задачи сразу."
+      - text: "Значения внутри `IN (...)`"
+        explain: "Каждое значение — свой `?`: `IN (?, ?, ?)`. Список плейсхолдеров генерируют по длине среза."
+      - text: "Число в `LIMIT`"
+        explain: "`LIMIT ?` поддерживают SQLite, PostgreSQL и MySQL — это значение. Проверьте его диапазон, чтобы клиент не запросил миллион строк."

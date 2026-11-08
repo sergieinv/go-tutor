@@ -1,0 +1,82 @@
+questions:
+  - id: bcrypt-truncation
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"strings"
+
+      	"golang.org/x/crypto/bcrypt"
+      )
+
+      func main() {
+      	pw := strings.Repeat("a", 72)
+      	hash, err := bcrypt.GenerateFromPassword([]byte(pw), bcrypt.MinCost)
+      	if err != nil {
+      		panic(err)
+      	}
+      	fmt.Println(bcrypt.CompareHashAndPassword(hash, []byte(pw+"-любой хвост")))
+      }
+    options:
+      - text: "<nil>"
+        correct: true
+        explain: "bcrypt использует только первые 72 байта пароля. `GenerateFromPassword` длинный пароль отвергает, а `CompareHashAndPassword` — нет: он молча обрезает ввод, и всё, что дальше 72-го байта, ни на что не влияет. Ограничивайте длину пароля при регистрации (не больше 72 байт — именно байт, кириллица занимает по два) или берите argon2id."
+      - text: "bcrypt: password length exceeds 72 bytes"
+        explain: "Эту ошибку возвращает только `GenerateFromPassword`. Проверка при сравнении длину не контролирует."
+      - text: "crypto/bcrypt: hashedPassword is not the hash of the given password"
+        explain: "Так было бы, если бы bcrypt учитывал весь пароль. Но хвост после 72-го байта отбрасывается, и пароли совпадают."
+
+  - id: constant-time-empty
+    kind: output
+    prompt: "Хеш пароля в базе повреждён и после декодирования оказался пустым. Что выведет программа?"
+    code: |
+      package main
+
+      import (
+      	"crypto/subtle"
+      	"fmt"
+      )
+
+      func main() {
+      	stored := []byte{}      // ключ из повреждённой записи
+      	computed := []byte(nil) // пересчитан с длиной len(stored)
+      	fmt.Println(subtle.ConstantTimeCompare(stored, computed),
+      		subtle.ConstantTimeCompare([]byte("abc"), []byte("ab")))
+      }
+    options:
+      - text: "1 0"
+        correct: true
+        explain: "Два пустых среза равны — функция честно возвращает 1. Если длину ключа брать из хранимой строки, пустая запись даст «пароль верный» для любого ввода. Поэтому проверяйте длину ожидаемого значения отдельно. Срезы разной длины дают 0 сразу — длина не секрет."
+      - text: "0 0"
+        explain: "`ConstantTimeCompare` не считает пустые срезы ошибкой: равные по длине и содержимому срезы дают 1, даже если длина 0."
+      - text: "1 1"
+        explain: "Срезы разной длины никогда не равны: функция возвращает 0, не сравнивая байты."
+
+  - id: session-token-source
+    kind: single
+    prompt: "Как получить идентификатор сессии для cookie?"
+    options:
+      - text: "`rand.Text()` из `crypto/rand` (или 16+ байт из `crypto/rand.Read`, закодированных в base64)"
+        correct: true
+        explain: "Криптостойкий генератор ОС, 128+ бит энтропии — токен не угадать и не перебрать. `rand.Text` (Go 1.24) возвращает 26 символов base32, это 130 бит."
+      - text: "`rand.Int63()` из `math/rand` после `rand.Seed(time.Now().UnixNano())`"
+        explain: "Генератор детерминирован: зная примерное время запуска, сид перебирают, а по одному-двум токенам восстанавливают состояние и предсказывают следующие. `math/rand` и `math/rand/v2` — для симуляций и балансировки, не для секретов."
+      - text: "SHA-256 от имени пользователя и времени входа"
+        explain: "Хеш не добавляет энтропии: входные данные угадываемы, а значит, и токен тоже. Хеширование — не источник случайности."
+      - text: "Автоинкрементный id строки сессий в базе"
+        explain: "Соседние сессии получаются прибавлением единицы — классический перебор чужих сессий."
+
+  - id: store-session
+    kind: single
+    prompt: "Что хранить в таблице сессий, чтобы утечка базы не дала готовых сессий?"
+    options:
+      - text: "SHA-256 от токена; при входе считаем хеш присланного токена и ищем по нему"
+        correct: true
+        explain: "У токена из `crypto/rand` полная энтропия, поэтому быстрого хеша достаточно: перебор 2¹²⁸ вариантов невозможен. Поиск по хешу — обычный индекс."
+      - text: "bcrypt от токена"
+        explain: "bcrypt нужен для слабых паролей, у токена энтропии достаточно. Хуже того, у bcrypt случайная соль: по присланному токену хеш не найти индексом — пришлось бы сравнивать со всеми сессиями."
+      - text: "Сам токен — он случайный и ничего не раскрывает"
+        explain: "Случайность защищает от угадывания, а не от утечки: прочитав таблицу, атакующий войдёт под любым пользователем."

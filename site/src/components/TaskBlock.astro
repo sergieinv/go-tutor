@@ -9,15 +9,25 @@ interface Props {
   lesson: string;
   statement: string; // HTML раздела «Задание»
   task: Task;
+  /** Задача «найди и почини»: в заготовке рабочий, но уязвимый код. */
+  fix?: boolean;
 }
-const { lesson, statement, task } = Astro.props;
+const { lesson, statement, task, fix } = Astro.props;
 const template = await highlight(task.template.trimEnd(), "go");
 const tests = await highlight(task.tests.trimEnd(), "go");
 const hints = await renderHints(task.hints);
 ---
 
 <section class="task" aria-label="Задание" data-task data-lesson={lesson}>
-  <h2>Задание <span class="task-state muted" data-state></span></h2>
+  <h2>Задание {fix && <span class="badge fix">найди и почини</span>} <span class="task-state muted" data-state></span></h2>
+  {
+    fix && (
+      <p class="muted fix-note">
+        Заготовка работает и проходит функциональные тесты, но уязвима. Скрытые тесты — эксплойты: они атакуют код
+        и падают, пока уязвимость не закрыта.
+      </p>
+    )
+  }
   <div class="prose" set:html={statement} />
 
   <script type="application/json" data-initial set:html={scriptJSON(task.template)} />
@@ -171,6 +181,16 @@ const hints = await renderHints(task.hints);
 </script>
 
 <style>
+  .badge.fix {
+    vertical-align: middle;
+    font-weight: normal;
+    color: var(--bad);
+    border-color: currentColor;
+  }
+  .fix-note {
+    margin-top: -0.5rem;
+    font-size: 0.9rem;
+  }
   .tests-source,
   .hints,
   .solution {

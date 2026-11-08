@@ -1,4 +1,5 @@
-// Package api — HTTP-интерфейс runner: /api/run, /api/test, /api/gotest, /api/fmt, /api/trace, /api/race.
+// Package api — HTTP-интерфейс runner: /api/run, /api/test, /api/gotest,
+// /api/vulncheck, /api/fmt, /api/trace, /api/race.
 package api
 
 import (
@@ -40,6 +41,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/run", s.handleRun)
 	mux.HandleFunc("POST /api/test", s.handleTest)
 	mux.HandleFunc("POST /api/gotest", s.handleGoTest)
+	mux.HandleFunc("POST /api/vulncheck", s.handleVulncheck)
 	mux.HandleFunc("POST /api/fmt", s.handleFmt)
 	mux.HandleFunc("POST /api/solution", s.handleSolution)
 	mux.HandleFunc("POST /api/trace", s.handleTrace)
@@ -170,6 +172,30 @@ func (s *Server) handleGoTest(w http.ResponseWriter, r *http.Request) {
 	}
 	s.log.Info("gotest", "lesson", req.Lesson, "mode", req.Mode, "ms", res.DurationMs, "exit", res.ExitCode,
 		"buildFailed", res.BuildFailed, "timedOut", res.TimedOut)
+	writeJSON(w, http.StatusOK, res)
+}
+
+// handleVulncheck проверяет модуль примера govulncheck по снимку базы
+// уязвимостей из образа. Код не исполняется, флаги урока не нужны.
+func (s *Server) handleVulncheck(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Lesson string        `json:"lesson"`
+		Files  sandbox.Files `json:"files"`
+	}
+	if !decode(w, r, &req) {
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), s.queueTimeout)
+	defer cancel()
+	res, err := s.exec.Vulncheck(ctx, req.Files)
+	if errors.Is(err, sandbox.ErrNoVulncheck) {
+		writeError(w, http.StatusNotImplemented, "в этом runner нет govulncheck")
+		return
+	}
+	if s.fail(w, r, err) {
+		return
+	}
+	s.log.Info("vulncheck", "lesson", req.Lesson, "ms", res.DurationMs, "exit", res.ExitCode, "found", res.Found)
 	writeJSON(w, http.StatusOK, res)
 }
 

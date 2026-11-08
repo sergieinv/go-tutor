@@ -1,0 +1,13 @@
+<p>Привет, <script>alert(1)</script>!</p>
+<p>Привет, &lt;script&gt;alert(1)&lt;/script&gt;!</p>
+<p>Tom &amp; &#34;Jerry&#34;</p>
+<a title="Tom &amp; &#34;Jerry&#34;"
+   href="/u?name=Tom%20%26%20%22Jerry%22">профиль</a>
+<a href="#ZgotmplZ">сайт</a>
+<script>let user = "Tom \u0026 \"Jerry\"";</script>
+<div>&lt;img src=x onerror=alert(1)&gt;<br>вторая строка</div>
+unsafe: <img src=x onerror=alert(1)>
+<script>const p = {"admin":false,"name":"\u003c/script\u003e\u003cb\u003e"};</script>
+avatar: "text/html; charset=utf-8" nosniff=""
+avatar: "application/octet-stream" nosniff="nosniff"
+CSP: default-src 'self'; script-src 'self'; object-src 'none'; base-uri 'none'

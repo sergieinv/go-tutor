@@ -22,7 +22,7 @@ Console.WriteLine(std);                                                  // +/+/
 Console.WriteLine(std.TrimEnd('=').Replace('+', '-').Replace('/', '_')); // -_-_AQ
 
 // HMAC и сравнение за постоянное время
-var key = Encoding.UTF8.GetBytes("секрет");
+var key = Encoding.UTF8.GetBytes("секрет"); // для примера; настоящий ключ — из хранилища секретов
 var sig = HMACSHA256.HashData(key, data);
 var again = HMACSHA256.HashData(key, data);
 Console.WriteLine(CryptographicOperations.FixedTimeEquals(sig, again)); // hmac.Equal

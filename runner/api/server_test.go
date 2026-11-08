@@ -189,3 +189,13 @@ func TestGoTest(t *testing.T) {
 		t.Errorf("плохая цель fuzz: status %d, %v", code, msg)
 	}
 }
+
+// Без govulncheck в конфигурации /api/vulncheck честно отвечает 501.
+func TestVulncheckNotConfigured(t *testing.T) {
+	srv := newTestServer(t)
+	var out map[string]string
+	code := post(t, srv, "/api/vulncheck", map[string]any{"files": sandbox.Files{"main.go": "package main\n\nfunc main() {}\n"}}, &out)
+	if code != http.StatusNotImplemented || out["error"] == "" {
+		t.Fatalf("code = %d, out = %v", code, out)
+	}
+}

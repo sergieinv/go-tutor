@@ -2,7 +2,7 @@
 // пример даёт ожидаемый вывод, эталон проходит тесты, шаблон задачи
 // компилируется и не проходит тесты, ответы квизов совпадают с запуском.
 //
-//	go run ./tools/lessonlint [-update] [-run 05-concurrency/] [-j 4] [content]
+//	go run ./tools/lessonlint [-update] [-run 05-concurrency/] [-j 4] [-govulncheck path] [-vulndb url] [content]
 package main
 
 import (
@@ -10,6 +10,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	osexec "os/exec"
 	"os/signal"
 	"runtime"
 	"slices"
@@ -23,6 +24,8 @@ func main() {
 	update := flag.Bool("update", false, "перезаписать example/output.txt реальным выводом")
 	only := flag.String("run", "", "проверять только уроки, чей id содержит подстроку")
 	jobs := flag.Int("j", runtime.NumCPU(), "сколько уроков проверять параллельно")
+	govulncheck := flag.String("govulncheck", "", "путь к govulncheck; по умолчанию ищется в PATH")
+	vulndb := flag.String("vulndb", "", "база уязвимостей для govulncheck -db; по умолчанию https://vuln.go.dev")
 	flag.Parse()
 	root := "content"
 	if flag.NArg() > 0 {
@@ -50,6 +53,10 @@ func main() {
 
 	cfg := sandbox.DefaultConfig()
 	cfg.Slots = max(*jobs, 1)
+	cfg.Govulncheck, cfg.VulnDB = *govulncheck, *vulndb
+	if cfg.Govulncheck == "" {
+		cfg.Govulncheck, _ = osexec.LookPath("govulncheck")
+	}
 	exec, err := sandbox.New(cfg)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "lessonlint:", err)

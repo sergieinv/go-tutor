@@ -1,0 +1,12 @@
+Set-Cookie: session=s3cr3t; Path=/; HttpOnly; Secure; SameSite=Lax
+запрос               без защиты с защитой
+своя форма           200        200
+форма на evil.test   200        403
+старый браузер       200        403
+поддомен             200        403
+доверенный партнёр   200        200
+curl                 200        200
+CORS:
+  https://app.example            отражение: "https://app.example"          список: "https://app.example"
+  https://app.example.evil.test  отражение: "https://app.example.evil.test" список: ""
+  null                           отражение: "null"                         список: ""

@@ -54,7 +54,10 @@ func serve(ln net.Listener, wg *sync.WaitGroup) {
 			return // listener закрыт — остановка
 		}
 		if err != nil {
-			continue // временная ошибка: например, кончились дескрипторы
+			// Временная ошибка: например, кончились дескрипторы.
+			// Пауза, чтобы не крутить цикл вхолостую на 100% CPU.
+			time.Sleep(10 * time.Millisecond)
+			continue
 		}
 		sem <- struct{}{}
 		wg.Go(func() {

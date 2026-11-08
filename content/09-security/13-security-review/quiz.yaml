@@ -1,0 +1,95 @@
+questions:
+  - id: escape-order
+    kind: output
+    prompt: Нужно показать текст заметки, заменив переводы строк на `<br>`. Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"html/template"
+      	"strings"
+      )
+
+      func main() {
+      	body := "a\n<b>"
+      	x := template.HTMLEscapeString(strings.ReplaceAll(body, "\n", "<br>"))
+      	y := strings.ReplaceAll(template.HTMLEscapeString(body), "\n", "<br>")
+      	fmt.Println(x)
+      	fmt.Println(y)
+      }
+    options:
+      - text: |
+          a&lt;br&gt;&lt;b&gt;
+          a<br>&lt;b&gt;
+        correct: true
+        explain: "Порядок важен: сначала экранировать ввод, потом добавлять свою разметку. В `x` экранирование испортило собственный `<br>`, в `y` — всё верно: `<b>` пользователя стал текстом, перевод строки — тегом. Результат `y` можно оборачивать в `template.HTML`."
+      - text: |
+          a<br><b>
+          a<br>&lt;b&gt;
+        explain: "`HTMLEscapeString` экранирует всё, что получил, включая только что вставленный `<br>`."
+      - text: |
+          a&lt;br&gt;&lt;b&gt;
+          a&lt;br&gt;&lt;b&gt;
+        explain: "Во втором случае `<br>` добавляется уже после экранирования и остаётся тегом."
+
+  - id: join-not-safe
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"path/filepath"
+      )
+
+      func main() {
+      	for _, name := range []string{"../secret.env", "/etc/passwd"} {
+      		fmt.Println(filepath.Join("/srv/files", name), filepath.IsLocal(name))
+      	}
+      }
+    options:
+      - text: |
+          /srv/secret.env false
+          /srv/files/etc/passwd false
+        correct: true
+        explain: "`Join` чистит путь (`Clean`), и `..` честно поднимается из каталога. Абсолютный путь `Join` приклеивает внутрь, но `IsLocal` всё равно его отвергает. Ни `Join`, ни `IsLocal` не знают о символических ссылках — их учитывает только `os.Root`."
+      - text: |
+          /srv/files/../secret.env false
+          /etc/passwd false
+        explain: "`Join` вызывает `Clean`, поэтому `..` схлопывается; и он не заменяет путь абсолютным вторым аргументом, в отличие от `Path.Combine` в .NET."
+      - text: |
+          /srv/files/secret.env true
+          /srv/files/etc/passwd true
+        explain: "`Join` не отбрасывает `..` — он вычисляет его. А `IsLocal` для обоих имён возвращает `false`."
+
+  - id: forbidden-oracle
+    kind: single
+    prompt: "Пользователь запрашивает `GET /notes/42`, а заметка 42 принадлежит другому. Какой ответ лучше?"
+    options:
+      - text: "`404`, такой же, как для несуществующей заметки"
+        correct: true
+        explain: "Ответ не выдаёт, что объект существует. Проще всего добиться этого запросом `WHERE id = ? AND owner = ?` — чужая строка просто не находится."
+      - text: "`403 Forbidden` — так честнее"
+        explain: "Разница между `403` и `404` — оракул: перебором `id` можно узнать, какие объекты есть и сколько их."
+      - text: "`200` с пустым телом"
+        explain: "Клиент не отличит пустую заметку от отказа, а мониторинг не увидит атаку."
+
+  - id: grep-flags
+    kind: multiple
+    prompt: "Какие находки grep по Go-сервису — повод присмотреться на ревью безопасности?"
+    options:
+      - text: "`template.HTML(note.Body)`"
+        correct: true
+        explain: "`template.HTML` говорит `html/template`: «это уже безопасная разметка». Для данных пользователя это XSS."
+      - text: "`\"... ORDER BY \" + r.URL.Query().Get(\"sort\")`"
+        correct: true
+        explain: "Идентификатор из ввода в тексте SQL — инъекция. Только allowlist."
+      - text: "`http.Error(w, err.Error(), http.StatusInternalServerError)`"
+        correct: true
+        explain: "Внутренняя ошибка — путь к файлам, текст SQL, адреса — уходит клиенту."
+      - text: "`db.QueryContext(ctx, \"SELECT ... WHERE id = ?\", id)`"
+        explain: "Плейсхолдер — правильно для значений. Повод проверить другое: есть ли в запросе условие на владельца."
+      - text: "`http.MaxBytesReader(w, r.Body, 64<<10)`"
+        explain: "Это и есть защита от огромного тела."

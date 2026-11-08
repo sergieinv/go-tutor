@@ -11,6 +11,8 @@
 //	RUNNER_CONTENT  каталог контента, по умолчанию ./content
 //	RUNNER_SLOTS    число параллельных запусков, по умолчанию 4
 //	RUNNER_UID_BASE первый uid слотов, по умолчанию 20000
+//	RUNNER_GOVULNCHECK путь к govulncheck; пусто — ищется в PATH, нет — /api/vulncheck выключен
+//	RUNNER_VULNDB   база уязвимостей для govulncheck -db, например file:///opt/vulndb
 package main
 
 import (
@@ -20,6 +22,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	osexec "os/exec"
 	"os/signal"
 	"runtime"
 	"strconv"
@@ -72,6 +75,11 @@ func serve(log *slog.Logger) error {
 	cfg := sandbox.DefaultConfig()
 	cfg.Slots = slots
 	cfg.BuildEnv = []string{"GOPROXY=off"} // песочница без сети: модули только из прогретого кеша
+	cfg.Govulncheck = os.Getenv("RUNNER_GOVULNCHECK")
+	if cfg.Govulncheck == "" {
+		cfg.Govulncheck, _ = osexec.LookPath("govulncheck")
+	}
+	cfg.VulnDB = os.Getenv("RUNNER_VULNDB")
 	isolated := runtime.GOOS == "linux" && os.Geteuid() == 0
 	switch mode {
 	case "local":
@@ -128,7 +136,7 @@ func serve(log *slog.Logger) error {
 		defer cancel()
 		_ = srv.Shutdown(shutdown)
 	}()
-	log.Info("runner started", "addr", srv.Addr, "mode", mode, "slots", slots, "isolated", isolated, "lessons", len(lessons))
+	log.Info("runner started", "addr", srv.Addr, "mode", mode, "slots", slots, "isolated", isolated, "lessons", len(lessons), "govulncheck", cfg.Govulncheck != "", "vulndb", cfg.VulnDB)
 	if err := srv.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}

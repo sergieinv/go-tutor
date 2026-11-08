@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -58,7 +59,8 @@ func (c *Client) User(ctx context.Context, login string) (User, error) {
 		return User{}, fmt.Errorf("users: неожиданный статус %d", resp.StatusCode)
 	}
 	var u User
-	if err := json.NewDecoder(resp.Body).Decode(&u); err != nil {
+	// Ответ чужого сервиса читаем с лимитом размера.
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&u); err != nil {
 		return User{}, fmt.Errorf("users: разбор ответа: %w", err)
 	}
 	return u, nil

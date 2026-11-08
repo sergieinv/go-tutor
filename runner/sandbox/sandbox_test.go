@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -519,5 +520,54 @@ func TestGoTestRejectsBadOptions(t *testing.T) {
 	res, err := e.GoTest(context.Background(), Files{"main.go": revSrc}, Flags{}, TestOptions{Mode: ModeTest})
 	if err != nil || !res.BuildFailed || !strings.Contains(res.BuildOutput, "нет тестов") {
 		t.Fatalf("без тестов: %+v, %v", res, err)
+	}
+}
+
+// govulncheck находит уязвимую функцию, которую вызывает код, и молчит,
+// когда вызова нет. Нужны govulncheck в PATH (в образе runner он есть)
+// и сеть или снимок базы в RUNNER_VULNDB.
+func TestVulncheck(t *testing.T) {
+	bin, err := exec.LookPath("govulncheck")
+	if err != nil {
+		t.Skip("нет govulncheck: go install golang.org/x/vuln/cmd/govulncheck@v1.9.0")
+	}
+	e := newExecutor(t)
+	e.cfg.Govulncheck, e.cfg.VulnDB = bin, os.Getenv("RUNNER_VULNDB")
+	gomod := "module lesson\n\ngo 1.25.0\n\nrequire golang.org/x/text v0.3.7\n"
+	gosum := "golang.org/x/text v0.3.7 h1:olpwvP2KacW1ZWvsR7uQhoyTYvKAupfQrRGBFM352Gk=\n" +
+		"golang.org/x/text v0.3.7/go.mod h1:u+2+/6zg+i71rQMx5EYifcz6MCKuco9NR6JIITiCfzQ=\n"
+	call := "package main\n\nimport \"golang.org/x/text/language\"\n\nfunc main() { language.ParseAcceptLanguage(\"ru\") }\n"
+	noCall := "package main\n\nimport \"golang.org/x/text/language\"\n\nfunc main() { _ = language.Russian }\n"
+
+	res, err := e.Vulncheck(context.Background(), Files{"main.go": call, "go.mod": gomod, "go.sum": gosum})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Found || res.ExitCode != 3 || !strings.Contains(res.Output, "GO-2022-1059") || !strings.Contains(res.Output, "main.go:5") {
+		t.Fatalf("с вызовом: %+v", res)
+	}
+	if strings.HasPrefix(e.cfg.VulnDB, "file://") && res.DBModified == "" {
+		t.Errorf("нет даты снимка базы: %+v", res)
+	}
+	res, err = e.Vulncheck(context.Background(), Files{"main.go": noCall, "go.mod": gomod, "go.sum": gosum})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Found || res.Failed || res.ExitCode != 0 {
+		t.Fatalf("без вызова: %+v", res)
+	}
+	res, err = e.Vulncheck(context.Background(), Files{"main.go": "package main\n\nfunc main() { x }\n"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Failed {
+		t.Fatalf("не компилируется: %+v", res)
+	}
+}
+
+func TestVulncheckDisabled(t *testing.T) {
+	_, err := newExecutor(t).Vulncheck(context.Background(), Files{"main.go": "package main\n\nfunc main() {}\n"})
+	if !errors.Is(err, ErrNoVulncheck) {
+		t.Fatalf("err = %v", err)
 	}
 }

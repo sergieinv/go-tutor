@@ -44,6 +44,11 @@ type Config struct {
 	MaxOutput    int           // лимит stdout и stderr по отдельности
 	// BuildEnv добавляется к окружению go build/go vet (GOPROXY, GOCACHE…).
 	BuildEnv []string
+	// Govulncheck — путь к govulncheck; пусто — /api/vulncheck недоступен.
+	Govulncheck string
+	// VulnDB — база уязвимостей для govulncheck -db (file:///… — снимок
+	// в образе); пусто — база по умолчанию, https://vuln.go.dev.
+	VulnDB string
 }
 
 // DefaultConfig — лимиты из плана: 10 с CPU, 256 МБ, вывод до 64 КБ.
@@ -227,9 +232,15 @@ func clone(f Files) Files {
 
 // goTool запускает команду go (build, vet, test -c) от имени runner.
 func (e *Executor) goTool(ctx context.Context, dir string, flags Flags, args ...string) (output string, err error) {
+	return e.tool(ctx, dir, flags, "go", args...)
+}
+
+// tool запускает инструмент, который читает код, но не исполняет его
+// (go build, govulncheck), от имени runner с окружением сборки.
+func (e *Executor) tool(ctx context.Context, dir string, flags Flags, name string, args ...string) (output string, err error) {
 	ctx, cancel := context.WithTimeout(ctx, e.cfg.BuildTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "go", args...)
+	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = dir
 	cgo := "0"
 	if flags.Race {

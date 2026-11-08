@@ -1,0 +1,124 @@
+questions:
+  - id: stringer-verbs
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      type Secret string
+
+      func (Secret) String() string { return "***" }
+
+      type Config struct {
+      	Token Secret
+      }
+
+      func main() {
+      	c := Config{Token: "tok"}
+      	fmt.Printf("%v %+v\n", c, c)
+      	fmt.Printf("%#v\n", c)
+      }
+    options:
+      - text: |
+          {***} {Token:***}
+          main.Config{Token:"tok"}
+        correct: true
+        explain: "`%v` и `%+v` вызывают `String()` у поля, а `%#v` спрашивает `GoString()` — его нет, и печатается Go-синтаксис значения. Метод `Format` закрыл бы все глаголы разом."
+      - text: |
+          {***} {Token:***}
+          main.Config{Token:***}
+        explain: "Для `%#v` `fmt` не вызывает `String()` — только `GoString()`."
+      - text: |
+          {tok} {Token:tok}
+          main.Config{Token:"tok"}
+        explain: "Для экспортируемого поля `fmt` вызывает `String()` при `%v` и `%+v`."
+
+  - id: json-log-field
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"log/slog"
+      	"os"
+      )
+
+      type Secret string
+
+      func (Secret) LogValue() slog.Value { return slog.StringValue("***") }
+
+      type Config struct{ Token Secret }
+
+      func main() {
+      	h := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+      		ReplaceAttr: func(g []string, a slog.Attr) slog.Attr {
+      			if a.Key == slog.TimeKey {
+      				return slog.Attr{}
+      			}
+      			return a
+      		},
+      	})
+      	log := slog.New(h)
+      	log.Info("a", "t", Secret("tok"))
+      	log.Info("b", "cfg", Config{"tok"})
+      }
+    options:
+      - text: |
+          {"level":"INFO","msg":"a","t":"***"}
+          {"level":"INFO","msg":"b","cfg":{"Token":"tok"}}
+        correct: true
+        explain: "`LogValue` вызывается для значения самого атрибута. Структуру `JSONHandler` сериализует через `encoding/json`, который о `LogValuer` ничего не знает, — нужен ещё `MarshalJSON`."
+      - text: |
+          {"level":"INFO","msg":"a","t":"***"}
+          {"level":"INFO","msg":"b","cfg":{"Token":"***"}}
+        explain: "`slog` не обходит поля структуры в поисках `LogValuer` — это делает `encoding/json` по своим правилам."
+      - text: |
+          {"level":"INFO","msg":"a","t":"tok"}
+          {"level":"INFO","msg":"b","cfg":{"Token":"tok"}}
+        explain: "Для значения атрибута, реализующего `slog.LogValuer`, обработчик вызывает `LogValue`."
+
+  - id: replace-attr-groups
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"log/slog"
+      	"os"
+      )
+
+      func main() {
+      	h := slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
+      		ReplaceAttr: func(g []string, a slog.Attr) slog.Attr {
+      			if a.Key == slog.TimeKey || a.Key == "password" {
+      				return slog.Attr{}
+      			}
+      			return a
+      		},
+      	})
+      	slog.New(h).Info("login", slog.Group("form", "user", "bob", "password", "qwerty"))
+      }
+    options:
+      - text: level=INFO msg=login form.user=bob
+        correct: true
+        explain: "`ReplaceAttr` вызывается и для атрибутов внутри групп (путь групп — в первом аргументе), а пустой `slog.Attr{}` выбрасывает атрибут."
+      - text: level=INFO msg=login form.user=bob form.password=qwerty
+        explain: "Группа не прячет свои атрибуты от `ReplaceAttr`: функция получает `user` и `password` по отдельности с `g == [\"form\"]`."
+      - text: level=INFO msg=login
+        explain: "Выбрасывается только атрибут с ключом `password`, остальная группа остаётся."
+
+  - id: client-error
+    kind: single
+    prompt: "Хендлер получил от репозитория ошибку `save order: insert into orders: pq: duplicate key value violates unique constraint \"orders_pkey\"`. Что ответить клиенту?"
+    options:
+      - text: "Общее сообщение и id запроса; полную ошибку — в лог с тем же id"
+        correct: true
+        explain: "Клиенту — ровно то, что ему нужно для действия, и ключ к записи в логе. Если ситуация ожидаемая (дубль заказа), её стоит превратить в публичную ошибку `409` со своим текстом — но не пересылать текст драйвера."
+      - text: "`err.Error()` — клиенту полезно знать, что именно сломалось"
+        explain: "Текст раскрывает СУБД, имена таблиц и ограничений — разведданные для атакующего, бесполезные пользователю."
+      - text: Ничего — закрыть соединение без ответа
+        explain: "Клиент не отличит ошибку от сетевого сбоя и будет повторять запрос; у поддержки не будет id для поиска."

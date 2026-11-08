@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -48,7 +49,8 @@ func (s *HTTPSource) Rate(ctx context.Context, cur string) (float64, error) {
 	var body struct {
 		Rate float64 `json:"rate"`
 	}
-	err = json.NewDecoder(resp.Body).Decode(&body)
+	// Ответ чужого сервиса читаем с лимитом размера.
+	err = json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&body)
 	return body.Rate, err
 }
 

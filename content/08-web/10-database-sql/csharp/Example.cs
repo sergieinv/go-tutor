@@ -39,6 +39,9 @@ public class AccountRepo(DbDataSource db)
 
     public async Task TransferAsync(long from, long to, long amount, CancellationToken ct)
     {
+        // Отрицательная сумма развернула бы перевод — проверяем до базы.
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(amount);
+        if (from == to) throw new ArgumentException("from == to", nameof(to));
         // Для транзакции соединение берём явно: все команды должны идти через него.
         await using var conn = await db.OpenConnectionAsync(ct);
         // BeginTx + defer tx.Rollback(): DisposeAsync откатит незавершённую транзакцию.

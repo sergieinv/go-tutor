@@ -34,6 +34,10 @@ export interface LessonMeta {
   prerequisites?: string[];
   docs?: DocLink[];
   runner?: RunnerFlags;
+  /** "fix" — задача «найди и почини»: шаблон рабочий, но уязвимый. */
+  taskKind?: "fix";
+  /** Песочница показывает кнопку govulncheck; expect проверяет lessonlint. */
+  govulncheck?: { expect?: string[] };
 }
 
 export interface QuizOption {
@@ -65,6 +69,8 @@ export interface Example {
   files: Record<string, string>;
   /** *_test.go: если они есть, пример запускается через go test, а не go run. */
   tests: Record<string, string>;
+  /** Свой go.mod примера (например, с уязвимой версией модуля): редактируется в песочнице. */
+  mod?: string;
   /** Есть ли в тестах бенчмарки и какие fuzz-цели — для кнопок песочницы. */
   bench: boolean;
   fuzz: string[];
@@ -83,8 +89,9 @@ function loadExample(dir: string): Example {
   return {
     source: read(dir, "example", "main.go"),
     output: exists(dir, "example", "output.txt") ? read(dir, "example", "output.txt") : "",
-    files: pick((f) => f !== "main.go" && f !== "output.txt" && !f.endsWith("_test.go")),
+    files: pick((f) => f !== "main.go" && f !== "go.mod" && f !== "output.txt" && !f.endsWith("_test.go")),
     tests,
+    mod: names.includes("go.mod") ? read(dir, "example", "go.mod") : undefined,
     bench: benchFunc.test(testSrc),
     fuzz: [...testSrc.matchAll(fuzzFunc)].map((m) => m[1]),
   };

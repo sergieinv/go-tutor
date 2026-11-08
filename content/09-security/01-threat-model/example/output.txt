@@ -1,0 +1,5 @@
+alice   GET /v2/notes/1 → 200 пин-код от сейфа: 4721
+аноним  GET /v2/notes/1 → 401 unauthorized
+bob     GET /v1/notes/1 → 200 пин-код от сейфа: 4721
+bob     GET /v2/notes/1 → 404 not found
+bob     GET /v2/notes/2 → 200 купить молоко

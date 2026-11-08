@@ -1,0 +1,5 @@
+"ru-RU,ru;q=0.9,en;q=0.5" → ru
+"de-CH, fr;q=0.8"        → de
+"ja"                     → en
+""                       → en
+Make: pt

@@ -26,12 +26,19 @@ await acceptLoop;
 static async Task AcceptLoop(TcpListener listener, CancellationToken ct)
 {
     var handlers = new List<Task>(); // в Go — sync.WaitGroup
+    using var sem = new SemaphoreSlim(100); // лимит соединений — семафор, как канал sem в Go
     try
     {
         while (true)
         {
+            await sem.WaitAsync(ct);
             var client = await listener.AcceptTcpClientAsync(ct);
-            handlers.Add(Task.Run(() => Handle(client, ct))); // go handle(conn)
+            handlers.RemoveAll(t => t.IsCompleted); // список не растёт бесконечно
+            handlers.Add(Task.Run(async () => // go handle(conn)
+            {
+                try { await Handle(client, ct); }
+                finally { sem.Release(); }
+            }));
         }
     }
     catch (OperationCanceledException) { }
@@ -51,12 +58,27 @@ static async Task Handle(TcpClient client, CancellationToken ct)
         {
             // Таймаут простоя продлеваем перед каждым чтением — в Go SetReadDeadline.
             idle.CancelAfter(TimeSpan.FromMilliseconds(200));
-            var line = await reader.ReadLineAsync(idle.Token);
-            if (line is null) break; // EOF
+            var line = await ReadLineLimited(reader, 1024, idle.Token);
+            if (line is null) break; // EOF или слишком длинная строка
             await writer.WriteLineAsync(line == "PING" ? "PONG" : "ERR unknown command");
         }
     }
     catch (OperationCanceledException) { } // простой или остановка — в Go os.ErrDeadlineExceeded
+}
+
+// ReadLineAsync длину строки не ограничивает: клиент без '\n' займёт всю память.
+// Лимит, как sc.Buffer(..., 1024) у bufio.Scanner в Go.
+static async Task<string?> ReadLineLimited(StreamReader reader, int max, CancellationToken ct)
+{
+    var sb = new System.Text.StringBuilder();
+    var ch = new char[1];
+    while (await reader.ReadAsync(ch, ct) == 1)
+    {
+        if (ch[0] == '\n') return sb.ToString();
+        if (sb.Length == max) return null;
+        sb.Append(ch[0]);
+    }
+    return sb.Length > 0 ? sb.ToString() : null;
 }
 
 // Префикс длины: BinaryPrimitives вместо encoding/binary,

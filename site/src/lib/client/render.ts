@@ -1,5 +1,5 @@
 // Отрисовка результатов runner. Вывод программ — только через textContent.
-import type { GoTestMode, GoTestResult, RunResult, TestResult } from "./api.ts";
+import type { GoTestMode, GoTestResult, RunResult, TestResult, VulncheckResult } from "./api.ts";
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, className?: string, text?: string) {
   const e = document.createElement(tag);
@@ -83,6 +83,19 @@ export function showGoTest(target: HTMLElement, r: GoTestResult, mode: GoTestMod
   target.replaceChildren(...parts);
 }
 
+/** Отчёт govulncheck: найдены ли уязвимые вызовы и дата снимка базы. */
+export function showVulncheck(target: HTMLElement, r: VulncheckResult) {
+  target.removeAttribute("aria-busy");
+  const parts: HTMLElement[] = [];
+  if (r.timedOut) parts.push(status("govulncheck не уложился в лимит времени", "bad", r.durationMs));
+  else if (r.failed) parts.push(status("govulncheck не смог проверить код", "bad", r.durationMs));
+  else if (r.found) parts.push(status("Код вызывает уязвимые функции", "bad", r.durationMs));
+  else parts.push(status("Уязвимых вызовов не найдено", "ok", r.durationMs));
+  if (r.output) parts.push(block("govulncheck ./...", r.output, r.failed ? "err" : "out"));
+  if (r.dbModified) parts.push(el("p", "muted", `База уязвимостей — снимок vuln.go.dev от ${r.dbModified}.`));
+  target.replaceChildren(...parts);
+}
+
 export function showTests(target: HTMLElement, r: TestResult) {
   target.removeAttribute("aria-busy");
   if (r.buildFailed) {
@@ -108,7 +121,7 @@ export function showTests(target: HTMLElement, r: TestResult) {
     const head = el("div", "test-head");
     head.append(el("span", "test-mark", t.status === "pass" ? "✓" : t.status === "skip" ? "–" : "✗"));
     head.append(el("code", undefined, t.name));
-    if (t.hidden) head.append(el("span", "badge", "скрытый"));
+    if (t.hidden) head.append(el("span", "badge", t.name.startsWith("TestExploit") ? "эксплойт" : "скрытый"));
     li.append(head);
     const subs = r.tests.filter((s) => s.name.startsWith(t.name + "/") && s.status === "fail");
     const output = [t.output, ...subs.map((s) => `${s.name}\n${s.output}`)].join("").trim();

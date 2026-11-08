@@ -3,7 +3,7 @@ Environment.SetEnvironmentVariable("APP_PORT", "9000");
 // null — не задана, "" — пустая. В Go Getenv в обоих случаях даёт "",
 // различает только LookupEnv.
 string? token = Environment.GetEnvironmentVariable("APP_TOKEN");
-Console.WriteLine(token is null ? "APP_TOKEN не задана" : $"APP_TOKEN={token}");
+Console.WriteLine(token is null ? "APP_TOKEN не задана" : "APP_TOKEN задана"); // значение секрета не печатаем
 
 // Значения по умолчанию и разбор типов — как в Go, но разбор бросает исключение
 var port = int.Parse(Environment.GetEnvironmentVariable("APP_PORT") ?? "8080");

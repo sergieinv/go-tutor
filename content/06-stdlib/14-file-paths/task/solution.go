@@ -14,6 +14,8 @@ var ErrUnsafePath = errors.New("unsafe path")
 func SafeJoin(base, name string) (string, error) {
 	local := filepath.FromSlash(name)
 	// IsLocal: не пустой, не абсолютный, после Clean не начинается с "..".
+	// Символические ссылки внутри base он не видит — для открытия
+	// файлов из недоверенного пути есть os.Root (os.OpenInRoot).
 	if !filepath.IsLocal(local) {
 		return "", fmt.Errorf("%w: %q", ErrUnsafePath, name)
 	}

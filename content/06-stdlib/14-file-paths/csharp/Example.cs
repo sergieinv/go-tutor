@@ -9,7 +9,9 @@ Console.WriteLine(Path.GetRelativePath("project/src", "project/docs/readme.md"))
 Console.WriteLine(Path.IsPathFullyQualified("data"));   // filepath.IsAbs
 
 // Отличие: абсолютный второй аргумент отбрасывает первый.
-// filepath.Join("a", "/b") в Go вернёт "a/b".
+// filepath.Join("a", "/b") в Go вернёт "a/b". С именем от пользователя
+// Combine(root, name) так выходит за root — проверяйте, что
+// Path.GetFullPath(результата) начинается с Path.GetFullPath(root) + разделитель.
 Console.WriteLine(Path.Combine("a", "/b"));              // "/b"
 
 // Combine не нормализует ".." — в Go это делает Join через Clean

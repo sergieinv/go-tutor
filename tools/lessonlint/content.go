@@ -54,6 +54,16 @@ type Frontmatter struct {
 		URL   string `yaml:"url"`
 	} `yaml:"docs"`
 	Runner sandbox.Flags `yaml:"runner"`
+	// TaskKind — "fix" для задач «найди и почини»: шаблон — рабочий, но
+	// уязвимый код. Функциональные тесты на нём проходят, эксплойты
+	// (TestExploit… в hidden_test.go) — срабатывают.
+	TaskKind string `yaml:"taskKind"`
+	// Govulncheck — песочница показывает кнопку govulncheck для примера.
+	Govulncheck *struct {
+		// Expect — id уязвимостей (GO-ГГГГ-NNNN), которые govulncheck
+		// обязан найти в вызовах примера.
+		Expect []string `yaml:"expect"`
+	} `yaml:"govulncheck"`
 }
 
 type Quiz struct {
@@ -163,6 +173,9 @@ func loadLesson(l *Lesson, update bool, p *Problems) {
 	if m.Minutes <= 0 {
 		p.Errorf("frontmatter: minutes должен быть положительным")
 	}
+	if m.TaskKind != "" && m.TaskKind != "fix" {
+		p.Errorf("frontmatter: taskKind может быть только fix, сейчас %q", m.TaskKind)
+	}
 	for _, d := range m.Docs {
 		if d.Title == "" || !strings.HasPrefix(d.URL, "https://") {
 			p.Errorf("frontmatter: ссылка в docs должна иметь title и https-url: %+v", d)
@@ -209,7 +222,9 @@ func loadLesson(l *Lesson, update bool, p *Problems) {
 		}
 	}
 
-	if _, err := os.Stat(filepath.Join(l.Dir, "task")); err == nil {
+	if _, err := os.Stat(filepath.Join(l.Dir, "task")); err != nil && l.Meta.TaskKind != "" {
+		p.Errorf("frontmatter: taskKind без папки task/")
+	} else if err == nil {
 		l.HasTask = true
 		for _, f := range []string{"task.go", "task_test.go", "hidden_test.go", "solution.go", "hints.md"} {
 			requireFile(l, p, "task/"+f)
