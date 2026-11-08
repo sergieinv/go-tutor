@@ -24,6 +24,8 @@ export interface RunnerFlags {
   race?: boolean;
   gomaxprocs?: number;
   godebug?: string;
+  /** Базы профиля labs: runner создаёт на запуск пустую базу и передаёт DSN в окружении. */
+  labs?: ("postgres" | "mysql")[];
 }
 
 export interface LessonMeta {
@@ -34,8 +36,9 @@ export interface LessonMeta {
   prerequisites?: string[];
   docs?: DocLink[];
   runner?: RunnerFlags;
-  /** "fix" — задача «найди и почини»: шаблон рабочий, но уязвимый. */
-  taskKind?: "fix";
+  /** "fix" — задача «найди и почини»: шаблон рабочий, но уязвимый;
+   *  "review" — «приведи к виду для ревью» по чек-листу ревью. */
+  taskKind?: "fix" | "review";
   /** Песочница показывает кнопку govulncheck; expect проверяет lessonlint. */
   govulncheck?: { expect?: string[] };
 }
@@ -109,6 +112,8 @@ export interface Lesson {
   quiz: QuizQuestion[];
   task?: Task;
   hasViz: boolean;
+  /** viz-live.ts — живой визуализатор в дополнение к сценарному viz.ts. */
+  hasLiveViz: boolean;
 }
 
 const dirPattern = /^(\d{2})-[a-z0-9-]+$/;
@@ -185,6 +190,7 @@ function loadLesson(module: Module, slug: string): Lesson {
     })),
     task,
     hasViz: exists(dir, "viz.ts"),
+    hasLiveViz: exists(dir, "viz-live.ts"),
   };
 }
 

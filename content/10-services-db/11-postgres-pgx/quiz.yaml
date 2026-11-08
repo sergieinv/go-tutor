@@ -1,0 +1,95 @@
+questions:
+  - id: as-not-assert
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"errors"
+      	"fmt"
+
+      	"github.com/jackc/pgx/v5/pgconn"
+      )
+
+      func main() {
+      	err := fmt.Errorf("create order: %w",
+      		&pgconn.PgError{Code: "23505", ConstraintName: "orders_number_key"})
+
+      	_, ok := err.(*pgconn.PgError)
+      	var pgErr *pgconn.PgError
+      	fmt.Println(ok, errors.As(err, &pgErr), pgErr.ConstraintName)
+      }
+    options:
+      - text: false true orders_number_key
+        correct: true
+        explain: "Утверждение типа смотрит только на верхний слой — там `*fmt.wrapError`. `errors.As` разворачивает цепочку `%w` и находит `*pgconn.PgError` с кодом и именем ограничения. Ошибки, прошедшие через слои, проверяют только так."
+      - text: true true orders_number_key
+        explain: "`fmt.Errorf` с `%w` создаёт новую ошибку-обёртку, у неё свой тип. Утверждение типа её не разворачивает."
+      - text: false false
+        explain: "`errors.As` ищет по всей цепочке `Unwrap`, а `%w` её и строит. Программа к тому же не упадёт: печатаются три значения."
+
+  - id: no-rows
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"database/sql"
+      	"errors"
+      	"fmt"
+
+      	"github.com/jackc/pgx/v5"
+      )
+
+      func main() {
+      	fmt.Println(errors.Is(pgx.ErrNoRows, sql.ErrNoRows), pgx.ErrNoRows == sql.ErrNoRows)
+      }
+    options:
+      - text: true false
+        correct: true
+        explain: "`pgx.ErrNoRows` — отдельное значение, но оно оборачивает `sql.ErrNoRows`. Поэтому код, написанный под `database/sql` и проверяющий `errors.Is(err, sql.ErrNoRows)`, работает и с родным API pgx. Сравнение `==` — нет."
+      - text: false false
+        explain: "В pgx v5 `ErrNoRows` специально сделан совместимым с `database/sql`: `errors.Is` находит `sql.ErrNoRows` внутри."
+      - text: true true
+        explain: "Это разные переменные с разными значениями: `==` сравнивает сами значения ошибок и не разворачивает их."
+
+  - id: listen-pool
+    kind: single
+    prompt: "Слушатель событий написан так: `pool.Exec(ctx, \"LISTEN orders\")`, затем в цикле ждёт уведомлений. Что не так?"
+    options:
+      - text: "`LISTEN` действует на одно соединение, а пул после `Exec` вернул его в общий набор: ждать уведомлений надо на соединении, взятом через `Acquire` и не отпущенном"
+        correct: true
+        explain: "Подписка — свойство серверной сессии. После `Exec` соединение может уйти другому запросу, а `WaitForNotification` есть только у конкретного `*pgx.Conn`. Поэтому слушателю выделяют соединение (`pool.Acquire` + `Conn()`) или вообще отдельный `pgx.Connect`."
+      - text: "`LISTEN` нельзя выполнить через `Exec`, нужен `Query`"
+        explain: "`LISTEN` не возвращает строк, `Exec` для него подходит. Проблема в том, на каком соединении он выполнен."
+      - text: Уведомления доставляются только внутри транзакции, нужен `pool.Begin`
+        explain: "Наоборот: `NOTIFY` внутри транзакции доставляется после `COMMIT`, а `LISTEN` транзакции не требует. Нужна не транзакция, а закреплённое соединение."
+
+  - id: batch-implicit-tx
+    kind: single
+    prompt: "В `pgx.Batch` три `INSERT`, второй нарушает уникальный индекс. Батч отправлен `pool.SendBatch` без явной транзакции. Что окажется в таблице?"
+    options:
+      - text: Ничего — батч выполняется в одной неявной транзакции, ошибка откатывает и первый INSERT
+        correct: true
+        explain: "pgx отправляет все запросы батча и один `Sync` в конце; сервер считает всё до `Sync` неявной транзакцией. Об этом сказано в документации `SendBatch`. Нужна независимость — отправляйте запросы по отдельности или в явных транзакциях."
+      - text: Первая строка — каждая команда батча фиксируется сама, как отдельный `Exec`
+        explain: "Отдельный `Exec` вне транзакции действительно фиксируется сразу. Но батч — один обмен с одним `Sync`, и для сервера это одна неявная транзакция."
+      - text: Первая и третья — ошибочная команда просто пропускается
+        explain: "После ошибки сервер пропускает всё до `Sync` и откатывает неявную транзакцию; третий INSERT не выполнится."
+
+  - id: stdlib-when
+    kind: multiple
+    prompt: "Когда разумно взять `database/sql` с драйвером `github.com/jackc/pgx/v5/stdlib`, а не родной API pgx?"
+    options:
+      - text: Код или библиотека работает через `*sql.DB` (goose, sqlc с `database/sql`, общий код для нескольких СУБД)
+        correct: true
+        explain: "`stdlib` регистрирует драйвер `\"pgx\"` для `database/sql`: всё, что ждёт `*sql.DB`, работает поверх pgx."
+      - text: Нужны `CopyFrom`, `LISTEN/NOTIFY` и `pgx.Batch` прямо из `*sql.DB`
+        explain: "Это API родного `pgx.Conn`. Через `database/sql` до них добираются обходным путём — `conn.Raw` и `*stdlib.Conn` — и теряют удобство."
+      - text: Хочется одного стиля с остальными сервисами на MySQL и SQLite
+        correct: true
+        explain: "`database/sql` — общий знаменатель. Цена — без родных типов PostgreSQL и без `pgxpool`, пул тогда у `*sql.DB`."
+      - text: Нужна максимальная скорость на типах `jsonb` и массивах
+        explain: "Наоборот: родной pgx работает с бинарным протоколом и типами PostgreSQL напрямую, а `database/sql` проводит значения через `driver.Value`."

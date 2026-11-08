@@ -5,15 +5,16 @@ import fs from "node:fs";
 import path from "node:path";
 import { contentDir, type Lesson } from "../lib/content";
 import { highlight, inlineMarkdown, scriptJSON } from "../lib/markdown";
-import { lessonViz } from "../lib/viz";
+import { lessonViz, type VizFile } from "../lib/viz";
 import "../../../viz/src/viz.css";
 
 interface Props {
   lesson: Lesson;
+  file?: VizFile;
 }
-const { lesson } = Astro.props;
-const viz = lessonViz(lesson.id);
-if (!viz) throw new Error(`${lesson.id}: нет viz.ts`);
+const { lesson, file = "viz.ts" } = Astro.props;
+const viz = lessonViz(lesson.id, file);
+if (!viz) throw new Error(`${lesson.id}: нет ${file}`);
 
 const liveCode = viz.kind === "live" ? fs.readFileSync(path.join(contentDir, lesson.id, viz.file), "utf8") : "";
 const codeHtml = await highlight((viz.kind === "scenario" ? viz.code : liveCode).trimEnd(), "go");

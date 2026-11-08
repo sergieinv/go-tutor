@@ -56,7 +56,9 @@ type Frontmatter struct {
 	Runner sandbox.Flags `yaml:"runner"`
 	// TaskKind — "fix" для задач «найди и почини»: шаблон — рабочий, но
 	// уязвимый код. Функциональные тесты на нём проходят, эксплойты
-	// (TestExploit… в hidden_test.go) — срабатывают.
+	// (TestExploit… в hidden_test.go) — срабатывают. "review" — «приведи
+	// к виду для ревью»: шаблон работает, но падают проверки TestReview…
+	// (идиомы, ошибки, context, ресурсы) по чек-листу ревью.
 	TaskKind string `yaml:"taskKind"`
 	// Govulncheck — песочница показывает кнопку govulncheck для примера.
 	Govulncheck *struct {
@@ -173,8 +175,11 @@ func loadLesson(l *Lesson, update bool, p *Problems) {
 	if m.Minutes <= 0 {
 		p.Errorf("frontmatter: minutes должен быть положительным")
 	}
-	if m.TaskKind != "" && m.TaskKind != "fix" {
-		p.Errorf("frontmatter: taskKind может быть только fix, сейчас %q", m.TaskKind)
+	if m.TaskKind != "" && m.TaskKind != "fix" && m.TaskKind != "review" {
+		p.Errorf("frontmatter: taskKind может быть только fix или review, сейчас %q", m.TaskKind)
+	}
+	if err := sandbox.ValidLabs(m.Runner.Labs); err != nil {
+		p.Errorf("frontmatter: runner.labs: %v", err)
 	}
 	for _, d := range m.Docs {
 		if d.Title == "" || !strings.HasPrefix(d.URL, "https://") {
@@ -214,12 +219,19 @@ func loadLesson(l *Lesson, update bool, p *Problems) {
 	if vizErr == nil && !slices.Contains(l.Sections, "Под капотом") {
 		p.Errorf("lesson.md: есть viz.ts, но нет раздела «## Под капотом», где он показывается")
 	}
+	// viz-live.ts — живой визуализатор в дополнение к сценарному viz.ts.
+	_, liveVizErr := os.Stat(filepath.Join(l.Dir, "viz-live.ts"))
+	if liveVizErr == nil && vizErr != nil {
+		p.Errorf("есть viz-live.ts без viz.ts: единственный визуализатор урока лежит в viz.ts")
+	}
 	if _, err := os.Stat(filepath.Join(l.Dir, "live")); err == nil {
 		l.HasLive = true
 		requireFile(l, p, "live/main.go")
 		if vizErr != nil {
 			p.Errorf("есть папка live/, но нет viz.ts, который её показывает")
 		}
+	} else if liveVizErr == nil {
+		p.Errorf("есть viz-live.ts, но нет live/main.go")
 	}
 
 	if _, err := os.Stat(filepath.Join(l.Dir, "task")); err != nil && l.Meta.TaskKind != "" {

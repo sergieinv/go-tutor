@@ -1,0 +1,14 @@
+POST /items/1/reserve?qty=2  → 200 reserved
+POST /items/1/reserve?qty=0  → 400 qty: must be positive
+POST /items/9/reserve?qty=1  → 404 not found
+POST /items/x/reserve?qty=1  → 400 id: must be integer
+POST /items/1/reserve?qty=10 → 409 not enough stock
+level=WARN msg=timeout path=/report err="context deadline exceeded"
+GET /report                  → 503 timeout
+level=ERROR msg="request failed" path=/broken err="cleanup: SQL logic error: no such table: no_such_table (1)"
+GET /broken                  → 500 internal error
+1. сигнал: перестаём принимать соединения
+2. HTTP: активные запросы завершены
+   воркер: вышел по отмене контекста
+3. воркеры остановлены
+4. база закрыта — она нужна была до последнего запроса

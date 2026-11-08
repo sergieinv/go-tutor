@@ -49,6 +49,8 @@ type Config struct {
 	// VulnDB — база уязвимостей для govulncheck -db (file:///… — снимок
 	// в образе); пусто — база по умолчанию, https://vuln.go.dev.
 	VulnDB string
+	// Labs — DSN администраторов баз профиля labs: LabPostgres, LabMySQL.
+	Labs map[string]string
 }
 
 // DefaultConfig — лимиты из плана: 10 с CPU, 256 МБ, вывод до 64 КБ.
@@ -69,6 +71,8 @@ type Flags struct {
 	Race       bool   `json:"race,omitempty" yaml:"race"`
 	GOMAXPROCS int    `json:"gomaxprocs,omitempty" yaml:"gomaxprocs"`
 	GODEBUG    string `json:"godebug,omitempty" yaml:"godebug"`
+	// Labs — базы профиля labs, которые нужны программе (LabNames).
+	Labs []string `json:"labs,omitempty" yaml:"labs"`
 }
 
 // Files — имя файла → содержимое.
@@ -88,10 +92,11 @@ type RunResult struct {
 type Executor struct {
 	cfg   Config
 	slots chan int // свободные uid'ы; -1 — без смены uid
+	labs  *labs
 }
 
 func New(cfg Config) (*Executor, error) {
-	e := &Executor{cfg: cfg}
+	e := &Executor{cfg: cfg, labs: newLabs(cfg.Labs)}
 	if len(cfg.UIDs) > 0 {
 		e.slots = make(chan int, len(cfg.UIDs))
 		for _, uid := range cfg.UIDs {
@@ -134,7 +139,7 @@ var depsGoMod string
 //go:embed deps.sum
 var depsGoSum string
 
-var fileName = regexp.MustCompile(`^[A-Za-z0-9_-][A-Za-z0-9_.-]*\.(go|mod|sum|proto|txt|json)$`)
+var fileName = regexp.MustCompile(`^[A-Za-z0-9_-][A-Za-z0-9_.-]*\.(go|mod|sum|proto|txt|json|sql|yaml)$`)
 
 const (
 	maxFiles     = 32
@@ -389,6 +394,9 @@ func (e *Executor) exec(ctx context.Context, ws *workspace, flags Flags, prog st
 	if flags.GODEBUG != "" {
 		cmd.Env = append(cmd.Env, "GODEBUG="+flags.GODEBUG)
 	}
+	labEnv, labNote, dropLabs := e.labs.prepare(ctx, flags.Labs)
+	defer dropLabs()
+	cmd.Env = append(cmd.Env, labEnv...)
 	cmd.SysProcAttr = sysProcAttr(ws.uid)
 
 	// Превышение лимита вывода обрывает программу: бесконечная печать
@@ -421,7 +429,7 @@ func (e *Executor) exec(ctx context.Context, ws *workspace, flags Flags, prog st
 	res.duration = time.Since(start)
 	e.killSlot(ws.uid)
 
-	res.stdout, res.stderr = stdout.String(), stderr.String()
+	res.stdout, res.stderr = stdout.String(), labNote+stderr.String()
 	res.truncated = stdout.overflowed || stderr.overflowed
 	var exitErr *exec.ExitError
 	switch {

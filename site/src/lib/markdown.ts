@@ -1,7 +1,7 @@
 // Рендер markdown урока в HTML при сборке: тело делится на разделы
 // по заголовкам второго уровня, код подсвечивается Shiki.
 import rehypeShiki from "@shikijs/rehype";
-import type { Root, RootContent } from "mdast";
+import type { Paragraph, PhrasingContent, Root, RootContent, Table, TableCell, TableRow } from "mdast";
 import rehypeStringify from "rehype-stringify";
 import remarkParse from "remark-parse";
 import remarkRehype from "remark-rehype";
@@ -10,8 +10,74 @@ import { unified } from "unified";
 
 export const shikiThemes = { light: "github-light", dark: "github-dark" } as const;
 
+// Таблицы GFM без remark-gfm: remark-parse оставляет таблицу абзацем, где
+// строки разделены переводами строк, а ячейки — «|». Абзац, вторая строка
+// которого — разделитель «| --- |», превращается в узел table; HTML из него
+// строит remark-rehype. Встроенная разметка в ячейках (`код`, ссылки) сохраняется.
+const delimiterRow = /^\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)*\|?\s*$/;
+
+function tableFromParagraph(p: Paragraph): Table | undefined {
+  // Строки абзаца: списки встроенных узлов, разрезанные по \n в текстах.
+  const lines: PhrasingContent[][] = [[]];
+  for (const node of p.children) {
+    if (node.type !== "text") {
+      lines[lines.length - 1].push(node);
+      continue;
+    }
+    node.value.split("\n").forEach((part, i) => {
+      if (i > 0) lines.push([]);
+      if (part) lines[lines.length - 1].push({ type: "text", value: part });
+    });
+  }
+  const text = (line: PhrasingContent[]) => line.map((n) => (n.type === "text" ? n.value : "x")).join("");
+  if (lines.length < 2 || !text(lines[0]).trimStart().startsWith("|") || !delimiterRow.test(text(lines[1]))) return;
+
+  const row = (line: PhrasingContent[]): TableRow => {
+    const cells: PhrasingContent[][] = [[]];
+    for (const node of line) {
+      if (node.type !== "text") {
+        cells[cells.length - 1].push(node);
+        continue;
+      }
+      node.value.split("|").forEach((part, i) => {
+        if (i > 0) cells.push([]);
+        if (part) cells[cells.length - 1].push({ type: "text", value: part });
+      });
+    }
+    // Ведущий и замыкающий «|» дают пустые крайние ячейки.
+    if (cells.length > 1 && text(cells[0]).trim() === "") cells.shift();
+    if (cells.length > 1 && text(cells[cells.length - 1]).trim() === "") cells.pop();
+    return {
+      type: "tableRow",
+      children: cells.map((c): TableCell => {
+        const first = c[0];
+        const last = c[c.length - 1];
+        if (first?.type === "text") first.value = first.value.trimStart();
+        if (last?.type === "text") last.value = last.value.trimEnd();
+        return { type: "tableCell", children: c.filter((n) => n.type !== "text" || n.value !== "") };
+      }),
+    };
+  };
+  return { type: "table", children: [row(lines[0]), ...lines.slice(2).map(row)] };
+}
+
+function remarkPipeTables() {
+  return (tree: Root) => {
+    const walk = (nodes: RootContent[]) => {
+      nodes.forEach((n, i) => {
+        if (n.type === "paragraph") {
+          const table = tableFromParagraph(n);
+          if (table) nodes[i] = table;
+        } else if ("children" in n && n.type !== "table") walk(n.children as RootContent[]);
+      });
+    };
+    walk(tree.children);
+  };
+}
+
 const processor = unified()
   .use(remarkParse)
+  .use(remarkPipeTables)
   .use(remarkRehype)
   .use(rehypeShiki, { themes: shikiThemes, defaultLanguage: "go" })
   .use(rehypeStringify);

@@ -1,0 +1,15 @@
+---
+// Чек-лист ревью Go-кода (content/review-checklist.md). На него ссылаются
+// задачи «приведи к виду для ревью» (taskKind: review).
+import fs from "node:fs";
+import path from "node:path";
+import Base from "../layouts/Base.astro";
+import { contentDir } from "../lib/content";
+import { renderMarkdown } from "../lib/markdown";
+
+const html = await renderMarkdown(fs.readFileSync(path.join(contentDir, "review-checklist.md"), "utf8"));
+---
+
+<Base title="Чек-лист ревью Go-кода — Go для C#-разработчика" description="Что проверять на ревью Go-кода: идиомы, ошибки, context, ресурсы, конкурентность, работа с БД.">
+  <article class="prose review-checklist" set:html={html} />
+</Base>

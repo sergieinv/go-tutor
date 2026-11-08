@@ -318,3 +318,23 @@ kbd {
     animation: none !important;
   }
 }
+
+/* Таблицы из markdown: на узком экране прокручиваются сами, страница — нет. */
+.prose table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+  margin: 1rem 0;
+  font-size: 0.9rem;
+}
+.prose th,
+.prose td {
+  border: 1px solid var(--border);
+  padding: 0.35rem 0.6rem;
+  text-align: left;
+  vertical-align: top;
+}
+.prose th {
+  background: var(--bg-soft);
+}

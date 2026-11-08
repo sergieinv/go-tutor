@@ -1,0 +1,14 @@
+up: 2 миграций, err=<nil>
+  up   00001_products.sql
+  up   00002_stock.sql
+повторный up: 0 миграций, err=<nil>
+создан {ID:1 Name:чай Price:300 Note:{String:улун Valid:true} Stock:5}
+в наличии: [{1 чай 5} {2 кофе 10}] <nil>
+id 42: true
+down до 1: 1 миграций, err=<nil>
+  down 00002_stock.sql
+ListInStock: SQL logic error: no such column: stock (1)
+up: 1 миграций, err=<nil>
+  up   00002_stock.sql
+остатки: [{1 чай 0} {2 кофе 0}] <nil>
+версия схемы: 2 <nil>

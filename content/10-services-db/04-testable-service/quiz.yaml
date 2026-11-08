@@ -1,0 +1,95 @@
+questions:
+  - id: memory-per-conn
+    kind: output
+    prompt: Тест создаёт схему в SQLite `:memory:` и иногда падает с «no such table». Программа воспроизводит это явно, взяв два соединения пула. Что она выведет?
+    code: |
+      package main
+
+      import (
+      	"context"
+      	"database/sql"
+      	"fmt"
+
+      	_ "modernc.org/sqlite"
+      )
+
+      func main() {
+      	db, _ := sql.Open("sqlite", ":memory:")
+      	defer db.Close()
+      	ctx := context.Background()
+      	c1, _ := db.Conn(ctx)
+      	defer c1.Close()
+      	c2, _ := db.Conn(ctx)
+      	defer c2.Close()
+      	_, err := c1.ExecContext(ctx, `CREATE TABLE t (x INTEGER)`)
+      	fmt.Println("c1:", err)
+      	_, err = c2.ExecContext(ctx, `INSERT INTO t VALUES (1)`)
+      	fmt.Println("c2:", err)
+      }
+    options:
+      - text: |
+          c1: <nil>
+          c2: SQL logic error: no such table: t (1)
+        correct: true
+        explain: "У каждого соединения с `:memory:` своя база. Пока пул обходится одним соединением, тест проходит; стоит двум запросам совпасть по времени — второе соединение видит пустую базу. Лечение для тестов: `db.SetMaxOpenConns(1)` или файл в `t.TempDir()`."
+      - text: |
+          c1: <nil>
+          c2: <nil>
+        explain: "Так было бы с файлом или с `file::memory:?cache=shared`, но не с `:memory:`: соединения не делят базу в памяти."
+      - text: |
+          c1: <nil>
+          c2: database is locked
+        explain: "Блокировки нет — второе соединение работает с другой, пустой базой, и таблицы там просто нет."
+
+  - id: assert-impl
+    kind: compile
+    prompt: Фейк забыл один метод интерфейса. Скомпилируется ли пакет?
+    code: |
+      package main
+
+      import "context"
+
+      type Store interface {
+      	Qty(ctx context.Context, sku string) (int, error)
+      	Take(ctx context.Context, sku string, qty int) error
+      }
+
+      type MemStore struct{ qty map[string]int }
+
+      func (m *MemStore) Qty(_ context.Context, sku string) (int, error) { return m.qty[sku], nil }
+
+      var _ Store = (*MemStore)(nil)
+
+      func main() {}
+    compiles: false
+    explain: "`var _ Store = (*MemStore)(nil)` — проверка на этапе компиляции, что тип реализует интерфейс: `*MemStore does not implement Store (missing method Take)`. Без этой строки пакет фейка скомпилировался бы, а ошибка всплыла бы только в тестах, которые передают фейк туда, где ждут `Store`. Строка ничего не стоит во время выполнения."
+
+  - id: what-needs-db
+    kind: multiple
+    prompt: Какие проверки бессмысленно делать на фейке или моке хранилища — их нужно гонять на настоящей базе?
+    options:
+      - text: "Что `ON CONFLICT ... DO UPDATE` в SQL складывает количества, а не заменяет"
+        correct: true
+        explain: "Это поведение SQL-текста — фейк его не исполняет. Мок с ожиданием строки запроса проверяет только, что строка не изменилась."
+      - text: "Что нарушение `UNIQUE` превращается в `ErrDuplicate`"
+        correct: true
+        explain: "Код ошибки драйвера (`23505` в PostgreSQL, `2067` в SQLite) приходит только от настоящей базы. Фейк должен воспроизводить результат — и это как раз проверяет общий контракт."
+      - text: "Что две конкурентные транзакции не продают товар дважды"
+        correct: true
+        explain: "Блокировки и уровни изоляции — свойство СУБД (уроки 07 и 12). Фейк с мьютексом сериализует всё и такую ошибку не покажет."
+      - text: "Что сервис переводит `ErrNotFound` в `404`"
+        explain: "Это логика сервиса и хендлера. Фейк, который возвращает `ErrNotFound`, проверяет её быстрее и надёжнее базы."
+      - text: "Что сервис повторяет операцию после `ErrConflict` не больше трёх раз"
+        explain: "Логика повторов не зависит от SQL: фейк (или шпион), который первые N вызовов возвращает конфликт, проверяет её точно и без гонок."
+
+  - id: mock-vs-fake
+    kind: single
+    prompt: "Тест сервиса на моке: «ожидаю `Save` ровно один раз с таким-то `Order`». Сервис переписали — теперь он сохраняет заказ и позиции одним вызовом `SaveWithItems`, поведение для клиента не изменилось. Что будет с тестом?"
+    options:
+      - text: "Упадёт, хотя поведение не изменилось: мок проверял реализацию"
+        correct: true
+        explain: "Мок с ожиданиями фиксирует, *как* сервис зовёт зависимость. Фейк проверял бы результат — «после `Place` заказ с позициями читается из хранилища» — и пережил бы рефакторинг."
+      - text: "Пройдёт: мок не знает о новом методе"
+        explain: "`Save` больше не вызывается, а ожидание «ровно один раз» не выполнено — мок упадёт в проверке ожиданий."
+      - text: "Не скомпилируется, пока мок не перегенерируют, — и это хорошо"
+        explain: "Перегенерация не поможет: ожидания в тесте написаны руками под старую реализацию. Компиляция — меньшая из проблем."

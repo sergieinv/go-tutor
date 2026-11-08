@@ -1,0 +1,17 @@
+изоляция по умолчанию: REPEATABLE-READ
+заказ 1 кофе ☕ и пицца 🍕 2026-03-01 09:00:00 +0000 UTC
+utf8mb3 "кофе ☕": ok
+utf8mb3 "пицца 🍕": ошибка 3988 (HY000)
+upsert qty=5: rows affected 1
+upsert qty=7: rows affected 2
+upsert qty=7: rows affected 0
+A: FOR UPDATE id 15..25 — строк 1 | блокировки A: [X 20 X,GAP 30]
+B: INSERT 17 ждёт X,GAP,INSERT_INTENTION 20
+A: COMMIT → B: ok
+READ COMMITTED: блокировки A: [X,REC_NOT_GAP 17 X,REC_NOT_GAP 20] | INSERT 18: ok
+A: UPDATE id=2 ждёт X,REC_NOT_GAP 2
+B: попытка 1: ошибка 1213 (40001)
+A: ok → COMMIT: ok
+B: попытка 2: ok
+счёт 1: 110
+счёт 2: 90

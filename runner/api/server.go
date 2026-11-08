@@ -312,7 +312,7 @@ func validateFlags(f sandbox.Flags) error {
 	if f.GOMAXPROCS < 0 || f.GOMAXPROCS > 64 {
 		return fmt.Errorf("GOMAXPROCS должен быть от 1 до 64")
 	}
-	return nil
+	return sandbox.ValidLabs(f.Labs)
 }
 
 // merge накладывает флаги запроса (живые визуализации) на флаги урока.
@@ -325,6 +325,11 @@ func merge(base, over sandbox.Flags) sandbox.Flags {
 	}
 	if over.GODEBUG != "" {
 		base.GODEBUG = over.GODEBUG
+	}
+	for _, lab := range over.Labs {
+		if !slices.Contains(base.Labs, lab) {
+			base.Labs = append(slices.Clip(base.Labs), lab)
+		}
 	}
 	return base
 }

@@ -1,0 +1,33 @@
+== MVCC: две версии строки
+a видит: версия (0,1), баланс 100
+b после UPDATE: версия (0,2), баланс 90
+a всё ещё видит: версия (0,1), баланс 100
+== Read Committed: неповторяемое чтение
+a читает: 100
+a читает снова: 50
+== Repeatable Read: конфликт обновления
+a читает: 100
+a ждёт блокировку строки
+a получил: 40001 could not serialize access due to concurrent update
+повтор: прочитал 70 записал 20
+== write skew, repeatable read
+a видит дежурных: 2 b видит: 2
+a снимает alice: ok
+b снимает bob: ok
+commit a: ok
+commit b: ok
+дежурных осталось: 0
+== write skew, serializable
+a видит дежурных: 2 b видит: 2
+a снимает alice: ok
+b снимает bob: ok
+commit a: ok
+commit b: 40001 could not serialize access due to read/write dependencies among transactions
+дежурных осталось: 1
+== VACUUM и долгая транзакция
+страниц после вставки: 45
+после UPDATE всех строк: 89
+VACUUM освободил место, UPDATE его занял: 89
+VACUUM при открытом снимке, не удалить: 10000
+UPDATE пишет в новые страницы: 133
+после COMMIT, VACUUM и VACUUM FULL: 45

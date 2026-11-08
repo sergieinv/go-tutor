@@ -1,4 +1,5 @@
 # Учебник целиком: docker compose up --build → http://localhost:8080
+# С базами для модуля 10 и дальше: docker compose --profile labs up --build
 services:
   site:
     build:
@@ -22,6 +23,13 @@ services:
     environment:
       RUNNER_MODE: local
       RUNNER_SLOTS: "4"
+      # Базы профиля labs: на каждый запуск урока runner создаёт отдельную
+      # базу и пользователя. Без профиля имена не резолвятся, и урок
+      # подсказывает, как его включить.
+      # Роль runner — не суперпользователь (labs/initdb): программа ученика
+      # работает в той же сети, и пароли из репозитория ей известны.
+      RUNNER_LAB_POSTGRES: postgres://runner:labs-runner@postgres:5432/postgres?sslmode=disable
+      RUNNER_LAB_MYSQL: runner:labs-runner@tcp(mysql:3306)/
     # Код учеников пишется только во временный каталог в памяти.
     tmpfs:
       - /tmp/runner:size=512m,mode=0711,exec,nosuid,nodev
@@ -31,7 +39,74 @@ services:
     cpus: 2
     networks: [sandbox]
 
+  # Профиль labs. Данные — в tmpfs: базы учебные, после перезапуска пустые.
+  # Порты открыты только на localhost — для lessonlint и psql/mysql с машины.
+  # Суперпользователям вход из сети песочницы закрыт (labs/initdb), память
+  # и tmpfs ограничены: запрос ученика не съест память машины.
+  postgres:
+    image: postgres:18.4
+    profiles: [labs]
+    environment:
+      POSTGRES_PASSWORD: labs
+      # База сервиса «Заказы» (labs/orders); runner создаёт свои базы рядом.
+      POSTGRES_DB: orders
+    tmpfs:
+      - /var/lib/postgresql:size=1g
+    volumes:
+      - ./labs/initdb/postgres:/docker-entrypoint-initdb.d:ro
+    mem_limit: 1g
+    ports:
+      - "127.0.0.1:55432:5432"
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    networks: [default, sandbox]
+
+  mysql:
+    image: mysql:8.4.10
+    profiles: [labs]
+    environment:
+      MYSQL_ROOT_PASSWORD: labs
+    tmpfs:
+      - /var/lib/mysql:size=1g
+    volumes:
+      - ./labs/initdb/mysql:/docker-entrypoint-initdb.d:ro
+    mem_limit: 1g
+    ports:
+      - "127.0.0.1:53306:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-plabs"]
+      interval: 2s
+      timeout: 3s
+      retries: 60
+    networks: [default, sandbox]
+
+  # Сквозной учебный сервис «Заказы» (labs/orders) на PostgreSQL:
+  # http://localhost:8090. Миграции применяет сам при старте.
+  orders:
+    build:
+      context: ./labs/orders
+    image: go-tutor/orders:dev
+    profiles: [labs]
+    environment:
+      ORDERS_DB: postgres
+      ORDERS_DSN: postgres://postgres:labs@postgres:5432/orders?sslmode=disable
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8090:8080"
+    # Только default: программам песочницы до сервиса дела нет.
+    networks: [default]
+
 networks:
   # internal: у runner нет выхода в интернет, но site до него достаёт.
   sandbox:
     internal: true
+    # Подсеть фиксирована: по ней базы labs не пускают суперпользователей
+    # из песочницы (labs/initdb).
+    ipam:
+      config:
+        - subnet: 172.29.99.0/24

@@ -1,0 +1,11 @@
+после Open:     open=0 inUse=0 idle=0 waitCount=0
+после запросов: open=1 inUse=0 idle=1 waitCount=0
+заняты все:     open=3 inUse=3 idle=0 waitCount=0
+четвёртый запрос: true
+ждущий дождался: <nil>
+всё вернули:    open=3 inUse=0 idle=3 waitCount=2
+WaitDuration > 0: true
+QueryRow без Scan: InUse = 1
+Rows без Close: InUse = 2
+Tx без Rollback: InUse = 3
+следующий запрос: context deadline exceeded

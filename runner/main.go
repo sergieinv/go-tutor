@@ -13,6 +13,8 @@
 //	RUNNER_UID_BASE первый uid слотов, по умолчанию 20000
 //	RUNNER_GOVULNCHECK путь к govulncheck; пусто — ищется в PATH, нет — /api/vulncheck выключен
 //	RUNNER_VULNDB   база уязвимостей для govulncheck -db, например file:///opt/vulndb
+//	RUNNER_LAB_POSTGRES DSN администратора PostgreSQL профиля labs (runner.labs: [postgres])
+//	RUNNER_LAB_MYSQL    DSN администратора MySQL профиля labs (runner.labs: [mysql])
 package main
 
 import (
@@ -80,6 +82,12 @@ func serve(log *slog.Logger) error {
 		cfg.Govulncheck, _ = osexec.LookPath("govulncheck")
 	}
 	cfg.VulnDB = os.Getenv("RUNNER_VULNDB")
+	cfg.Labs = map[string]string{}
+	for name, key := range map[string]string{sandbox.LabPostgres: "RUNNER_LAB_POSTGRES", sandbox.LabMySQL: "RUNNER_LAB_MYSQL"} {
+		if dsn := os.Getenv(key); dsn != "" {
+			cfg.Labs[name] = dsn
+		}
+	}
 	isolated := runtime.GOOS == "linux" && os.Geteuid() == 0
 	switch mode {
 	case "local":

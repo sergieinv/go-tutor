@@ -3,6 +3,7 @@
 // Пример с *_test.go запускается через go test: редактируются и main.go, и тесты,
 // а кнопки запускают тесты, бенчмарки, fuzzing и покрытие. У примера со своим go.mod
 // он тоже редактируется; govulncheck проверяет модуль по снимку базы уязвимостей.
+// Урокам с runner.labs runner на каждый запуск создаёт пустую базу профиля labs.
 // Без JS остаётся подсвеченный код — пример читается и так.
 import type { Example } from "../lib/content";
 import { highlight, scriptJSON } from "../lib/markdown";
@@ -12,8 +13,10 @@ interface Props {
   example: Example;
   race?: boolean;
   vulncheck?: boolean;
+  labs?: ("postgres" | "mysql")[];
 }
-const { lesson, example, race, vulncheck } = Astro.props;
+const { lesson, example, race, vulncheck, labs = [] } = Astro.props;
+const labInfo = { postgres: ["PostgreSQL", "POSTGRES_DSN"], mysql: ["MySQL", "MYSQL_DSN"] } as const;
 const editable: Record<string, string> = {
   "main.go": example.source,
   ...example.tests,
@@ -35,6 +38,16 @@ const files = example.files;
     <kbd>Esc</kbd> и затем <kbd>Tab</kbd> — выйти из редактора.
     {race && <> Код собирается с детектором гонок <code>-race</code>.</>}
   </p>
+  {
+    labs.length > 0 && (
+      <p class="labs-note">
+        Пример работает на настоящей базе: {labs.map((l, i) => <>{i > 0 && " и "}{labInfo[l][0]}</>)} из профиля labs. Запустите
+        учебник командой <code>docker compose --profile labs up</code>. На каждый запуск runner создаёт пустую базу и
+        передаёт её адрес в {labs.map((l, i) => <>{i > 0 && " и "}<code>{labInfo[l][1]}</code></>)}, а после запуска
+        удаляет.
+      </p>
+    )
+  }
   <script type="application/json" data-initial set:html={scriptJSON(editable)} />
   <script type="application/json" data-files set:html={scriptJSON(files)} />
   {
@@ -235,6 +248,11 @@ const files = example.files;
   .file-editor figcaption {
     margin-bottom: 0.25rem;
     font-size: 0.9rem;
+  }
+  .labs-note {
+    font-size: 0.9rem;
+    border-left: 3px solid var(--accent);
+    padding-left: 0.75rem;
   }
   .extra-files {
     margin: 0.5rem 0;

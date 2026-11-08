@@ -1,0 +1,11 @@
+version: "2"
+sql:
+  - engine: sqlite
+    schema:
+      - 00001_products.sql
+      - 00002_stock.sql
+    queries: query.sql
+    gen:
+      go:
+        package: main
+        out: .

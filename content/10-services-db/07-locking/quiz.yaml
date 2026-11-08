@@ -1,0 +1,120 @@
+questions:
+  - id: atomic-zero-rows
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"database/sql"
+      	"fmt"
+
+      	_ "modernc.org/sqlite"
+      )
+
+      func main() {
+      	db, _ := sql.Open("sqlite", ":memory:")
+      	defer db.Close()
+      	db.SetMaxOpenConns(1)
+      	db.Exec(`CREATE TABLE stock (id INTEGER PRIMARY KEY, qty INTEGER NOT NULL)`)
+      	db.Exec(`INSERT INTO stock VALUES (1, 5)`)
+
+      	res, err := db.Exec(`UPDATE stock SET qty = qty - ? WHERE id = 1 AND qty >= ?`, 7, 7)
+      	n, _ := res.RowsAffected()
+      	var qty int
+      	db.QueryRow(`SELECT qty FROM stock WHERE id = 1`).Scan(&qty)
+      	fmt.Println(n, err, qty)
+      }
+    options:
+      - text: "0 <nil> 5"
+        correct: true
+        explain: "Условие `qty >= 7` не выполнилось — запрос не изменил ни одной строки, но это не ошибка. Результат атомарного `UPDATE` читают по `RowsAffected`: 0 — товара не хватило (или строки нет)."
+      - text: "1 <nil> -2"
+        explain: "`WHERE ... AND qty >= ?` проверяется для строки до изменения: при остатке 5 строка не подходит, и вычитать не из чего."
+      - text: "0 sql: no rows in result set 5"
+        explain: "`sql.ErrNoRows` возвращает только `Scan` у `QueryRow`. `Exec` с нулём затронутых строк завершается без ошибки."
+
+  - id: stale-version
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"database/sql"
+      	"fmt"
+
+      	_ "modernc.org/sqlite"
+      )
+
+      func main() {
+      	db, _ := sql.Open("sqlite", ":memory:")
+      	defer db.Close()
+      	db.SetMaxOpenConns(1)
+      	db.Exec(`CREATE TABLE stock (id INTEGER PRIMARY KEY, qty INTEGER NOT NULL, version INTEGER NOT NULL)`)
+      	db.Exec(`INSERT INTO stock VALUES (1, 10, 1)`)
+
+      	const upd = `UPDATE stock SET qty = ?, version = version + 1 WHERE id = 1 AND version = ?`
+      	var qa, va, qb, vb int
+      	db.QueryRow(`SELECT qty, version FROM stock WHERE id = 1`).Scan(&qa, &va) // A
+      	db.QueryRow(`SELECT qty, version FROM stock WHERE id = 1`).Scan(&qb, &vb) // B
+
+      	ra, _ := db.Exec(upd, qa-3, va)
+      	rb, _ := db.Exec(upd, qb-4, vb)
+      	na, _ := ra.RowsAffected()
+      	nb, _ := rb.RowsAffected()
+      	var qty, ver int
+      	db.QueryRow(`SELECT qty, version FROM stock WHERE id = 1`).Scan(&qty, &ver)
+      	fmt.Println(na, nb, qty, ver)
+      }
+    options:
+      - text: "1 0 7 2"
+        correct: true
+        explain: "Оба прочитали версию 1. Запись A прошла и подняла версию до 2, запись B с условием `version = 1` не нашла строку: `RowsAffected() == 0` — конфликт. B должна перечитать строку (7, версия 2) и повторить, тогда в итоге будет 3."
+      - text: "1 1 6 3"
+        explain: "Это потерянное обновление — так было бы без условия на версию. С ним вторая запись по устаревшей версии ничего не меняет."
+      - text: "1 1 3 3"
+        explain: "Запись B вычислена из прочитанного ею значения 10, а не из текущего 7: даже пройди она, получилось бы 6. Поэтому при конфликте повторяют всю операцию — чтение и запись."
+
+  - id: skip-locked
+    kind: single
+    prompt: "Где уместен `SELECT ... FOR UPDATE SKIP LOCKED`?"
+    options:
+      - text: "Воркеры разбирают очередь задач из таблицы: каждый берёт ещё не занятую строку"
+        correct: true
+        explain: "Занятые строки пропускаются, и воркеры не ждут друг друга: каждый получает свою задачу. Так устроены очереди на PostgreSQL и relay в outbox."
+      - text: "Списание остатка конкретного товара при оформлении заказа"
+        explain: "Строка остатка одна. Если её держит другая транзакция, `SKIP LOCKED` вернёт ноль строк — и код решит, что товара нет. Здесь нужен обычный `FOR UPDATE` (подождать), атомарный `UPDATE` или версия."
+      - text: "Чтобы чтение не блокировало запись в PostgreSQL"
+        explain: "Обычный `SELECT` в PostgreSQL и так не блокирует запись — MVCC отдаёт ему снимок. Блокирующее чтение — это как раз `FOR UPDATE`."
+
+  - id: what-to-retry
+    kind: single
+    prompt: "Транзакция на Repeatable Read прочитала остаток, посчитала новый и получила на `UPDATE` ошибку `40001`. Что повторить?"
+    options:
+      - text: "Всю транзакцию с начала: новый `BeginTx`, чтение, расчёт, запись"
+        correct: true
+        explain: "Решение принималось по устаревшим данным, а сама транзакция после ошибки годна только для отката. Повтор — функция, которая выполняет всю бизнес-операцию в новой транзакции, с ограничением попыток и паузой с джиттером."
+      - text: "Только упавший `UPDATE` в той же транзакции"
+        explain: "В PostgreSQL после ошибки транзакция прервана: любой следующий запрос вернёт `current transaction is aborted`. Да и значение для `UPDATE` посчитано по старому снимку."
+      - text: "Ничего: `database/sql` сам повторит запрос"
+        explain: "`database/sql` повторяет только попытку получить исправное соединение (`driver.ErrBadConn`) до отправки запроса. Конфликты сериализации — забота приложения."
+
+  - id: retry-rules
+    kind: multiple
+    prompt: "Что из этого — правильные свойства повтора при конфликтах?"
+    options:
+      - text: "Число попыток ограничено, после последней возвращается ошибка"
+        correct: true
+        explain: "При постоянной конкуренции бесконечный повтор превращается в зависание. Ограничение и понятная ошибка (409 или 503 наружу) честнее."
+      - text: "Пауза растёт и выбирается случайно (джиттер)"
+        correct: true
+        explain: "Без джиттера проигравшие повторяют одновременно и снова сталкиваются. Экспонента снижает нагрузку при затяжной конкуренции."
+      - text: "Повторяются только ошибки конфликта, остальные возвращаются сразу"
+        correct: true
+        explain: "«Товара нет», нарушение ограничения, синтаксическая ошибка не исправятся повтором — повтор только задержит ответ."
+      - text: "Операция идемпотентна или повторяется целиком внутри одной транзакции"
+        correct: true
+        explain: "Если часть эффектов уже случилась (письмо отправлено, вызов внешнего API прошёл), повтор их удвоит. Повторяемый блок — транзакция БД без внешних побочных эффектов, либо операция с ключом идемпотентности."
+      - text: "Пауза делается внутри открытой транзакции, чтобы не потерять блокировки"
+        explain: "Наоборот: транзакцию откатывают и ждут вне её. Пауза внутри держит соединение и блокировки и мешает всем остальным."

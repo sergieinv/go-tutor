@@ -121,7 +121,7 @@ export function showTests(target: HTMLElement, r: TestResult) {
     const head = el("div", "test-head");
     head.append(el("span", "test-mark", t.status === "pass" ? "✓" : t.status === "skip" ? "–" : "✗"));
     head.append(el("code", undefined, t.name));
-    if (t.hidden) head.append(el("span", "badge", t.name.startsWith("TestExploit") ? "эксплойт" : "скрытый"));
+    if (t.hidden) head.append(el("span", "badge", t.name.startsWith("TestExploit") ? "эксплойт" : t.name.startsWith("TestReview") ? "ревью" : "скрытый"));
     li.append(head);
     const subs = r.tests.filter((s) => s.name.startsWith(t.name + "/") && s.status === "fail");
     const output = [t.output, ...subs.map((s) => `${s.name}\n${s.output}`)].join("").trim();

@@ -12,18 +12,21 @@
 | `tools/lessonlint/` | Проверка структуры и прогон каждого урока |
 | `site/` | Сайт на Astro, собирается из `content/` |
 | `runner/` | Сервис исполнения кода: `/api/run`, `/api/test`, `/api/gotest`, `/api/vulncheck`, `/api/fmt`, `/api/trace`, `/api/race` |
+| `labs/orders/` | Сквозной учебный сервис «Заказы» (модуль 10 и дальше) — запускается в профиле `labs` |
 | `docs/` | План учебника |
 | `viz/` | Движок визуализаций: примитивы SVG, плеер шагов, построители шагов из трассы |
 
 ## Запуск в Docker
 
 ```sh
-docker compose up --build        # учебник на http://localhost:8080
+docker compose up --build                  # учебник на http://localhost:8080
+docker compose --profile labs up --build   # плюс PostgreSQL, MySQL и сервис «Заказы» для модуля 10 и дальше
 ```
 
 - `site` — nginx со статикой Astro, `/api/*` проксируется в `runner`.
 - `runner` — Go-тулчейн с прогретым кешем сборки. Каждый запуск идёт в отдельном временном каталоге от имени отдельного uid слота с лимитами: 10 с CPU и реального времени, 256 МБ, 64 процесса, вывод до 64 КБ. После запуска все процессы слота убиваются.
-- У `runner` нет выхода в интернет (сеть `internal`); модули — только из кеша образа. Сторонние модули, доступные урокам, перечислены в `runner/sandbox/deps.mod` (сейчас `golang.org/x/sync`, `golang.org/x/crypto` и SQLite `modernc.org/sqlite`). Модули из `go.sum` примеров со своим `go.mod` тоже скачиваются при сборке образа. В образе есть `govulncheck` и снимок базы уязвимостей vuln.go.dev, который обновляется при каждой пересборке.
+- У `runner` нет выхода в интернет (сеть `internal`); модули — только из кеша образа. Сторонние модули, доступные урокам, перечислены в `runner/sandbox/deps.mod` (сейчас `golang.org/x/sync`, `golang.org/x/crypto`, SQLite `modernc.org/sqlite`, `pgx`, `go-sql-driver/mysql` и `goose`). Модули из `go.sum` примеров со своим `go.mod` тоже скачиваются при сборке образа. В образе есть `govulncheck` и снимок базы уязвимостей vuln.go.dev, который обновляется при каждой пересборке.
+- Профиль `labs` добавляет PostgreSQL 18 и MySQL 8.4 (данные в tmpfs, после перезапуска базы пустые; порты только на localhost: 55432 и 53306, пароль `labs`) и сервис «Заказы» на `localhost:8090`. Урокам с `runner.labs` runner на каждый запуск создаёт отдельную базу и пользователя, передаёт DSN в `POSTGRES_DSN` / `MYSQL_DSN` и удаляет их после запуска. Без профиля такие уроки подсказывают, как его включить. Программы песочницы работают в одной сети с базами, а пароли лежат в репозитории, поэтому права разведены (`labs/initdb`): runner ходит в базы ролью `runner` без прав суперпользователя, суперпользователям `postgres` и `root` вход из сети песочницы закрыт, роль запуска видит только свою базу, а базам и их tmpfs ограничена память. Тесты `labs/orders` и `psql` с машины по-прежнему могут входить как `postgres`/`root`.
 - В `site/package-lock.json` записаны адреса корпоративного Artifactory. Образ сайта ставит пакеты из `registry.npmjs.org`, подменяя префикс через `--replace-registry-host`; integrity-хеши проверяются как обычно. Другой реестр: `docker compose build --build-arg NPM_REGISTRY=... site`.
 - Режим `server` (runner внутри gVisor): `docker compose -f docker-compose.yml -f docker-compose.server.yml up -d`, нужен runtime `runsc`.
 
@@ -42,6 +45,8 @@ docker compose up --build        # учебник на http://localhost:8080
 
 Тесты для `/api/test` runner берёт из контента урока, включая `hidden_test.go`; клиент присылает только своё решение.
 
+`flags` — `race`, `gomaxprocs`, `godebug` и `labs` (`["postgres"]`, `["mysql"]`); они накладываются на флаги урока из frontmatter. Если нужной базы labs нет, программа запускается без DSN, а в начало `stderr` runner дописывает подсказку.
+
 `/api/trace` нужен живым визуализаторам:
 
 - Runner переименовывает `main` в `gotutorMain` и добавляет файл с настоящим `main`, который включает `runtime/trace`.
@@ -58,6 +63,10 @@ go run ./tools/lessonlint content
 
 # только один урок; -update перезаписывает example/output.txt
 go run ./tools/lessonlint -run 05-concurrency/07-select -update content
+
+# уроки на настоящих базах (нужен docker compose --profile labs up) и сверка кода sqlc
+go run ./tools/lessonlint -postgres 'postgres://runner:labs-runner@127.0.0.1:55432/postgres?sslmode=disable' \
+  -mysql 'runner:labs-runner@tcp(127.0.0.1:53306)/' -sqlc "$(command -v sqlc)" -run 10-services-db/ content
 
 # сайт: /api/* в dev-режиме проксируется в runner на localhost:8081
 go run ./runner                      # runner без изоляции, для разработки
@@ -76,7 +85,8 @@ cd site && npx playwright install chromium && npm run e2e
 Прогресс (квизы, попытки, «пройдено») хранится в `localStorage`; на главной есть экспорт и импорт JSON. Черновики кода тоже лежат в `localStorage`, но в экспорт не попадают.
 
 ```sh
-# тесты runner; изоляция по uid и тесты fork-бомбы — только под root на Linux
+# тесты runner; изоляция по uid и тесты fork-бомбы — только под root на Linux;
+# временные базы labs — при RUNNER_TEST_POSTGRES / RUNNER_TEST_MYSQL (DSN администратора)
 go test ./runner/...
 docker run --rm --init -v "$PWD:/repo" -w /repo/runner -e GOWORK=off go-tutor/runner:dev go test ./...
 ```

@@ -1,0 +1,8 @@
+перевод 30: <nil>
+перевод 500: недостаточно средств
+паника: сбой посреди перевода
+счёт 1  -30 memo.Valid=false —
+счёт 2  +30 memo.Valid=true  перевод
+счёт 2   +0 memo.Valid=false —
+балансы: 70 30
+db внутри tx: context deadline exceeded

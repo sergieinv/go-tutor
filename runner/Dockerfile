@@ -27,7 +27,9 @@ RUN go build std && go build -race std && go tool test2json < /dev/null
 COPY runner/sandbox/deps.mod /tmp/deps/go.mod
 COPY runner/sandbox/deps.sum /tmp/deps/go.sum
 RUN cd /tmp/deps && GOPROXY=https://proxy.golang.org GOFLAGS= go mod download all \
-    && GOFLAGS= go build golang.org/x/sync/... golang.org/x/crypto/bcrypt golang.org/x/crypto/argon2 modernc.org/sqlite && rm -rf /tmp/deps
+    && GOFLAGS= go build golang.org/x/sync/... golang.org/x/crypto/bcrypt golang.org/x/crypto/argon2 modernc.org/sqlite \
+       github.com/jackc/pgx/v5/pgxpool github.com/jackc/pgx/v5/stdlib github.com/go-sql-driver/mysql github.com/pressly/goose/v3 \
+    && rm -rf /tmp/deps
 # Снимок базы уязвимостей Go для govulncheck: ADD по URL сверяет архив
 # при каждой сборке, так что пересборка образа обновляет снимок.
 # Дату снимка (index/db.json) runner отдаёт вместе с результатом.

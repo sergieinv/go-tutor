@@ -6,6 +6,7 @@ import (
 	"errors"
 	"go/format"
 	"os"
+	osexec "os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -20,6 +21,8 @@ import (
 type Checker struct {
 	Exec   *sandbox.Executor
 	Update bool // перезаписать example/output.txt реальным выводом
+	// Sqlc — путь к sqlc; пусто — код примеров с sqlc.yaml не сверяется.
+	Sqlc string
 }
 
 func (c *Checker) CheckLesson(ctx context.Context, l *Lesson, p *Problems) {
@@ -35,6 +38,42 @@ func (c *Checker) CheckLesson(ctx context.Context, l *Lesson, p *Problems) {
 	if l.HasLive {
 		c.checkLive(ctx, l, p)
 	}
+	if _, err := os.Stat(filepath.Join(l.Dir, "example", "sqlc.yaml")); err == nil {
+		c.checkSqlc(ctx, l, p)
+	}
+}
+
+// checkSqlc требует, чтобы сгенерированный код примера совпадал с тем,
+// что выдаёт sqlc по его sqlc.yaml, схеме и запросам: правка запроса
+// без перегенерации или код «под sqlc», написанный руками, не пройдут.
+func (c *Checker) checkSqlc(ctx context.Context, l *Lesson, p *Problems) {
+	if c.Sqlc == "" {
+		p.Warnf("sqlc: не найден — код примера не сверен (go install github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 или флаг -sqlc)")
+		return
+	}
+	files, err := exampleFiles(l)
+	if err != nil {
+		return // уже отмечено в checkExample
+	}
+	dir, err := os.MkdirTemp("", "sqlc-*")
+	if err != nil {
+		p.Errorf("sqlc: %v", err)
+		return
+	}
+	defer os.RemoveAll(dir)
+	for name, src := range files {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(src), 0o644); err != nil {
+			p.Errorf("sqlc: %v", err)
+			return
+		}
+	}
+	ctx, cancel := context.WithTimeout(ctx, time.Minute)
+	defer cancel()
+	cmd := osexec.CommandContext(ctx, c.Sqlc, "diff")
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		p.Errorf("sqlc diff: сгенерированный код не совпадает с sqlc generate (%v)\n%s", err, indent(string(out)))
+	}
 }
 
 // liveBuilder — имя построителя шагов из viz.ts: builder: "select".
@@ -47,7 +86,10 @@ func (c *Checker) checkLive(ctx context.Context, l *Lesson, p *Problems) {
 	if err != nil {
 		return
 	}
-	viz, _ := os.ReadFile(filepath.Join(l.Dir, "viz.ts"))
+	viz, err := os.ReadFile(filepath.Join(l.Dir, "viz-live.ts"))
+	if err != nil {
+		viz, _ = os.ReadFile(filepath.Join(l.Dir, "viz.ts"))
+	}
 	m := liveBuilder.FindSubmatch(viz)
 	if m == nil {
 		p.Errorf("viz.ts: у живого визуализатора не найден builder")
@@ -145,6 +187,19 @@ func (c *Checker) checkExample(ctx context.Context, l *Lesson, p *Problems) {
 	if _, ok := files["main.go"]; !ok {
 		return // отсутствие файла уже отмечено при загрузке
 	}
+	if missing := c.missingLabs(l); len(missing) > 0 {
+		// Вывод примера получен на настоящей базе — без неё проверяем только сборку.
+		ok, out, err := c.Exec.Build(ctx, files, l.Meta.Runner)
+		switch {
+		case err != nil:
+			p.Errorf("example: %v", err)
+		case !ok:
+			p.Errorf("example: не компилируется\n%s", indent(out))
+		default:
+			p.Warnf("example: не запущен, нужен labs %s (флаги -postgres/-mysql)", strings.Join(missing, ", "))
+		}
+		return
+	}
 	var res *sandbox.RunResult
 	testMode := hasTests(files)
 	if testMode {
@@ -187,6 +242,17 @@ func (c *Checker) checkExample(ctx context.Context, l *Lesson, p *Problems) {
 	if normalize(string(want)) != normalize(res.Stdout) {
 		p.Errorf("example: вывод не совпадает с output.txt\n--- ожидалось\n%s--- получено\n%s", indent(string(want)), indent(res.Stdout))
 	}
+}
+
+// missingLabs — базы профиля labs, которые нужны уроку, но не переданы lessonlint.
+func (c *Checker) missingLabs(l *Lesson) []string {
+	var missing []string
+	for _, name := range l.Meta.Runner.Labs {
+		if !c.Exec.HasLab(name) {
+			missing = append(missing, name)
+		}
+	}
+	return missing
 }
 
 // hasTests — пример с _test.go-файлами запускается через go test, а не go run.
@@ -311,22 +377,33 @@ func (c *Checker) checkTask(ctx context.Context, l *Lesson, p *Problems) {
 	}
 }
 
-var exploitFunc = regexp.MustCompile(`(?m)^func (TestExploit\w*)\(t \*testing\.T\)`)
+var (
+	exploitFunc = regexp.MustCompile(`(?m)^func (TestExploit\w*)\(t \*testing\.T\)`)
+	reviewFunc  = regexp.MustCompile(`(?m)^func (TestReview\w*)\(t \*testing\.T\)`)
+)
 
-// checkExploits проверяет задачи по безопасности: каждый эксплойт
-// (TestExploit… в hidden_test.go) срабатывает на шаблоне — тест падает, —
-// а на эталоне не срабатывает (это уже проверено: эталон проходит всё).
-// В задаче «найди и почини» (taskKind: fix) шаблон вдобавок проходит все
-// остальные тесты: уязвимый код работает, его надо починить, а не дописать.
+// checkExploits проверяет задачи по безопасности и ревью: каждая проверка
+// (TestExploit… или TestReview… в hidden_test.go) срабатывает на шаблоне —
+// тест падает, — а на эталоне нет (это уже проверено: эталон проходит всё).
+// В задачах «найди и почини» (taskKind: fix) и «приведи к виду для ревью»
+// (taskKind: review) шаблон вдобавок проходит все остальные тесты: код
+// работает, его надо исправить, а не дописать.
 func checkExploits(l *Lesson, files sandbox.Files, res *sandbox.TestResult, p *Problems) {
-	exploits := map[string]bool{}
-	for _, m := range exploitFunc.FindAllStringSubmatch(files["hidden_test.go"], -1) {
-		exploits[m[1]] = true
+	re, what := exploitFunc, "эксплойт"
+	if l.Meta.TaskKind == "review" {
+		re, what = reviewFunc, "проверка ревью"
 	}
-	if l.Meta.TaskKind == "fix" && len(exploits) == 0 {
+	checks := map[string]bool{}
+	for _, m := range re.FindAllStringSubmatch(files["hidden_test.go"], -1) {
+		checks[m[1]] = true
+	}
+	switch {
+	case l.Meta.TaskKind == "fix" && len(checks) == 0:
 		p.Errorf("task: в задаче «найди и почини» нет эксплойтов func TestExploitXxx(t *testing.T) в hidden_test.go")
+	case l.Meta.TaskKind == "review" && len(checks) == 0:
+		p.Errorf("task: в задаче «приведи к виду для ревью» нет проверок func TestReviewXxx(t *testing.T) в hidden_test.go")
 	}
-	if len(exploits) == 0 {
+	if len(checks) == 0 {
 		return
 	}
 	status := map[string]string{}
@@ -335,22 +412,22 @@ func checkExploits(l *Lesson, files sandbox.Files, res *sandbox.TestResult, p *P
 			status[tc.Name] = tc.Status
 		}
 	}
-	for name := range exploits {
+	for name := range checks {
 		switch status[name] {
 		case "fail":
 		case "":
-			p.Errorf("task: эксплойт %s не запускался на шаблоне — паника в другом тесте?%s", name, describeFailures(res))
+			p.Errorf("task: %s %s не запускался на шаблоне — паника в другом тесте?%s", what, name, describeFailures(res))
 		default:
-			p.Errorf("task: эксплойт %s не срабатывает на шаблоне (%s)", name, status[name])
+			p.Errorf("task: %s %s не срабатывает на шаблоне (%s)", what, name, status[name])
 		}
 	}
-	if l.Meta.TaskKind != "fix" {
+	if l.Meta.TaskKind == "" {
 		return
 	}
 	for _, src := range []string{files["task_test.go"], files["hidden_test.go"]} {
 		for _, m := range testFunc.FindAllStringSubmatch(src, -1) {
-			if name := m[1]; !exploits[name] && status[name] != "pass" {
-				p.Errorf("task: шаблон «найди и почини» должен проходить функциональный тест %s, а он %q%s", name, status[name], describeFailures(res))
+			if name := m[1]; !checks[name] && status[name] != "pass" && status[name] != "skip" {
+				p.Errorf("task: шаблон должен проходить функциональный тест %s, а он %q%s", name, status[name], describeFailures(res))
 			}
 		}
 	}

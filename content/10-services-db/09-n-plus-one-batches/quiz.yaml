@@ -1,0 +1,101 @@
+questions:
+  - id: map-of-pointers
+    kind: output
+    prompt: Заказы раскладываются по map с указателями. Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      type Order struct {
+      	ID    int64
+      	Items []string
+      }
+
+      func main() {
+      	var orders []Order
+      	byID := map[int64]*Order{}
+      	for _, id := range []int64{1, 2, 3} {
+      		orders = append(orders, Order{ID: id})
+      		byID[id] = &orders[len(orders)-1]
+      	}
+      	for _, it := range []struct {
+      		order int64
+      		sku   string
+      	}{{1, "tea"}, {2, "jam"}, {3, "cup"}} {
+      		o := byID[it.order]
+      		o.Items = append(o.Items, it.sku)
+      	}
+      	fmt.Println(orders)
+      }
+    options:
+      - text: "[{1 []} {2 []} {3 [cup]}]"
+        correct: true
+        explain: "`append` перевыделяет массив при росте ёмкости (1 → 2 → 4), и указатели, взятые раньше, смотрят в старые массивы. Позиции заказов 1 и 2 записаны туда, куда срез `orders` уже не смотрит. Храните в map индекс (`map[int64]int`) или берите указатели только после того, как срез перестал расти."
+      - text: "[{1 [tea]} {2 [jam]} {3 [cup]}]"
+        explain: "Так было бы с `map[int64]int` (индекс) или с `make([]Order, 0, 3)` заранее. Здесь `append` дважды перевыделил массив, и первые два указателя устарели."
+      - text: "[{1 []} {2 []} {3 []}]"
+        explain: "Последний указатель взят после последнего `append` и указывает в текущий массив — запись по нему видна."
+
+  - id: empty-in
+    kind: output
+    prompt: Что выведет программа на SQLite?
+    code: |
+      package main
+
+      import (
+      	"database/sql"
+      	"fmt"
+      	"strings"
+
+      	_ "modernc.org/sqlite"
+      )
+
+      func placeholders(n int) string {
+      	return strings.TrimSuffix(strings.Repeat("?, ", n), ", ")
+      }
+
+      func main() {
+      	db, _ := sql.Open("sqlite", ":memory:")
+      	db.SetMaxOpenConns(1)
+      	db.Exec(`CREATE TABLE items (order_id INTEGER)`)
+      	db.Exec(`INSERT INTO items VALUES (1), (2)`)
+
+      	var ids []any
+      	q := `SELECT count(*) FROM items WHERE order_id IN (` + placeholders(len(ids)) + `)`
+      	var n int
+      	err := db.QueryRow(q, ids...).Scan(&n)
+      	fmt.Println(n, err)
+      }
+    options:
+      - text: "0 <nil>"
+        correct: true
+        explain: "SQLite допускает пустой список: `x IN ()` — всегда ложь. Но PostgreSQL и MySQL на `IN ()` отвечают синтаксической ошибкой, поэтому при пустом списке запрос не делают вовсе — так код переносим и не тратит round trip."
+      - text: "2 <nil>"
+        explain: "Пустой `IN` — не «без фильтра», а «ни одно значение не подходит»."
+      - text: "0 SQL logic error: near \")\": syntax error (1)"
+        explain: "Так ответили бы PostgreSQL (`syntax error at or near \")\"`) и MySQL (`Error 1064`), но SQLite пустой список принимает."
+
+  - id: two-collections
+    kind: single
+    prompt: "У заказа в среднем 20 позиций и 5 платежей. Загружаем 100 заказов одним запросом `orders LEFT JOIN items LEFT JOIN payments`. Сколько примерно строк вернёт база?"
+    options:
+      - text: "Около 10 000"
+        correct: true
+        explain: "Две независимые коллекции через JOIN перемножаются: 100 × 20 × 5. Для нескольких коллекций — отдельный запрос с `IN`/`= ANY` на каждую: 1 + 2 запроса и 100 + 2000 + 500 строк. В EF Core то же лечат `AsSplitQuery()`."
+      - text: "Около 2 600"
+        explain: "Это сумма строк трёх отдельных запросов (100 + 2000 + 500). JOIN возвращает декартово произведение позиций и платежей каждого заказа."
+      - text: "Ровно 100 — по строке на заказ"
+        explain: "JOIN возвращает строку на каждую комбинацию дочерних строк, агрегация в одну строку — только с `GROUP BY` и функциями вроде `json_agg`."
+
+  - id: pg-param-limit
+    kind: single
+    prompt: "Нужно вставить в PostgreSQL через pgx 20 000 строк по 4 столбца многострочным `INSERT`. Что произойдёт, если отправить всё одним запросом, и сколько пачек минимум нужно?"
+    options:
+      - text: "pgx вернёт ошибку ещё до отправки (лимит 65 535 параметров); минимум 2 пачки"
+        correct: true
+        explain: "20 000 × 4 = 80 000 параметров, а в протоколе PostgreSQL их число — 16-битное поле, pgx проверяет это сам: `extended protocol limited to 65535 parameters`. В пачку влезает 16 383 строки (65 532 параметра), значит пачек две. А для такого объёма лучше `CopyFrom` (урок 11)."
+      - text: "Запрос пройдёт: у PostgreSQL нет лимита на число параметров"
+        explain: "Лимит есть — 65 535 параметров у одного запроса расширенного протокола."
+      - text: "Сервер отрежет лишние строки и вставит первые 16 383"
+        explain: "Ничего не отрезается: запрос целиком отклоняется, и ничего не вставляется."

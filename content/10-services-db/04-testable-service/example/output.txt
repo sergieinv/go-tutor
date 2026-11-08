@@ -1,0 +1,37 @@
+=== RUN   TestMemStore
+=== RUN   TestMemStore/add_accumulates
+=== RUN   TestMemStore/take
+=== RUN   TestMemStore/insufficient
+=== RUN   TestMemStore/unknown_sku
+=== RUN   TestMemStore/canceled_context
+--- PASS: TestMemStore (0.00s)
+    --- PASS: TestMemStore/add_accumulates (0.00s)
+    --- PASS: TestMemStore/take (0.00s)
+    --- PASS: TestMemStore/insufficient (0.00s)
+    --- PASS: TestMemStore/unknown_sku (0.00s)
+    --- PASS: TestMemStore/canceled_context (0.00s)
+=== RUN   TestSQLiteStore
+=== RUN   TestSQLiteStore/add_accumulates
+=== RUN   TestSQLiteStore/take
+=== RUN   TestSQLiteStore/insufficient
+=== RUN   TestSQLiteStore/unknown_sku
+=== RUN   TestSQLiteStore/canceled_context
+--- PASS: TestSQLiteStore (0.00s)
+    --- PASS: TestSQLiteStore/add_accumulates (0.00s)
+    --- PASS: TestSQLiteStore/take (0.00s)
+    --- PASS: TestSQLiteStore/insufficient (0.00s)
+    --- PASS: TestSQLiteStore/unknown_sku (0.00s)
+    --- PASS: TestSQLiteStore/canceled_context (0.00s)
+=== RUN   TestPostgresStore
+=== RUN   TestPostgresStore/add_accumulates
+=== RUN   TestPostgresStore/take
+=== RUN   TestPostgresStore/insufficient
+=== RUN   TestPostgresStore/unknown_sku
+=== RUN   TestPostgresStore/canceled_context
+--- PASS: TestPostgresStore (0.00s)
+    --- PASS: TestPostgresStore/add_accumulates (0.00s)
+    --- PASS: TestPostgresStore/take (0.00s)
+    --- PASS: TestPostgresStore/insufficient (0.00s)
+    --- PASS: TestPostgresStore/unknown_sku (0.00s)
+    --- PASS: TestPostgresStore/canceled_context (0.00s)
+PASS

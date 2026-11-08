@@ -9,22 +9,35 @@ interface Props {
   lesson: string;
   statement: string; // HTML раздела «Задание»
   task: Task;
-  /** Задача «найди и почини»: в заготовке рабочий, но уязвимый код. */
-  fix?: boolean;
+  /** fix — «найди и почини»: в заготовке рабочий, но уязвимый код;
+   *  review — «приведи к виду для ревью»: рабочий код, не прошедший бы ревью. */
+  kind?: "fix" | "review";
 }
-const { lesson, statement, task, fix } = Astro.props;
+const { lesson, statement, task, kind } = Astro.props;
 const template = await highlight(task.template.trimEnd(), "go");
 const tests = await highlight(task.tests.trimEnd(), "go");
 const hints = await renderHints(task.hints);
 ---
 
 <section class="task" aria-label="Задание" data-task data-lesson={lesson}>
-  <h2>Задание {fix && <span class="badge fix">найди и почини</span>} <span class="task-state muted" data-state></span></h2>
+  <h2>
+    Задание {kind === "fix" && <span class="badge fix">найди и почини</span>}
+    {kind === "review" && <span class="badge fix">приведи к виду для ревью</span>}
+    <span class="task-state muted" data-state></span>
+  </h2>
   {
-    fix && (
+    kind === "fix" && (
       <p class="muted fix-note">
         Заготовка работает и проходит функциональные тесты, но уязвима. Скрытые тесты — эксплойты: они атакуют код
         и падают, пока уязвимость не закрыта.
+      </p>
+    )
+  }
+  {
+    kind === "review" && (
+      <p class="muted fix-note">
+        Заготовка работает и проходит функциональные тесты, но ревью бы не прошла. Скрытые тесты проверяют пункты{" "}
+        <a href="/review/">чек-листа ревью Go-кода</a>: идиомы, ошибки, <code>context</code>, ресурсы, работу с БД.
       </p>
     )
   }

@@ -1,0 +1,44 @@
+== без индекса
+Limit (строк: 5)
+  Sort (строк: 5)
+    Seq Scan on orders (строк: 100)
+страниц прочитано: 1334
+== составной индекс (customer_id, created_at)
+Limit (строк: 5)
+  Index Scan Backward using orders_customer_created on orders (строк: 5, спусков по индексу: 1)
+страниц прочитано: 8
+== только вторая колонка
+Aggregate (строк: 1)
+  Bitmap Heap Scan on orders (строк: 59)
+    Bitmap Index Scan using orders_customer_created (строк: 59, спусков по индексу: 1)
+страниц прочитано: 390
+== вторая колонка, у первой два значения
+Aggregate (строк: 1)
+  Index Only Scan using orders_status_created on orders (строк: 59, спусков по индексу: 3)
+страниц прочитано: 12
+== LIKE по префиксу, обычный индекс
+Seq Scan on orders (строк: 1)
+страниц прочитано: 1334
+== LIKE по префиксу, text_pattern_ops
+Index Scan using orders_email_pattern on orders (строк: 1, спусков по индексу: 1)
+страниц прочитано: 4
+== частичный индекс
+Index Scan using orders_new on orders (строк: 14, спусков по индексу: 1)
+страниц прочитано: 16
+== покрывающий индекс
+Aggregate (строк: 1)
+  Index Only Scan using orders_customer_incl on orders (строк: 100, спусков по индексу: 1)
+страниц прочитано: 5
+== GIN по jsonb
+Aggregate (строк: 1)
+  Bitmap Heap Scan on orders (строк: 100)
+    Bitmap Index Scan using orders_attrs (строк: 100, спусков по индексу: 1)
+страниц прочитано: 131
+== BRIN по времени
+Aggregate (строк: 1)
+  Bitmap Heap Scan on orders (строк: 1441)
+    Bitmap Index Scan using orders_created_brin (строк: 1280, спусков по индексу: 1)
+страниц прочитано: 136
+== кеш подготовленных выражений pgx
+3 вызова, подготовлено новых: 1
+режим Exec, подготовлено новых: 0

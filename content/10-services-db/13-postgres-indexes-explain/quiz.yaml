@@ -1,0 +1,78 @@
+questions:
+  - id: composite-order
+    kind: single
+    prompt: "Есть индекс `(customer_id, created_at)` и 1000 разных `customer_id`. Какой запрос получит от него быстрый спуск к нужным строкам?"
+    options:
+      - text: "`WHERE customer_id = $1 ORDER BY created_at DESC LIMIT 10`"
+        correct: true
+        explain: "Равенство по первой колонке выбирает участок индекса, внутри него строки уже упорядочены по `created_at` — план `Limit → Index Scan Backward` без сортировки, несколько страниц."
+      - text: "`WHERE created_at > $1`"
+        explain: "По второй колонке без первой индекс упорядочен «кусками» на каждого клиента. В примере PostgreSQL прочитал весь индекс (390 страниц). Пропуск по первой колонке (skip scan, PostgreSQL 18) выгоден, только когда у неё мало значений."
+      - text: "Оба одинаково: порядок колонок в индексе неважен"
+        explain: "Важен: B-tree отсортирован сначала по первой колонке, потом по второй. Поэтому составной индекс начинают с колонки, которую сравнивают на равенство."
+
+  - id: like-collation
+    kind: single
+    prompt: "База создана с правилом сортировки `en_US.utf8`. На `email` есть обычный индекс B-tree. Что покажет план запроса `WHERE email LIKE 'user42@%'`?"
+    options:
+      - text: "Seq Scan — для `LIKE` по префиксу нужен индекс с `text_pattern_ops` (или `COLLATE \"C\"`)"
+        correct: true
+        explain: "В лингвистической сортировке порядок строк не совпадает с побайтовым, и префикс нельзя превратить в диапазон индекса. Классы операторов `text_pattern_ops` и `varchar_pattern_ops` сравнивают побайтово — такой индекс годится для `LIKE 'abc%'`, но не для `ORDER BY` в обычном порядке."
+      - text: "Index Scan по обычному индексу — префикс задаёт диапазон"
+        explain: "Это верно только для базы с правилом сортировки `C`. В примере урока обычный индекс не помог, а `text_pattern_ops` — помог."
+      - text: "Index Scan, но только для `LIKE '%42@%'`"
+        explain: "Подстроку в середине B-tree не ищет ни с каким классом операторов; для этого — GIN с `pg_trgm`."
+
+  - id: actual-rows-float
+    kind: output
+    prompt: "Программа разбирает фрагмент `EXPLAIN (ANALYZE, FORMAT JSON)` из PostgreSQL 18. Что она выведет?"
+    code: |
+      package main
+
+      import (
+      	"encoding/json"
+      	"fmt"
+      )
+
+      func main() {
+      	var n struct {
+      		Rows int `json:"Actual Rows"`
+      	}
+      	err := json.Unmarshal([]byte(`{"Actual Rows": 80.00}`), &n)
+      	fmt.Println(err != nil, n.Rows)
+      }
+    options:
+      - text: true 0
+        correct: true
+        explain: "С 18-й версии `Actual Rows` — дробное число (среднее на цикл, например `0.50`), и даже `80.00` в `int` не разбирается: `encoding/json` не отбрасывает дробную часть молча. Поля планов — `float64`."
+      - text: false 80
+        explain: "`encoding/json` разбирает число в целое поле через `strconv.ParseInt`, а литерал `80.00` для него не целый."
+      - text: false 0
+        explain: "Ошибка есть: `cannot unmarshal number 80.00 into Go struct field ... of type int`."
+
+  - id: pgbouncer
+    kind: single
+    prompt: "Сервис на pgx с настройками по умолчанию ходит в базу через PgBouncer 1.20 в режиме `pool_mode = transaction`. Время от времени — ошибки `prepared statement \"stmtcache_...\" does not exist`. Что поможет?"
+    options:
+      - text: "`DefaultQueryExecMode = QueryExecModeExec` (или `SimpleProtocol`) — либо обновить PgBouncer до 1.21+ и включить `max_prepared_statements`"
+        correct: true
+        explain: "pgx по умолчанию готовит выражение на серверном соединении и потом лишь ссылается на него по имени. В режиме transaction следующий запрос может попасть на другое серверное соединение, где такого выражения нет. Режим `Exec` не создаёт именованных выражений. PgBouncer 1.21+ сам отслеживает выражения протокола (по умолчанию включено с 1.24, `max_prepared_statements = 200`)."
+      - text: "Увеличить `StatementCacheCapacity` у pgx"
+        explain: "Кеш больше — именованных выражений больше, а проблема та же: они живут на конкретном серверном соединении."
+      - text: "Обернуть каждый запрос в `pool.Begin`/`Commit`"
+        explain: "В режиме transaction серверное соединение выдаётся на транзакцию, а кеш pgx живёт на клиентском соединении дольше одной транзакции — следующая транзакция всё равно попадёт на другое серверное соединение."
+
+  - id: index-only
+    kind: multiple
+    prompt: "Что нужно, чтобы план использовал Index Only Scan без чтения таблицы?"
+    options:
+      - text: "Все колонки запроса есть в индексе — ключом или в `INCLUDE`"
+        correct: true
+        explain: "Иначе за недостающими колонками придётся идти в таблицу — это обычный Index Scan."
+      - text: "Карта видимости актуальна: страницы таблицы отмечены «все версии видимы всем» — это делает VACUUM"
+        correct: true
+        explain: "В индексе нет информации о видимости версий (MVCC). Для страниц без отметки Index Only Scan всё равно читает таблицу — в `EXPLAIN ANALYZE` это `Heap Fetches`."
+      - text: "Индекс должен быть уникальным"
+        explain: "Уникальность не нужна: в примере `orders_customer_incl` — обычный индекс."
+      - text: "Таблица должна помещаться в память"
+        explain: "Размер таблицы на возможность Index Only Scan не влияет, только на его выгоду по сравнению с другими планами."

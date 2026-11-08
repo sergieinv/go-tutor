@@ -1,0 +1,35 @@
+# Генерация кода доступа к базе: sqlc generate (sqlc v1.31.1) в этом каталоге.
+# Схема — те же миграции goose, что применяются при старте сервиса.
+# Сгенерированные пакеты sqlcgen закоммичены, руками их не правим.
+version: "2"
+sql:
+  - engine: postgresql
+    schema: migrations/postgres
+    queries: internal/store/postgres/query.sql
+    gen:
+      go:
+        package: sqlcgen
+        out: internal/store/postgres/sqlcgen
+        sql_package: pgx/v5
+        overrides:
+          # Без override sqlc для pgx выдаёт pgtype.Timestamptz; NOT NULL
+          # колонкам достаточно time.Time.
+          - db_type: timestamptz
+            go_type: time.Time
+  - engine: mysql
+    schema: migrations/mysql
+    queries: internal/store/mysql/query.sql
+    gen:
+      go:
+        package: sqlcgen
+        out: internal/store/mysql/sqlcgen
+  # query.sql для sqlite — только ASCII: парсер sqlite в sqlc v1.31 путает
+  # смещения на многобайтных символах, и кириллица в комментариях ломает
+  # генерацию. Пояснения к запросам — в internal/store/sqlite/store.go.
+  - engine: sqlite
+    schema: migrations/sqlite
+    queries: internal/store/sqlite/query.sql
+    gen:
+      go:
+        package: sqlcgen
+        out: internal/store/sqlite/sqlcgen

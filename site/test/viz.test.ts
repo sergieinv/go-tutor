@@ -22,8 +22,9 @@ const vizFiles = fs
   .flatMap((m) =>
     fs
       .readdirSync(path.join(content, m.name), { withFileTypes: true })
-      .filter((l) => l.isDirectory() && fs.existsSync(path.join(content, m.name, l.name, "viz.ts")))
-      .map((l) => path.join(content, m.name, l.name, "viz.ts")),
+      .filter((l) => l.isDirectory())
+      .flatMap((l) => ["viz.ts", "viz-live.ts"].map((f) => path.join(content, m.name, l.name, f)))
+      .filter((f) => fs.existsSync(f)),
   );
 
 test("у пилотных уроков есть визуализаторы", () => {
@@ -34,9 +35,10 @@ test("у пилотных уроков есть визуализаторы", () 
 
 for (const file of vizFiles) {
   const id = path.relative(content, path.dirname(file));
-  test(`viz.ts ${id} корректен`, async () => {
+  test(`${path.basename(file)} ${id} корректен`, async () => {
     const viz: Viz = (await import(pathToFileURL(file).href)).default;
     assert.deepEqual(validate(viz), []);
+    if (file.endsWith("viz-live.ts")) assert.equal(viz.kind, "live", "viz-live.ts — только живой визуализатор");
     if (viz.kind === "live") {
       assert.ok(fs.existsSync(path.join(path.dirname(file), viz.file)), `нет ${viz.file}`);
     }

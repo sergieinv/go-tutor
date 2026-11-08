@@ -1,0 +1,110 @@
+questions:
+  - id: deadline-vs-canceled
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"context"
+      	"errors"
+      	"fmt"
+      	"time"
+      )
+
+      func main() {
+      	ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond)
+      	defer cancel()
+      	<-ctx.Done()
+      	err := fmt.Errorf("reserve item 1: %w", fmt.Errorf("query: %w", ctx.Err()))
+      	fmt.Println(errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled))
+      }
+    options:
+      - text: true false
+        correct: true
+        explain: "Истёкший дедлайн — это `context.DeadlineExceeded`, явная отмена — `context.Canceled`, и друг другу они не равны. Поэтому функция перевода ошибок в статусы проверяет оба. Вызов `cancel` после истечения причину не меняет."
+      - text: true true
+        explain: "`DeadlineExceeded` не оборачивает `Canceled`: это две разные ошибки-значения. Хендлер, который проверяет только `Canceled`, ответит на таймаут `500`."
+      - text: false false
+        explain: "`%w` на обоих уровнях сохраняет цепочку, и `errors.Is` доходит до `ctx.Err()`."
+
+  - id: errgroup-cause
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"context"
+      	"errors"
+      	"fmt"
+
+      	"golang.org/x/sync/errgroup"
+      )
+
+      func main() {
+      	g, ctx := errgroup.WithContext(context.Background())
+      	g.Go(func() error { return errors.New("relay: broker down") })
+      	g.Go(func() error {
+      		<-ctx.Done() // воркер ждёт отмены группы
+      		return ctx.Err()
+      	})
+      	fmt.Println(g.Wait())
+      	fmt.Println(ctx.Err(), "|", context.Cause(ctx))
+      }
+    options:
+      - text: |
+          relay: broker down
+          context canceled | relay: broker down
+        correct: true
+        explain: "Первая ошибка в группе отменяет её контекст — остальные воркеры останавливаются, а `Wait` возвращает именно первую ошибку, а не `context canceled` от тех, кого отменили. Причину отмены хранит `context.Cause`."
+      - text: |
+          context canceled
+          context canceled | context canceled
+        explain: "`Wait` запоминает только первую ненулевую ошибку. Второй воркер вернул свою позже — после отмены, вызванной первой."
+      - text: |
+          relay: broker down
+          <nil> | <nil>
+        explain: "Контекст из `errgroup.WithContext` отменяется при первой ошибке (и в любом случае — после `Wait`)."
+
+  - id: shutdown-order
+    kind: single
+    prompt: Сервис с HTTP-сервером, фоновым воркером outbox и пулом `*sql.DB` получил `SIGTERM`. Какой порядок остановки верный?
+    options:
+      - text: "`srv.Shutdown` → отменить контекст воркеров и дождаться их → `db.Close()`"
+        correct: true
+        explain: "Каждый следующий шаг закрывает то, чем пользовались предыдущие: обработчики до последнего запроса ходят в базу и могут класть события в outbox, воркер дописывает пачку, и только потом закрывается пул."
+      - text: "`db.Close()` → `srv.Shutdown` → остановить воркеры"
+        explain: "Запросы, которые `Shutdown` ещё ждёт, получат `sql: database is closed` и ответят `500` — ровно то, от чего graceful shutdown защищает."
+      - text: "Отменить один общий контекст — и сервер, и воркеры, и база остановятся сами"
+        explain: "Отмена контекста не закрывает слушатель и не ждёт обработчики, а `*sql.DB` о контексте не знает. Одновременная остановка воркеров и HTTP тоже плоха: обработчик может положить в outbox событие, которое уже некому отправить до следующего старта."
+      - text: "`os.Exit(0)` в обработчике сигнала: оркестратор всё равно перезапустит под"
+        explain: "Активные запросы оборвутся посреди ответа, незавершённые транзакции откатятся, а воркер может отправить событие и не успеть отметить его — получится повторная отправка."
+
+  - id: without-cancel
+    kind: output
+    prompt: Хендлер хочет записать аудит после ответа и не потерять при этом id запроса. Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"context"
+      	"fmt"
+      )
+
+      type reqID struct{}
+
+      func main() {
+      	reqCtx, cancel := context.WithCancel(context.WithValue(context.Background(), reqID{}, "req-1"))
+      	audit := context.WithoutCancel(reqCtx)
+      	cancel() // ответ отправлен, контекст запроса отменён
+      	fmt.Println(reqCtx.Err(), audit.Err(), audit.Value(reqID{}))
+      }
+    options:
+      - text: context canceled <nil> req-1
+        correct: true
+        explain: "`context.WithoutCancel` (Go 1.21) сохраняет значения родителя, но не его отмену и дедлайн. Так работу, которая должна пережить запрос, отвязывают от него — и задают ей собственный таймаут через `WithTimeout`, иначе она может висеть вечно."
+      - text: context canceled context canceled req-1
+        explain: "Именно от этого `WithoutCancel` и защищает: отмена родителя до такого контекста не доходит."
+      - text: "context canceled <nil> <nil>"
+        explain: "Значения (`Value`) наследуются — отрезается только отмена."

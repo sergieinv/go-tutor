@@ -1,0 +1,152 @@
+questions:
+  - id: broken-chain
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"errors"
+      	"fmt"
+      )
+
+      var ErrNotFound = errors.New("not found")
+
+      func main() {
+      	repo := fmt.Errorf("select order 7: %v", ErrNotFound)
+      	svc := fmt.Errorf("load order: %w", repo)
+      	fmt.Println(svc)
+      	fmt.Println(errors.Is(svc, ErrNotFound), errors.Is(svc, repo))
+      }
+    options:
+      - text: |
+          load order: select order 7: not found
+          false true
+        correct: true
+        explain: "Цепочка рвётся на звене с `%v`: репозиторий превратил `ErrNotFound` в текст. Сервис честно обернул `%w` то, что получил, поэтому до `repo` `errors.Is` доходит, а до причины — нет. Текст ошибки при этом одинаковый — на глаз разницу не видно, поэтому на ревью смотрят на глагол."
+      - text: |
+          load order: select order 7: not found
+          true true
+        explain: "Одного `%w` наверху мало: `errors.Is` идёт по цепочке `Unwrap`, а `fmt.Errorf` с `%v` не сохраняет причину — у `repo` нет `Unwrap`."
+      - text: |
+          load order: select order 7: not found
+          false false
+        explain: "`svc` создан с `%w` и оборачивает именно значение `repo` — его `errors.Is` находит сравнением."
+
+  - id: pointer-receiver-iface
+    kind: compile
+    prompt: Интерфейс объявлен у потребителя, хранилище реализует его методом с pointer receiver. Скомпилируется ли программа?
+    code: |
+      package main
+
+      import (
+      	"context"
+      	"fmt"
+      )
+
+      type pricer interface {
+      	Price(ctx context.Context, sku string) (int64, error)
+      }
+
+      func total(ctx context.Context, p pricer, skus ...string) int64 {
+      	var sum int64
+      	for _, s := range skus {
+      		v, _ := p.Price(ctx, s)
+      		sum += v
+      	}
+      	return sum
+      }
+
+      type memStore struct{ prices map[string]int64 }
+
+      func (m *memStore) Price(_ context.Context, sku string) (int64, error) {
+      	return m.prices[sku], nil
+      }
+
+      func main() {
+      	s := memStore{prices: map[string]int64{"a": 1}}
+      	fmt.Println(total(context.Background(), s, "a"))
+      }
+    compiles: false
+    explain: "Метод с pointer receiver входит в набор методов `*memStore`, но не `memStore`, поэтому значение `s` интерфейс `pricer` не реализует (`missing method Price (method Price has pointer receiver)`). Нужно `total(ctx, &s, \"a\")`. Строка `var _ pricer = (*memStore)(nil)` рядом с типом ловит такое несоответствие при компиляции пакета, а не у первого потребителя."
+
+  - id: naming
+    kind: single
+    prompt: "В пакете `user` объявлен тип с методами регистрации и поиска пользователей. Какое имя типа идиоматично?"
+    options:
+      - text: "`user.Service`"
+        correct: true
+        explain: "Имя пакета — часть имени при использовании: `user.Service`, `user.New`. Повторять его в типе незачем."
+      - text: "`user.UserService`"
+        explain: "Заикание: в коде читается как `user.UserService`. Code Review Comments прямо советует его избегать — как `http.HTTPServer` или `bytes.BytesBuffer`."
+      - text: "`user.IUserService`"
+        explain: "Префикс `I` — соглашение .NET. В Go интерфейсы не помечают, а для типа с методами `I` и вовсе вводит в заблуждение."
+      - text: "`user.UserServiceImpl`"
+        explain: "Суффикс `Impl` появляется, когда интерфейс объявлен рядом с реализацией «для DI». В Go реализацию экспортируют под нормальным именем, а интерфейс объявляет потребитель."
+
+  - id: zero-values
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"strings"
+      	"sync"
+      )
+
+      type counter struct {
+      	mu sync.Mutex
+      	n  map[string]int
+      }
+
+      func main() {
+      	var sb strings.Builder
+      	sb.WriteString("go")
+      	var nums []int
+      	nums = append(nums, 1)
+      	var c counter
+      	c.mu.Lock()
+      	v := c.n["x"]
+      	c.mu.Unlock()
+      	fmt.Println(sb.String(), len(nums), v, len(c.n))
+      }
+    options:
+      - text: go 1 0 0
+        correct: true
+        explain: "Нулевые значения `strings.Builder`, `sync.Mutex` и среза готовы к работе без конструктора — так и стоит проектировать свои типы. Чтение из `nil`-map возвращает нулевое значение. А вот запись `c.n[\"x\"]++` запаниковала бы: map нужно создать, и это единственное место, где `counter` требует инициализации."
+      - text: "panic: assignment to entry in nil map"
+        explain: "Программа только читает из `nil`-map — это разрешено. Паника была бы при записи."
+      - text: "panic: sync: unlock of unlocked mutex"
+        explain: "Нулевой `sync.Mutex` — открытый мьютекс, `Lock`/`Unlock` на нём корректны."
+
+  - id: review-remarks
+    kind: multiple
+    prompt: Какие замечания к этому коду справедливы?
+    code: |
+      type OrderServer struct {
+      	ctx context.Context
+      	db  *sql.DB
+      }
+
+      func (this *OrderServer) GetOrder(id int64) (Order, error) {
+      	var o Order
+      	err := this.db.QueryRowContext(this.ctx,
+      		`SELECT id, total FROM orders WHERE id = ?`, id).Scan(&o.ID, &o.Total)
+      	return o, err
+      }
+    options:
+      - text: "`context.Context` хранится в структуре — его передают первым параметром метода"
+        correct: true
+        explain: "Контекст живёт столько, сколько запрос, а сервер — сколько процесс. Контекст из поля либо давно отменён, либо `Background` без дедлайна, и отмена клиентом до запроса не дойдёт."
+      - text: "Receiver назван `this` — нужно короткое имя от типа, например `s`"
+        correct: true
+        explain: "Code Review Comments: имя receiver — одна-две буквы, одинаковое во всех методах типа; `this` и `self` не используют."
+      - text: "`GetOrder` — в Go геттеры без `Get`: `Order(ctx, id)`"
+        correct: true
+        explain: "Effective Go: метод, возвращающий значение, называют существительным — `Order`, `Owner`; приставка `Get` — привычка из Java и C#."
+      - text: "Плейсхолдер `?` с `id` — риск SQL-инъекции"
+        explain: "Наоборот: значение уходит драйверу отдельно от текста запроса. Инъекция появляется при склейке строк."
+      - text: "`*sql.DB` нельзя хранить в поле, его надо открывать в каждом методе"
+        explain: "`*sql.DB` — пул, безопасный для горутин. Его создают один раз в `main` и передают зависимостям; открывать на каждый запрос — значит каждый раз строить новый пул."

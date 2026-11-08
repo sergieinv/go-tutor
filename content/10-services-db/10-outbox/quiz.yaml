@@ -1,0 +1,83 @@
+questions:
+  - id: outbox-via-db
+    kind: output
+    prompt: Событие записывается через `db`, а не через `tx`. Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"context"
+      	"database/sql"
+      	"fmt"
+      	"os"
+      	"path/filepath"
+
+      	_ "modernc.org/sqlite"
+      )
+
+      func main() {
+      	ctx := context.Background()
+      	dir, _ := os.MkdirTemp("", "q")
+      	defer os.RemoveAll(dir)
+      	db, _ := sql.Open("sqlite", filepath.Join(dir, "q.db"))
+      	defer db.Close()
+      	db.Exec(`CREATE TABLE orders (id INTEGER PRIMARY KEY)`)
+      	db.Exec(`CREATE TABLE outbox (id INTEGER PRIMARY KEY, key TEXT)`)
+
+      	tx, _ := db.BeginTx(ctx, nil)
+      	db.ExecContext(ctx, `INSERT INTO outbox (key) VALUES ('1')`) // мимо tx
+      	tx.ExecContext(ctx, `INSERT INTO orders (id) VALUES (1)`)
+      	tx.Rollback() // заказ не удался
+
+      	var orders, events int
+      	db.QueryRow(`SELECT count(*) FROM orders`).Scan(&orders)
+      	db.QueryRow(`SELECT count(*) FROM outbox`).Scan(&events)
+      	fmt.Println(orders, events)
+      }
+    options:
+      - text: "0 1"
+        correct: true
+        explain: "`db.ExecContext` взял из пула другое соединение и закоммитил вставку сразу (autocommit) — ещё до того, как транзакция что-то записала. Откат касается только запросов через `tx`. Итог — событие о заказе, которого нет."
+      - text: "0 0"
+        explain: "Так было бы, если бы обе вставки шли через `tx`. `db` в Go — пул, а не «текущее соединение с открытой транзакцией»: ambient-транзакции, как у `TransactionScope`, нет."
+      - text: "1 1"
+        explain: "`tx.Rollback()` отменил вставку заказа — заказов 0."
+
+  - id: relay-crash
+    kind: single
+    prompt: "Relay опубликовал событие в брокер и упал до `UPDATE outbox SET published_at = ...`. Что произойдёт после перезапуска?"
+    options:
+      - text: "Событие опубликуется повторно — потребитель должен быть идемпотентным"
+        correct: true
+        explain: "Отметки нет — для relay событие не опубликовано. Это и есть at-least-once: потерь нет, дубли возможны. Потребитель хранит id обработанных событий и записывает его в одной транзакции с эффектом."
+      - text: "Событие потеряется"
+        explain: "Потеряться оно не может: строка в outbox осталась непомеченной. Потерь как раз и избегает outbox."
+      - text: "Брокер отбросит дубль сам"
+        explain: "Идемпотентный продюсер Kafka отсекает только повторы, которые делает сам клиент при сбое сети (тот же id продюсера и номер последовательности в партиции). Повторная отправка из кода после перезапуска relay для брокера — новое сообщение. Дубли отсекает потребитель."
+
+  - id: skip-locked
+    kind: single
+    prompt: "Два экземпляра relay одновременно выполняют `SELECT ... WHERE published_at IS NULL ORDER BY id LIMIT 2 FOR UPDATE SKIP LOCKED` на PostgreSQL, в outbox три неопубликованных события. Что получат транзакции?"
+    options:
+      - text: "Первая — события 1 и 2, вторая — событие 3, без ожидания"
+        correct: true
+        explain: "`FOR UPDATE` блокирует выбранные строки, `SKIP LOCKED` заставляет вторую транзакцию пропустить заблокированные и взять следующие. Так экземпляры делят работу, но порядок публикации между ними уже не гарантирован."
+      - text: "Вторая транзакция будет ждать, пока первая не закоммитит"
+        explain: "Так ведёт себя `FOR UPDATE` без `SKIP LOCKED`. С `NOWAIT` вторая получила бы ошибку, со `SKIP LOCKED` — пропускает занятые строки."
+      - text: "Обе получат события 1 и 2"
+        explain: "Тогда оба relay опубликовали бы одно и то же. `FOR UPDATE` не даёт двум транзакциям заблокировать одни строки."
+
+  - id: stop-on-error
+    kind: multiple
+    prompt: "Relay публикует пачку событий 1..5, брокер отказал на событии 3. Что из этого верно для relay, который сохраняет порядок событий?"
+    options:
+      - text: "События 1 и 2 помечены опубликованными"
+        correct: true
+        explain: "Их публикация прошла, отметка — сразу после каждой."
+      - text: "События 3, 4 и 5 остались непомеченными и в этом проходе не публикуются"
+        correct: true
+        explain: "Публикация 4 и 5 до 3 нарушила бы порядок: потребитель мог бы увидеть изменение заказа раньше его создания."
+      - text: "Событие 3 помечается, чтобы не мешать следующим"
+        explain: "Тогда оно потеряно — ровно то, от чего защищает outbox."
+      - text: "Relay должен откатить публикацию событий 1 и 2"
+        explain: "Отозвать сообщение из брокера нельзя, да и не нужно: 1 и 2 опубликованы корректно и по порядку."

@@ -1,0 +1,88 @@
+questions:
+  - id: internal-visibility
+    kind: multiple
+    prompt: "Модуль `example.com/shop`. Какие пакеты этого модуля могут импортировать `example.com/shop/orders/internal/pricing`?"
+    options:
+      - text: "`example.com/shop/orders`"
+        correct: true
+        explain: "`internal` доступен дереву с корнем в родителе каталога `internal`, то есть `orders` и всему, что под ним."
+      - text: "`example.com/shop/orders/httpapi`"
+        correct: true
+        explain: "Подпакет `orders` — тоже внутри дерева `orders/`."
+      - text: "`example.com/shop/cmd/shop`"
+        explain: "`cmd/shop` не лежит под `orders/`, компилятор ответит `use of internal package ... not allowed`. Чтобы пакет был доступен всему модулю, кладите его в `example.com/shop/internal/...` — в корень."
+      - text: "`example.com/shop`"
+        explain: "Корень модуля — родитель `orders`, а не `orders/internal`. Правило считает от каталога, в котором лежит `internal`."
+
+  - id: secret-unexported
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      type secret string
+
+      func (secret) String() string { return "***" }
+
+      type config struct {
+      	Token secret
+      	dsn   secret
+      }
+
+      func main() {
+      	fmt.Printf("%+v\n", config{Token: "t0k3n", dsn: "postgres://u:pw@db/x"})
+      }
+    options:
+      - text: "{Token:*** dsn:postgres://u:pw@db/x}"
+        correct: true
+        explain: "`fmt` вызывает `String` у поля, только если может получить его значение через `reflect` как интерфейс, а для неэкспортируемого поля это запрещено — печатается сырое значение. Надёжнее метод `String` (или `LogValue` для `slog`) у всей структуры конфигурации."
+      - text: "{Token:*** dsn:***}"
+        explain: "Неэкспортируемое поле `fmt` печатает через `reflect` напрямую, минуя методы."
+      - text: "{Token:t0k3n dsn:postgres://u:pw@db/x}"
+        explain: "Для экспортируемого поля `fmt` метод `String` вызывает — даже внутри структуры."
+
+  - id: flags-stop
+    kind: output
+    prompt: Значение из окружения уже записано в поле, флаги разбираются поверх. Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"flag"
+      	"fmt"
+      	"io"
+      )
+
+      func main() {
+      	cfg := struct{ Conns int }{Conns: 10}
+      	cfg.Conns = 20 // из ORDERS_MAX_CONNS
+      	fs := flag.NewFlagSet("orders", flag.ContinueOnError)
+      	fs.SetOutput(io.Discard)
+      	fs.IntVar(&cfg.Conns, "max-conns", cfg.Conns, "размер пула")
+      	err := fs.Parse([]string{"serve", "-max-conns", "30"})
+      	fmt.Println(cfg.Conns, err, fs.Args())
+      }
+    options:
+      - text: "20 <nil> [serve -max-conns 30]"
+        correct: true
+        explain: "Разбор останавливается на первом позиционном аргументе, и `-max-conns 30` остаётся в `fs.Args()` — молча. Поэтому `run` проверяет `fs.NArg() > 0` и возвращает ошибку, а подкоманды разбирают отдельным `FlagSet` после имени команды."
+      - text: "30 <nil> [serve]"
+        explain: "Пакет `flag`, в отличие от многих разборщиков, не ищет флаги после позиционных аргументов."
+      - text: "10 <nil> [serve -max-conns 30]"
+        explain: "Значение по умолчанию флага — текущее значение поля (`20`), и раз флаг не разобран, поле не меняется."
+
+  - id: where-interface
+    kind: single
+    prompt: "`orders.Service` использует хранилище, реализация — `postgres.Store` в `internal/orders/postgres`. Где объявить интерфейс `Store`?"
+    options:
+      - text: "В пакете `orders`, рядом с `Service`, — только методы, которые нужны сервису"
+        correct: true
+        explain: "Интерфейс описывает потребность потребителя. `postgres` импортирует `orders` ради доменных типов, а `orders` не знает о `postgres` — зависимость идёт внутрь, к домену. Сборку делает `main`: `orders.NewService(postgres.New(pool))`."
+      - text: "В пакете `postgres`, рядом с реализацией"
+        explain: "Так делают в .NET для DI. В Go реализации интерфейс не нужен (реализация неявна), а потребителю пришлось бы импортировать `postgres` ради типа — и тянуть его в тесты с фейком."
+      - text: "В отдельном пакете `interfaces` или `contracts`"
+        explain: "Пакет «по слою» без смысла: все зависят от него, он — от доменных типов, и легко получить цикл импортов. Интерфейс принадлежит тому, кто его использует."
+      - text: "В `pkg/store`, чтобы им могли пользоваться другие модули"
+        explain: "Внутренний контракт сервиса — не публичный API модуля. `pkg/` в сервисах обычно не нужен: всё, что не библиотека, кладут в `internal/`."

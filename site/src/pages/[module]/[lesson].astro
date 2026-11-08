@@ -38,7 +38,7 @@ const sections = await renderLessonBody(lesson.body);
 
     {sections.csharp && <CSharpBridge differences={sections.csharp} files={lesson.csharp} />}
 
-    <Playground lesson={lesson.id} example={lesson.example} race={lesson.meta.runner?.race} vulncheck={!!lesson.meta.govulncheck} />
+    <Playground lesson={lesson.id} example={lesson.example} race={lesson.meta.runner?.race} vulncheck={!!lesson.meta.govulncheck} labs={lesson.meta.runner?.labs} />
 
     {
       sections.internals && (
@@ -46,6 +46,7 @@ const sections = await renderLessonBody(lesson.body);
           <h2>Под капотом</h2>
           <div class="prose" set:html={sections.internals} />
           {lesson.hasViz && <VizPlayer lesson={lesson} />}
+          {lesson.hasLiveViz && <VizPlayer lesson={lesson} file="viz-live.ts" />}
         </section>
       )
     }
@@ -66,7 +67,7 @@ const sections = await renderLessonBody(lesson.body);
 
     <Quiz lesson={lesson.id} questions={lesson.quiz} />
 
-    {lesson.task && sections.task && <TaskBlock lesson={lesson.id} statement={sections.task} task={lesson.task} fix={lesson.meta.taskKind === "fix"} />}
+    {lesson.task && sections.task && <TaskBlock lesson={lesson.id} statement={sections.task} task={lesson.task} kind={lesson.meta.taskKind} />}
 
     <LessonStatus lesson={lesson.id} quizIds={lesson.quiz.map((q) => q.id)} hasTask={!!lesson.task} />
 

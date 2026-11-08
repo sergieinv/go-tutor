@@ -1,0 +1,12 @@
+POST /orders           → 201 {"id":1,"status":"reserved","items":[{"product_id":1,"quantity":2},{"product_id":2,"quantity":1}]}
+POST /orders           → 409 {"error":"out of stock"}
+POST /orders           → 422 {"error":"invalid items[0].product_id: unknown product"}
+POST /orders           → 400 {"error":"malformed JSON"}
+GET  /orders/1         → 200 {"id":1,"status":"reserved","items":[{"product_id":1,"quantity":2},{"product_id":2,"quantity":1}]}
+POST /orders/1/cancel  → 200 {"id":1,"status":"cancelled","items":[{"product_id":1,"quantity":2},{"product_id":2,"quantity":1}]}
+POST /orders/1/cancel  → 409 {"error":"order state does not allow this"}
+GET  /orders/42        → 404 {"error":"not found"}
+склад: кружка: 5
+склад: чайник: 1
+outbox: order.created {"order_id":1,"status":"reserved"}
+outbox: order.cancelled {"order_id":1,"status":"cancelled"}

@@ -1,0 +1,5 @@
+  лог: ошибка получения пользователя 2: not found
+до:    Failed to get user 2: not found. false
+после: user 2: not found true
+после: "" user 1: context canceled true
+до:    "alice" <nil> (отмену не заметила)

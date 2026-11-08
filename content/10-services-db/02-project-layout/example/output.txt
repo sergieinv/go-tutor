@@ -1,0 +1,6 @@
+конфигурация: {Addr:127.0.0.1:0 DBPath:orders.db Shutdown:10s APIToken:***}
+GET /stats: 200 заказов: 0
+сигнал получен, останавливаемся
+run: <nil>
+run: конфигурация: -shutdown-timeout должен быть > 0
+ORDERS_API_TOKEN не задан

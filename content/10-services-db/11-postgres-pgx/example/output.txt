@@ -1,0 +1,12 @@
+вставлен id 1
+ошибка: 23505 products_sku_key
+upsert mug id 1 вставка: false
+upsert cup id 4 вставка: true
+COPY строк: 2
+1 mug 500 {Color:red Weight:300} [kitchen gift]
+6 bowl 200 {Color:red Weight:0} []
+8 spoon 50 {Color: Weight:0} []
+уведомление: product_events price changed: mug
+воркер 1 взял замок: true
+воркер 2 взял замок: false
+после commit воркер 2: true

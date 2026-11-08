@@ -1,0 +1,100 @@
+questions:
+  - id: dsn-defaults
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+
+      	"github.com/go-sql-driver/mysql"
+      )
+
+      func main() {
+      	cfg, err := mysql.ParseDSN("app:secret@tcp(db)/shop")
+      	if err != nil {
+      		panic(err)
+      	}
+      	fmt.Println(cfg.Addr, cfg.ParseTime, cfg.Loc, cfg.Collation == "")
+      }
+    options:
+      - text: db:3306 false UTC true
+        correct: true
+        explain: "Порт по умолчанию драйвер дописывает сам. `ParseTime` выключен — без него `DATETIME` придёт как `[]byte`. `Loc` по умолчанию — UTC. `Collation` пуст: драйвер передаёт в рукопожатии свою collation по умолчанию, `utf8mb4_general_ci`."
+      - text: db true UTC true
+        explain: "`parseTime` по умолчанию выключен — это самая частая ловушка драйвера. А адрес без порта дополняется `:3306`."
+      - text: db:3306 false Local true
+        explain: "Драйвер не смотрит на часовой пояс машины: `NewConfig` и `ParseDSN` ставят `time.UTC`, пока в DSN нет `loc=`."
+      - text: "db:3306 false UTC false"
+        explain: "Поле `Collation` заполняется, только если оно задано в DSN (`collation=...`) или в коде."
+
+  - id: classify-error
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"errors"
+      	"fmt"
+
+      	"github.com/go-sql-driver/mysql"
+      )
+
+      func main() {
+      	err := fmt.Errorf("create order: %w", &mysql.MySQLError{Number: 1062, Message: "Duplicate entry"})
+      	var me *mysql.MySQLError
+      	fmt.Println(errors.As(err, &me), me.Number,
+      		errors.Is(err, &mysql.MySQLError{Number: 1062}),
+      		errors.Is(err, &mysql.MySQLError{Number: 1213}))
+      }
+    options:
+      - text: true 1062 true false
+        correct: true
+        explain: "`errors.As` находит `*mysql.MySQLError` под обёрткой `%w`. У типа есть метод `Is`, который сравнивает только `Number`, поэтому `errors.Is` с другим указателем, но тем же номером, — `true`, а с 1213 — `false`."
+      - text: true 1062 false false
+        explain: "Без метода `Is` так и было бы: разные указатели не равны. Но `*mysql.MySQLError` реализует `Is` и сравнивает номера ошибок."
+      - text: false 0 false false
+        explain: "`%w` сохраняет исходную ошибку в цепочке — `errors.As` и `errors.Is` её разворачивают."
+
+  - id: gap-lock
+    kind: multiple
+    prompt: "В таблице `slots (id INT PRIMARY KEY)` строки 10, 20, 30. Транзакция A в Repeatable Read выполнила `SELECT id FROM slots WHERE id BETWEEN 15 AND 25 FOR UPDATE` и не завершилась. Какие вставки из другой транзакции будут ждать?"
+    options:
+      - text: "INSERT 12"
+        correct: true
+        explain: "A держит next-key lock на записи 20 — это сама запись и промежуток (10, 20) перед ней. 12 попадает в промежуток."
+      - text: "INSERT 27"
+        correct: true
+        explain: "Сканирование дошло до 30, чтобы убедиться, что дальше диапазона ничего нет, и заблокировало промежуток (20, 30). В выводе примера это `X,GAP 30`."
+      - text: "INSERT 5"
+        explain: "Промежуток (−∞, 10) не заблокирован: сканирование началось с первой записи после 15, то есть с 20."
+      - text: "INSERT 35"
+        explain: "За 30 блокировки нет: блокируется промежуток перед 30, но не после."
+
+  - id: upsert-rows
+    kind: single
+    prompt: "Go-драйвер с настройками по умолчанию, таблица `stock` пуста. Трижды выполняется `INSERT INTO stock (sku, qty) VALUES ('cup', ?) AS new ON DUPLICATE KEY UPDATE qty = new.qty` с `qty` = 5, 7, 7. Что вернёт `RowsAffected` для этих трёх вызовов?"
+    options:
+      - text: "1, 2, 0"
+        correct: true
+        explain: "Для `ON DUPLICATE KEY UPDATE` MySQL считает вставку за 1, обновление за 2, а обновление без изменений за 0. Go-драйвер по умолчанию возвращает число изменённых строк."
+      - text: "1, 1, 1"
+        explain: "Так ответил бы `INSERT … ON CONFLICT DO UPDATE` в PostgreSQL. В MySQL обновление при дубликате считается за две строки."
+      - text: "1, 2, 1"
+        explain: "Так будет с `ClientFoundRows = true` (`clientFoundRows=true` в DSN) — и по умолчанию в MySqlConnector, где `UseAffectedRows=false`: строка найдена, хотя и не изменена."
+
+  - id: lock-wait-timeout
+    kind: single
+    prompt: "Внутри транзакции `INSERT` прошёл, а следующий `UPDATE` вернул ошибку 1205 (Lock wait timeout exceeded). Настройки сервера по умолчанию. Что правильно сделать?"
+    options:
+      - text: "Откатить транзакцию и повторить её целиком, начиная с `BeginTx`"
+        correct: true
+        explain: "При `innodb_rollback_on_timeout = OFF` откатывается только `UPDATE`, а `INSERT` остаётся в открытой транзакции. Надёжно — откат (`defer tx.Rollback()`) и повтор всей транзакции, как после дедлока."
+      - text: "Повторить только `UPDATE` в той же транзакции"
+        explain: "Формально можно, но блокировка, скорее всего, всё ещё занята, а логика транзакции могла зависеть от прочитанного раньше. Повтор одного запроса — источник трудноуловимых ошибок, повторяют транзакцию."
+      - text: "Вызвать `Commit` — InnoDB уже откатил транзакцию"
+        explain: "Это верно для дедлока (1213), но не для 1205: здесь `Commit` зафиксирует `INSERT` без `UPDATE`."
+      - text: "Ничего: драйвер повторит запрос сам"
+        explain: "go-sql-driver/mysql не повторяет запросы при ошибках сервера. `database/sql` повторяет только `driver.ErrBadConn` — и только когда запрос точно не ушёл на сервер."

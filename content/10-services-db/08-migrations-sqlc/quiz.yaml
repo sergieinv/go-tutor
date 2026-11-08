@@ -1,0 +1,118 @@
+questions:
+  - id: broken-migration
+    kind: output
+    prompt: Вторая миграция падает на втором операторе. Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"context"
+      	"database/sql"
+      	"fmt"
+      	"testing/fstest"
+
+      	"github.com/pressly/goose/v3"
+      	_ "modernc.org/sqlite"
+      )
+
+      func main() {
+      	ctx := context.Background()
+      	db, _ := sql.Open("sqlite", ":memory:")
+      	db.SetMaxOpenConns(1)
+      	fsys := fstest.MapFS{
+      		"00001_a.sql": {Data: []byte("-- +goose Up\nCREATE TABLE a (x INTEGER);\n")},
+      		"00002_b.sql": {Data: []byte("-- +goose Up\nCREATE TABLE b (x INTEGER);\nINSERT INTO missing VALUES (1);\n")},
+      	}
+      	p, _ := goose.NewProvider(goose.DialectSQLite3, db, fsys)
+      	res, err := p.Up(ctx)
+
+      	var tables int
+      	db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE name IN ('a', 'b')`).Scan(&tables)
+      	version, _ := p.GetDBVersion(ctx)
+      	fmt.Println(len(res), err != nil, tables, version)
+      }
+    options:
+      - text: "0 true 1 1"
+        correct: true
+        explain: "Каждая миграция goose выполняется в своей транзакции: миграция 2 откатилась вместе с `CREATE TABLE b`, версия осталась 1. При ошибке `Up` возвращает `nil` — список успешно применённых миграций лежит в поле `Applied` ошибки `*goose.PartialError`."
+      - text: "1 true 2 1"
+        explain: "Таблица `b` создана в той же транзакции, что и упавший `INSERT`, и откатилась вместе с ним. А `res` при ошибке — `nil`: применённые миграции — в `*goose.PartialError`."
+      - text: "1 true 1 1"
+        explain: "Таблицы и версия — верно, но `Up` при ошибке возвращает `nil` вместо результатов; миграция 1 доступна только через `PartialError.Applied`."
+      - text: "0 true 0 0"
+        explain: "Миграция 1 успела закоммититься в своей транзакции до того, как началась миграция 2, — откатывается только упавшая."
+
+  - id: many-nil
+    kind: output
+    prompt: Так sqlc генерирует метод для `:many`. Что выведет программа, если строк нет?
+    code: |
+      package main
+
+      import (
+      	"database/sql"
+      	"encoding/json"
+      	"fmt"
+
+      	_ "modernc.org/sqlite"
+      )
+
+      type Product struct{ ID int64 }
+
+      // Как в сгенерированном query.sql.go (сокращено).
+      func listProducts(db *sql.DB) ([]Product, error) {
+      	rows, err := db.Query(`SELECT id FROM products`)
+      	if err != nil {
+      		return nil, err
+      	}
+      	defer rows.Close()
+      	var items []Product
+      	for rows.Next() {
+      		var i Product
+      		if err := rows.Scan(&i.ID); err != nil {
+      			return nil, err
+      		}
+      		items = append(items, i)
+      	}
+      	return items, rows.Err()
+      }
+
+      func main() {
+      	db, _ := sql.Open("sqlite", ":memory:")
+      	db.SetMaxOpenConns(1)
+      	db.Exec(`CREATE TABLE products (id INTEGER PRIMARY KEY)`)
+      	items, err := listProducts(db)
+      	b, _ := json.Marshal(items)
+      	fmt.Println(len(items), err, string(b))
+      }
+    options:
+      - text: "0 <nil> null"
+        correct: true
+        explain: "`var items []Product` — nil-срез, и без строк он таким и возвращается. `len` равен 0, но `encoding/json` кодирует nil-срез как `null`. Клиент API, ждущий `[]`, сломается; в sqlc есть опция `emit_empty_slices: true`, иначе заменяйте nil на пустой срез на краю (в HTTP-слое)."
+      - text: "0 <nil> []"
+        explain: "Так было бы с `items := []Product{}` или `make`. Сгенерированный код объявляет `var items []Product` — nil-срез, и JSON для него — `null`."
+      - text: "0 sql: no rows in result set null"
+        explain: "`sql.ErrNoRows` возвращает только `Scan` у `QueryRow` (аннотация `:one`). Пустой результат `:many` — не ошибка."
+
+  - id: sqlc-unknown-column
+    kind: single
+    prompt: "В `query.sql` написали `SELECT id, title FROM products`, а столбца `title` в схеме нет. Когда это обнаружится?"
+    options:
+      - text: "При `sqlc generate`: генерация упадёт с ошибкой `column \"title\" does not exist`"
+        correct: true
+        explain: "sqlc разбирает каждый запрос по схеме (миграциям) и выводит типы столбцов — неизвестный столбец ловится до компиляции. Поэтому в CI проверяют `sqlc diff`: запрос, поправленный без перегенерации, тоже заметен."
+      - text: "При компиляции Go: в модели не будет поля `Title`"
+        explain: "До компиляции дело не дойдёт: код для такого запроса не генерируется."
+      - text: "Только при выполнении запроса — ошибкой драйвера"
+        explain: "Так вышло бы с запросом, написанным руками в строке Go, или с GORM. sqlc проверяет запросы по схеме при генерации."
+
+  - id: expand-contract
+    kind: single
+    prompt: "Нужно переименовать столбец `customers.name` в `full_name`, сервис выкатывается rolling deploy. Какой порядок правильный?"
+    options:
+      - text: "Миграция добавляет `full_name`; релиз пишет в оба столбца; данные переносятся `UPDATE`; релиз читает `full_name`; следующая миграция удаляет `name`"
+        correct: true
+        explain: "Expand/contract: на каждом шаге схема совместима и со старой, и с новой версией кода, которые работают одновременно. Удаление старого — только когда его никто не читает."
+      - text: "Одна миграция `RENAME COLUMN name TO full_name` прямо перед выкаткой нового кода"
+        explain: "Пока выкатка идёт, старые реплики читают `name` и падают. Переименование мгновенно для базы, но не для флота сервисов."
+      - text: "Выкатить код, читающий `full_name`, а миграцию применить после"
+        explain: "Новый код до миграции не найдёт столбец. Код и схема меняются так, чтобы любая пара «версия кода × версия схемы» в окне выкатки работала."

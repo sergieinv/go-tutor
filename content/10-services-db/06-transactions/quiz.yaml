@@ -1,0 +1,146 @@
+questions:
+  - id: db-inside-tx
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"database/sql"
+      	"fmt"
+      	"os"
+      	"path/filepath"
+
+      	_ "modernc.org/sqlite"
+      )
+
+      func main() {
+      	dir, _ := os.MkdirTemp("", "q")
+      	defer os.RemoveAll(dir)
+      	db, _ := sql.Open("sqlite", filepath.Join(dir, "q.db"))
+      	defer db.Close()
+      	db.Exec(`CREATE TABLE t (x INTEGER)`)
+
+      	tx, _ := db.Begin()
+      	defer tx.Rollback()
+      	tx.Exec(`INSERT INTO t VALUES (1)`)
+
+      	var inTx, viaDB int
+      	tx.QueryRow(`SELECT count(*) FROM t`).Scan(&inTx)
+      	db.QueryRow(`SELECT count(*) FROM t`).Scan(&viaDB)
+      	fmt.Println(inTx, viaDB)
+      }
+    options:
+      - text: "1 0"
+        correct: true
+        explain: "`db.QueryRow` берёт из пула другое соединение — оно не участвует в транзакции и незафиксированной вставки не видит. Транзакция в Go — это соединение, которое держит `tx`; запрос мимо `tx` в неё не попадает."
+      - text: "1 1"
+        explain: "Так было бы, если бы `db` знал о «текущей транзакции», как `TransactionScope` в .NET. В Go такого нет: `db` и `tx` — разные пути к базе."
+      - text: "0 0"
+        explain: "Внутри своей транзакции изменения видны сразу, ещё до `Commit`."
+
+  - id: rollback-after-commit
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"database/sql"
+      	"fmt"
+
+      	_ "modernc.org/sqlite"
+      )
+
+      func main() {
+      	db, _ := sql.Open("sqlite", ":memory:")
+      	defer db.Close()
+      	db.SetMaxOpenConns(1)
+      	db.Exec(`CREATE TABLE t (x INTEGER)`)
+
+      	tx, _ := db.Begin()
+      	tx.Exec(`INSERT INTO t VALUES (1)`)
+      	fmt.Println(tx.Commit())
+      	fmt.Println(tx.Rollback())
+      }
+    options:
+      - text: |
+          <nil>
+          sql: transaction has already been committed or rolled back
+        correct: true
+        explain: "После `Commit` транзакция завершена, и `Rollback` ничего не делает, только возвращает `sql.ErrTxDone`. Поэтому `defer tx.Rollback()` сразу после `BeginTx` безопасен: на успешном пути он безвреден, на всех остальных — откатывает."
+      - text: |
+          <nil>
+          <nil>
+        explain: "`Rollback` завершённой транзакции возвращает `sql.ErrTxDone`. Откатить уже зафиксированное нельзя."
+      - text: "panic: sql: transaction has already been committed or rolled back"
+        explain: "`database/sql` не паникует на повторном завершении — возвращает ошибку `sql.ErrTxDone`."
+
+  - id: readonly-sqlite
+    kind: output
+    prompt: "Что выведет программа? Драйвер — `modernc.org/sqlite`."
+    code: |
+      package main
+
+      import (
+      	"context"
+      	"database/sql"
+      	"fmt"
+
+      	_ "modernc.org/sqlite"
+      )
+
+      func main() {
+      	ctx := context.Background()
+      	db, _ := sql.Open("sqlite", ":memory:")
+      	defer db.Close()
+      	db.SetMaxOpenConns(1)
+      	db.Exec(`CREATE TABLE t (x INTEGER)`)
+
+      	tx, err := db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+      	if err != nil {
+      		fmt.Println("BeginTx:", err)
+      		return
+      	}
+      	_, err = tx.ExecContext(ctx, `INSERT INTO t VALUES (1)`)
+      	tx.Commit()
+      	var n int
+      	db.QueryRow(`SELECT count(*) FROM t`).Scan(&n)
+      	fmt.Println(err, n)
+      }
+    options:
+      - text: "<nil> 1"
+        correct: true
+        explain: "`TxOptions` — просьба к драйверу, а не гарантия `database/sql`. Этот драйвер SQLite молча игнорирует `ReadOnly` и `Isolation`. `pgx` выполнит `BEGIN ... READ ONLY`, и PostgreSQL отклонит `INSERT`; MySQL-драйвер — `START TRANSACTION READ ONLY`. Проверяйте поведение своего драйвера."
+      - text: "BeginTx: read-only transactions are not supported"
+        explain: "`database/sql` отказывает только драйверам без `BeginTx` с опциями. Этот драйвер его реализует и опции просто не применяет."
+      - text: "cannot execute INSERT in a read-only transaction 0"
+        explain: "Так ответил бы PostgreSQL. SQLite через этот драйвер про `ReadOnly` не узнаёт вовсе."
+
+  - id: coalesce
+    kind: single
+    prompt: "В таблице `ledger` нет строк со счётом 42. Что произойдёт при `db.QueryRowContext(ctx, \"SELECT SUM(amount) FROM ledger WHERE account_id = ?\", 42).Scan(&total)`, где `total int64`?"
+    options:
+      - text: "`Scan` вернёт ошибку: агрегат над пустым множеством — `NULL`, а в `int64` его не положить"
+        correct: true
+        explain: "`SUM` без строк — одна строка с `NULL`, а не ноль и не `sql.ErrNoRows`. Варианты: `COALESCE(SUM(amount), 0)` в запросе или `sql.Null[int64]` при чтении."
+      - text: "`total` станет 0"
+        explain: "`database/sql` не превращает `NULL` в нулевое значение: `Scan` в `int64` вернёт ошибку `converting NULL to int64 is unsupported`."
+      - text: "`Scan` вернёт `sql.ErrNoRows`"
+        explain: "Агрегат без `GROUP BY` всегда возвращает ровно одну строку — со значением `NULL`. `sql.ErrNoRows` бывает, когда строк нет вовсе."
+
+  - id: rc-anomalies
+    kind: multiple
+    prompt: "Какие аномалии возможны на уровне Read Committed в PostgreSQL (уровень по умолчанию)?"
+    options:
+      - text: Неповторяемое чтение
+        correct: true
+        explain: "Каждый запрос видит свежий снимок: повторное чтение той же строки может вернуть значение, зафиксированное другой транзакцией в промежутке."
+      - text: Фантомы
+        correct: true
+        explain: "Повторный запрос с тем же условием может увидеть новые строки, вставленные и зафиксированные другими."
+      - text: "Потерянное обновление в цикле «прочитал — посчитал — записал»"
+        correct: true
+        explain: "Две транзакции читают 10, одна пишет 7, другая 6 — первое списание пропало. Лечится блокировкой, версией строки или атомарным `UPDATE ... SET qty = qty - $1` — это урок про блокировки."
+      - text: Грязное чтение
+        explain: "Незафиксированные изменения других транзакций в PostgreSQL не видны ни на одном уровне: даже Read Uncommitted там работает как Read Committed."

@@ -2,15 +2,15 @@
 // только готовые шаги (JSON), а в браузер — общий плеер из viz/.
 import type { Viz } from "../../../viz/src/types.ts";
 
-const modules = import.meta.glob<{ default: Viz }>("../../../content/*/*/viz.ts", { eager: true });
+// viz-live.ts — второй, живой визуализатор урока рядом со сценарным viz.ts.
+const modules = import.meta.glob<{ default: Viz }>(["../../../content/*/*/viz.ts", "../../../content/*/*/viz-live.ts"], {
+  eager: true,
+});
 
-const byLesson = new Map(
-  Object.entries(modules).map(([file, mod]) => {
-    const id = file.replace(/^.*content\//, "").replace(/\/viz\.ts$/, "");
-    return [id, mod.default];
-  }),
-);
+export type VizFile = "viz.ts" | "viz-live.ts";
 
-export function lessonViz(id: string): Viz | undefined {
-  return byLesson.get(id);
+const byFile = new Map(Object.entries(modules).map(([file, mod]) => [file.replace(/^.*content\//, ""), mod.default]));
+
+export function lessonViz(id: string, file: VizFile = "viz.ts"): Viz | undefined {
+  return byFile.get(`${id}/${file}`);
 }

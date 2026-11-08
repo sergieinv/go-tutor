@@ -1,0 +1,128 @@
+questions:
+  - id: forgotten-rows
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"context"
+      	"database/sql"
+      	"fmt"
+      	"time"
+
+      	_ "modernc.org/sqlite"
+      )
+
+      func main() {
+      	db, _ := sql.Open("sqlite", ":memory:")
+      	defer db.Close()
+      	db.SetMaxOpenConns(1)
+
+      	rows, _ := db.Query(`SELECT 1 UNION ALL SELECT 2`)
+      	rows.Next() // прочитали первую строку и забыли про rows
+
+      	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+      	defer cancel()
+      	var n int
+      	err := db.QueryRowContext(ctx, `SELECT 3`).Scan(&n)
+      	fmt.Println(n, err, db.Stats().InUse)
+      }
+    options:
+      - text: "0 context deadline exceeded 1"
+        correct: true
+        explain: "`rows` не дочитаны и не закрыты — единственное соединение пула занято. `QueryRowContext` встаёт в очередь и через 50 мс получает ошибку своего контекста. `InUse` по-прежнему 1: соединение вернёт только `rows.Close()`."
+      - text: "3 <nil> 0"
+        explain: "Пул не забирает соединение у незакрытых `rows`: `Next` закрывает их сам только когда строки кончились, а вторая строка ещё не прочитана."
+      - text: "3 <nil> 2"
+        explain: "`SetMaxOpenConns(1)` — жёсткий лимит: второе соединение пул не откроет, сколько бы запросов ни ждало."
+      - text: Программа зависнет навсегда
+        explain: "Зависла бы без дедлайна — с `context.Background()`. Здесь ожидание соединения ограничено контекстом с таймаутом."
+
+  - id: idle-default
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"context"
+      	"database/sql"
+      	"fmt"
+
+      	_ "modernc.org/sqlite"
+      )
+
+      func main() {
+      	ctx := context.Background()
+      	db, _ := sql.Open("sqlite", ":memory:")
+      	defer db.Close()
+
+      	var conns []*sql.Conn
+      	for range 5 {
+      		c, _ := db.Conn(ctx)
+      		conns = append(conns, c)
+      	}
+      	for _, c := range conns {
+      		c.Close()
+      	}
+      	s := db.Stats()
+      	fmt.Println(s.OpenConnections, s.Idle, s.MaxIdleClosed)
+      }
+    options:
+      - text: "2 2 3"
+        correct: true
+        explain: "Лимита на открытые соединения по умолчанию нет — пул открыл пять. А простаивающих по умолчанию хранится только два: остальные три при возврате закрываются, это и считает `MaxIdleClosed`. При всплесках нагрузки такой пул постоянно открывает и закрывает соединения — `SetMaxIdleConns` стоит поднять."
+      - text: "5 5 0"
+        explain: "Так было бы после `SetMaxIdleConns(5)`. Значение по умолчанию — 2."
+      - text: "0 0 5"
+        explain: "Возвращённое соединение не закрывается, если в простаивающих есть место: два из пяти остаются в пуле."
+      - text: "1 1 4"
+        explain: "Без `SetMaxOpenConns` пул не ограничивает число открытых соединений — пять `db.Conn` получили пять разных соединений."
+
+  - id: release
+    kind: multiple
+    prompt: После каких действий соединение возвращается в пул?
+    options:
+      - text: "`rows.Next()` вернул `false`, потому что строки кончились"
+        correct: true
+        explain: "Дочитанные до конца `rows` закрываются сами. Но полагаться только на это нельзя — любой ранний `return` оставит их открытыми, поэтому `defer rows.Close()` пишут всегда."
+      - text: "`row.Scan(...)` у результата `QueryRowContext`"
+        correct: true
+        explain: "`Scan` закрывает внутренние `rows` в `defer`, даже если вернул ошибку, в том числе `sql.ErrNoRows`."
+      - text: "`tx.Commit()` или `tx.Rollback()`"
+        correct: true
+        explain: "Транзакция держит соединение от `BeginTx` до завершения. Отсюда правило `defer tx.Rollback()`: на ранних выходах иначе завершать её некому."
+      - text: "Отмена контекста, переданного в `QueryContext` или `BeginTx`"
+        correct: true
+        explain: "`database/sql` следит за контекстом: при отмене закрывает `rows` и откатывает транзакцию, освобождая соединение. Это страховка, а не замена `Close`/`Rollback`: с `context.Background()` её нет."
+      - text: "`rows.Err()` после цикла"
+        explain: "`Err` только сообщает, чем закончился обход, — соединение он не возвращает. Если цикл прервали раньше, нужен `rows.Close()`."
+      - text: "`db.QueryRowContext(...)` без `Scan`, как только запрос выполнился"
+        explain: "`*sql.Row` держит соединение, пока не вызван `Scan`; без него соединение занято, а ошибка запроса потеряна. Для запросов без результата — `ExecContext`."
+
+  - id: pool-size
+    kind: single
+    prompt: "Сервис запущен в 8 репликах, у каждой `db.SetMaxOpenConns(20)`. В PostgreSQL `max_connections = 100`. Что произойдёт под пиковой нагрузкой?"
+    options:
+      - text: "Реплики попытаются открыть до 160 соединений, и часть подключений база отвергнет ошибкой «too many clients»"
+        correct: true
+        explain: "Лимит пула — на один процесс, а лимит базы — на всех клиентов сразу. Бюджет соединений делят между репликами (с запасом для миграций, админки и реплик в момент деплоя) или ставят перед базой PgBouncer."
+      - text: "Пулы реплик договорятся между собой и не превысят 100"
+        explain: "Пулы ничего не знают друг о друге: `*sql.DB` — объект внутри процесса."
+      - text: "Ничего страшного: лишние запросы встанут в очередь пула и дождутся соединения"
+        explain: "В очередь встают запросы сверх `MaxOpenConns` своей реплики. Но здесь каждая реплика имеет право на 20, и это база не может открыть столько соединений."
+      - text: "`database/sql` уменьшит лимит, когда получит ошибку от базы"
+        explain: "Пул не адаптирует лимит: ошибка подключения просто вернётся запросу."
+
+  - id: waiters-order
+    kind: single
+    prompt: "Пул исчерпан, соединения ждут горутины A (пришла первой) и B. Одно соединение вернули. Кто его получит?"
+    options:
+      - text: Любая из двух — порядок не гарантирован
+        correct: true
+        explain: "Документация порядок не обещает, а текущая реализация `database/sql` отдаёт соединение случайному из ждущих. Справедливой очереди нет — поэтому у каждого запроса должен быть свой дедлайн, иначе невезучий будет ждать сколь угодно долго."
+      - text: A — ждущие обслуживаются по очереди
+        explain: "FIFO здесь нет: соединение достаётся случайному ждущему."
+      - text: Никто — соединение сначала попадёт в простаивающие
+        explain: "Наоборот: при наличии ждущих соединение передаётся одному из них напрямую, минуя простаивающие."
