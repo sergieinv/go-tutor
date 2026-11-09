@@ -63,6 +63,18 @@ const unavailable =
   "Runner недоступен. Учебник с песочницей запускается командой docker compose up — " +
   "либо для разработки запустите go run ./runner.";
 
+/**
+ * Runner не ответил вовсе: сеть, 502/504 от nginx или прокси dev-сервера.
+ * Отказ самого runner (4xx, ошибка в JSON) — обычная RunnerError: тогда
+ * показывать сохранённый вывод примера вместо ответа нельзя.
+ */
+export class RunnerUnavailable extends RunnerError {
+  constructor() {
+    super(unavailable);
+    this.name = "RunnerUnavailable";
+  }
+}
+
 async function post<T>(path: string, body: unknown): Promise<T> {
   let resp: Response;
   try {
@@ -72,10 +84,10 @@ async function post<T>(path: string, body: unknown): Promise<T> {
       body: JSON.stringify(body),
     });
   } catch {
-    throw new RunnerError(unavailable);
+    throw new RunnerUnavailable();
   }
   // 502/504 отдаёт nginx или прокси dev-сервера, когда runner не запущен.
-  if (resp.status === 502 || resp.status === 504) throw new RunnerError(unavailable);
+  if (resp.status === 502 || resp.status === 504) throw new RunnerUnavailable();
   const data = await resp.json().catch(() => undefined);
   if (!resp.ok) {
     throw new RunnerError(data?.error ?? `Runner ответил ошибкой ${resp.status}`);

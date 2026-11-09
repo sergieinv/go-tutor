@@ -172,6 +172,7 @@ const rendered = await Promise.all(
     list-style: none;
     padding: 0;
     display: grid;
+    grid-template-columns: minmax(0, 1fr);
     gap: 1rem;
   }
   .prompt {
@@ -179,6 +180,8 @@ const rendered = await Promise.all(
     font-weight: 600;
   }
   fieldset {
+    /* По умолчанию min-width: min-content — код в вариантах растягивал бы страницу. */
+    min-width: 0;
     border: none;
     padding: 0;
     margin: 0.75rem 0;
@@ -188,6 +191,10 @@ const rendered = await Promise.all(
     border-radius: var(--radius);
     padding: 0.4rem 0.75rem;
     margin: 0.4rem 0;
+  }
+  .option label > :global(span) {
+    min-width: 0;
+    overflow-wrap: anywhere;
   }
   .option label {
     display: flex;

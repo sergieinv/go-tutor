@@ -13,6 +13,9 @@ COPY site/ ./
 COPY content /app/content
 # Движок визуализаций: сайт импортирует его исходники напрямую.
 COPY viz /app/viz
+# Версия курса (файл VERSION) для подвала страниц; передаёт scripts/images.sh
+# или docker-compose.yml. Без неё — dev.
+ARG GOTUTOR_VERSION=dev
 RUN npx astro telemetry disable && npm run build
 
 FROM nginx:1.29-alpine

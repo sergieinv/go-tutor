@@ -121,7 +121,7 @@ func Run(ctx context.Context, cfg Config, log *slog.Logger, ready func(Addrs)) e
 		ops.HandleFunc("/debug/pprof/trace", pprof.Trace)
 	}
 	// WriteTimeout не ставим: /debug/pprof/profile пишет ответ десятки секунд.
-	opsSrv := &http.Server{Handler: ops, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, IdleTimeout: 30 * time.Second}
+	opsSrv := &http.Server{Handler: sameOriginOnly(ops), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, IdleTimeout: 30 * time.Second}
 
 	log.Info("listening", "minecraft", mcLn.Addr().String(), "websocket", wsLn.Addr().String(), "ops", opsLn.Addr().String(),
 		"view_distance", cfg.World.ViewDistance, "max_players", cfg.World.MaxPlayers,
@@ -192,4 +192,24 @@ func Run(ctx context.Context, cfg Config, log *slog.Logger, ready func(Addrs)) e
 	wg.Wait()
 	log.Info("stopped")
 	return firstErr
+}
+
+// sameOriginOnly не пускает на служебный порт запросы со страниц других
+// сайтов: 127.0.0.1 открыт любой вкладке браузера, а фоновые запросы
+// GET /debug/pprof/profile с чужой страницы нагружали бы сервер. Переход по
+// ссылке (Sec-Fetch-Mode: navigate) пропускаем — так открывают /metrics из
+// урока. Prometheus и curl Sec-Fetch-Site не присылают.
+func sameOriginOnly(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Sec-Fetch-Mode") == "navigate" {
+			h.ServeHTTP(w, r)
+			return
+		}
+		switch r.Header.Get("Sec-Fetch-Site") {
+		case "", "same-origin", "none":
+			h.ServeHTTP(w, r)
+		default:
+			http.Error(w, "cross-origin request", http.StatusForbidden)
+		}
+	})
 }

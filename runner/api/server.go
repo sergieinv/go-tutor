@@ -3,8 +3,8 @@
 package api
 
 import (
+	"cmp"
 	"container/list"
-	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -14,11 +14,11 @@ import (
 	"log/slog"
 	"mime"
 	"net/http"
+	"os"
 	"regexp"
 	"slices"
 	"strings"
 	"sync"
-	"time"
 
 	"gotutor/runner/livetrace"
 	"gotutor/runner/sandbox"
@@ -28,13 +28,16 @@ type Server struct {
 	exec    *sandbox.Executor
 	lessons map[string]*Lesson
 	log     *slog.Logger
-	// queueTimeout — сколько запрос ждёт свободный слот, прежде чем получить 503.
-	queueTimeout time.Duration
-	cache        *lru
+	cache   *lru
+	// version — версия курса из файла VERSION: образ получает её
+	// build-arg'ом (runner/Dockerfile, scripts/images.sh) в GOTUTOR_VERSION.
+	// Без переменной — dev (сборка из рабочей копии).
+	version string
 }
 
 func NewServer(exec *sandbox.Executor, lessons map[string]*Lesson, log *slog.Logger) *Server {
-	return &Server{exec: exec, lessons: lessons, log: log, queueTimeout: 30 * time.Second, cache: newLRU(512)}
+	return &Server{exec: exec, lessons: lessons, log: log, cache: newLRU(512),
+		version: cmp.Or(os.Getenv("GOTUTOR_VERSION"), "dev")}
 }
 
 func (s *Server) Handler() http.Handler {
@@ -50,7 +53,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/race", s.handleRace)
 	mux.HandleFunc("POST /api/pprof", s.handlePprof)
 	mux.HandleFunc("GET /api/health", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "lessons": len(s.lessons)})
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "lessons": len(s.lessons), "version": s.version})
 	})
 	// runner исполняет присланный код, поэтому POST с чужой страницы
 	// (Sec-Fetch-Site: cross-site или Origin не совпадает с Host) отвергается.
@@ -72,11 +75,9 @@ func (s *Server) handleRun(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), s.queueTimeout)
-	defer cancel()
 	// /run не кешируется: у программ с горутинами, select и map вывод
 	// от запуска к запуску разный, и ученик должен это видеть.
-	res, err := s.exec.Run(ctx, req.Files, flags)
+	res, err := s.exec.Run(r.Context(), req.Files, flags)
 	if s.fail(w, r, err) {
 		return
 	}
@@ -114,9 +115,7 @@ func (s *Server) handleTrace(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), s.queueTimeout)
-	defer cancel()
-	res, err := livetrace.Run(ctx, s.exec, req.Files, flags)
+	res, err := livetrace.Run(r.Context(), s.exec, req.Files, flags)
 	if s.fail(w, r, err) {
 		return
 	}
@@ -140,9 +139,7 @@ func (s *Server) handleRace(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), s.queueTimeout)
-	defer cancel()
-	res, err := livetrace.RunRace(ctx, s.exec, req.Files, flags)
+	res, err := livetrace.RunRace(r.Context(), s.exec, req.Files, flags)
 	if s.fail(w, r, err) {
 		return
 	}
@@ -162,9 +159,7 @@ func (s *Server) handlePprof(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), s.queueTimeout)
-	defer cancel()
-	res, err := s.exec.Profile(ctx, req.Files, flags)
+	res, err := s.exec.Profile(r.Context(), req.Files, flags)
 	if errors.Is(err, sandbox.ErrNoPprof) {
 		writeError(w, http.StatusNotImplemented, "в этом runner нет pprof")
 		return
@@ -195,9 +190,7 @@ func (s *Server) handleGoTest(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), s.queueTimeout)
-	defer cancel()
-	res, err := s.exec.GoTest(ctx, req.Files, flags, sandbox.TestOptions{Mode: req.Mode, Fuzz: req.Fuzz})
+	res, err := s.exec.GoTest(r.Context(), req.Files, flags, sandbox.TestOptions{Mode: req.Mode, Fuzz: req.Fuzz})
 	if s.fail(w, r, err) {
 		return
 	}
@@ -216,9 +209,7 @@ func (s *Server) handleVulncheck(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &req) {
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), s.queueTimeout)
-	defer cancel()
-	res, err := s.exec.Vulncheck(ctx, req.Files)
+	res, err := s.exec.Vulncheck(r.Context(), req.Files)
 	if errors.Is(err, sandbox.ErrNoVulncheck) {
 		writeError(w, http.StatusNotImplemented, "в этом runner нет govulncheck")
 		return
@@ -241,9 +232,7 @@ func (s *Server) handleBuf(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &req) {
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), s.queueTimeout)
-	defer cancel()
-	res, err := s.exec.BufCheck(ctx, req.Files, req.Against)
+	res, err := s.exec.BufCheck(r.Context(), req.Files, req.Against)
 	if errors.Is(err, sandbox.ErrNoBuf) {
 		writeError(w, http.StatusNotImplemented, "в этом runner нет buf")
 		return
@@ -287,9 +276,7 @@ func (s *Server) handleTest(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, res)
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), s.queueTimeout)
-	defer cancel()
-	res, err := s.exec.Test(ctx, files, l.Flags)
+	res, err := s.exec.Test(r.Context(), files, l.Flags)
 	if s.fail(w, r, err) {
 		return
 	}
@@ -411,6 +398,10 @@ func (s *Server) fail(w http.ResponseWriter, r *http.Request, err error) bool {
 		writeError(w, http.StatusBadRequest, "%v", err)
 	case errors.Is(err, sandbox.ErrBusy):
 		writeError(w, http.StatusServiceUnavailable, "все песочницы заняты, попробуйте ещё раз")
+	case errors.Is(err, sandbox.ErrNoSpace):
+		// Временный каталог песочницы занял другой запуск: он освободится,
+		// как только тот запуск закончится.
+		writeError(w, http.StatusServiceUnavailable, "в песочнице кончилось место, попробуйте ещё раз")
 	default:
 		s.log.Error("sandbox", "path", r.URL.Path, "err", err)
 		writeError(w, http.StatusInternalServerError, "внутренняя ошибка runner")

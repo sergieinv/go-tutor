@@ -1,0 +1,44 @@
+name: images
+
+# Образы учебника с тегом версии курса (scripts/images.sh). Собираются на
+# тег v<версия> и вручную. Публикации пока нет: реестр не выбран.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    # Чтобы включить публикацию: задать реестр здесь (например,
+    # ghcr.io/<владелец>/go-tutor), раскомментировать вход в реестр и
+    # убрать «false &&» у шага Push. Для ghcr.io ещё нужно
+    # permissions: { contents: read, packages: write }.
+    # env:
+    #   GOTUTOR_REGISTRY: ghcr.io/<владелец>/go-tutor
+    steps:
+      - uses: actions/checkout@v4
+      # Тег выпуска и файл VERSION должны совпадать: v1.0.0 ↔ 1.0.0.
+      - name: Check tag matches VERSION
+        if: github.ref_type == 'tag'
+        run: |
+          want="v$(tr -d '[:space:]' < VERSION)"
+          if [ "$GITHUB_REF_NAME" != "$want" ]; then
+            echo "тег $GITHUB_REF_NAME не совпадает с VERSION ($want)" >&2
+            exit 1
+          fi
+      - name: Build images
+        run: scripts/images.sh build
+      - name: List images
+        run: |
+          scripts/images.sh list
+          docker image inspect --format '{{.RepoTags}} {{json .Config.Labels}}' $(scripts/images.sh list)
+      # - name: Log in to registry
+      #   uses: docker/login-action@v3
+      #   with:
+      #     registry: ghcr.io
+      #     username: ${{ github.actor }}
+      #     password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Push
+        if: false && github.ref_type == 'tag'
+        run: scripts/images.sh push

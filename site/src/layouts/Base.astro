@@ -1,4 +1,7 @@
 ---
+import SiteSearch from "../components/SiteSearch.astro";
+import ThemeInit from "../components/ThemeInit.astro";
+import ThemeToggle from "../components/ThemeToggle.astro";
 import "../styles/global.css";
 
 interface Props {
@@ -6,6 +9,9 @@ interface Props {
   description?: string;
 }
 const { title, description } = Astro.props;
+// Версия курса (файл VERSION): в образ её передаёт build-arg GOTUTOR_VERSION
+// (site/Dockerfile, scripts/images.sh). npm run dev и сборка без него — dev.
+const version = process.env.GOTUTOR_VERSION || "dev";
 ---
 
 <!doctype html>
@@ -15,13 +21,31 @@ const { title, description } = Astro.props;
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{title}</title>
     {description && <meta name="description" content={description} />}
+    <ThemeInit />
   </head>
   <body>
     <header class="site-header">
       <a href="/" class="brand">Go для C#-разработчика</a>
+      <div class="header-tools">
+        <SiteSearch />
+        <ThemeToggle />
+      </div>
     </header>
     <main>
       <slot />
     </main>
+    <footer class="site-footer">
+      Версия курса <span data-course-version>{version}</span>
+    </footer>
   </body>
 </html>
+
+<style>
+  .site-footer {
+    max-width: 1120px;
+    margin: 0 auto;
+    padding: 0 1rem 1.5rem;
+    color: var(--fg-muted);
+    font-size: 0.8rem;
+  }
+</style>

@@ -61,6 +61,15 @@ RUN python3 -m zipfile -e /tmp/vulndb.zip /opt/vulndb && rm /tmp/vulndb.zip \
 ENV RUNNER_VULNDB=file:///opt/vulndb
 COPY --from=build /out/runner /out/govulncheck /out/pprof /usr/local/bin/
 COPY content /content
+# Программа ученика работает от имени uid слота, и /content ей недоступен:
+# иначе она читала бы hidden_test.go и solution.go любой задачи. Сам runner
+# работает под root и читает контент как раньше.
+RUN chmod -R go-rwx /content
+# Setuid-программы базового образа (su, mount, passwd…) от имени uid слота
+# не нужны, а в образе исполнения недоверенного кода это лишняя поверхность
+# для повышения прав. Профиль seccomp Docker и no-new-privileges в
+# docker-compose.yml — вторая и третья линии защиты.
+RUN find / -xdev -type f -perm /6000 -exec chmod ug-s {} +
 # Примеры со своим go.mod (например, уязвимая версия модуля для govulncheck):
 # всё, что перечислено в их go.sum, скачивается в кеш, пока у сборки есть сеть,
 # — в том числе исправленная версия, на которую ученик обновит go.mod.
@@ -73,4 +82,8 @@ RUN for s in /content/*/*/example/go.sum; do \
     done
 EXPOSE 8081
 HEALTHCHECK --interval=10s --timeout=3s --start-period=5s CMD curl -fsS http://localhost:8081/api/health || exit 1
+# Версия курса (файл VERSION) — в /api/health; передаёт scripts/images.sh
+# или docker-compose.yml. Последним слоем: смена версии не сбрасывает кеш.
+ARG GOTUTOR_VERSION=dev
+ENV GOTUTOR_VERSION=$GOTUTOR_VERSION
 CMD ["runner"]

@@ -89,7 +89,7 @@ const hints = await renderHints(task.hints);
 </section>
 
 <script>
-  import { format, RunnerError, solution, test } from "../lib/client/api.ts";
+  import { format, RunnerError, RunnerUnavailable, solution, test } from "../lib/client/api.ts";
   import { createEditor, getDoc, setDoc } from "../lib/client/editor.ts";
   import {
     CHANGED,
@@ -102,7 +102,7 @@ const hints = await renderHints(task.hints);
     solutionUnlocked,
     storage,
   } from "../lib/client/progress.ts";
-  import { showError, showPending, showTests } from "../lib/client/render.ts";
+  import { showError, showPending, showTests, showUnavailable } from "../lib/client/render.ts";
 
   const kv = storage();
 
@@ -153,7 +153,8 @@ const hints = await renderHints(task.hints);
         document.dispatchEvent(new CustomEvent(CHANGED));
       } catch (e) {
         // Сбой runner — не попытка ученика, её не считаем.
-        showError(result, e instanceof RunnerError ? e.message : String(e));
+        if (e instanceof RunnerUnavailable) showUnavailable(result, e.message, "Решение проверяют открытые и скрытые тесты в runner — без него проверки нет. Попытка не засчитана.");
+        else showError(result, e instanceof RunnerError ? e.message : String(e));
       } finally {
         busy = false;
         button("check").disabled = false;

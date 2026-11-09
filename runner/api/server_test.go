@@ -3,6 +3,8 @@ package api
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -223,8 +225,54 @@ func TestVulncheckNotConfigured(t *testing.T) {
 	}
 }
 
+// /api/health отдаёт версию курса из GOTUTOR_VERSION (build-arg образа),
+// без переменной — dev.
+func TestHealthVersion(t *testing.T) {
+	for env, want := range map[string]string{"1.2.3": "1.2.3", "": "dev"} {
+		t.Setenv("GOTUTOR_VERSION", env)
+		s := NewServer(nil, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+		w := httptest.NewRecorder()
+		s.Handler().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/health", nil))
+		var got struct {
+			OK      bool   `json:"ok"`
+			Version string `json:"version"`
+		}
+		if err := json.NewDecoder(w.Body).Decode(&got); err != nil {
+			t.Fatal(err)
+		}
+		if w.Code != http.StatusOK || !got.OK || got.Version != want {
+			t.Errorf("GOTUTOR_VERSION=%q: код %d, ответ %+v, ожидалась версия %q", env, w.Code, got, want)
+		}
+	}
+}
+
 // Чужая страница не должна запускать код: ни «простым» запросом без
 // preflight (text/plain), ни запросом с Sec-Fetch-Site: cross-site.
+// Временные ошибки песочницы — 503 с предложением повторить, а не 500:
+// место в общем tmpfs рабочих каталогов мог занять другой запуск.
+func TestFailStatuses(t *testing.T) {
+	s := NewServer(nil, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	for name, tc := range map[string]struct {
+		err  error
+		want int
+	}{
+		"слоты заняты":    {sandbox.ErrBusy, http.StatusServiceUnavailable},
+		"кончилось место": {fmt.Errorf("%w: write main.go", sandbox.ErrNoSpace), http.StatusServiceUnavailable},
+		"плохой ввод":     {&sandbox.InputError{Err: errors.New("недопустимое имя файла")}, http.StatusBadRequest},
+		"прочее":          {errors.New("сломалось"), http.StatusInternalServerError},
+	} {
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest(http.MethodPost, "/api/run", nil)
+		if !s.fail(w, r, tc.err) {
+			t.Errorf("%s: fail вернул false", name)
+			continue
+		}
+		if w.Code != tc.want {
+			t.Errorf("%s: код %d, ожидался %d", name, w.Code, tc.want)
+		}
+	}
+}
+
 func TestRejectCrossSite(t *testing.T) {
 	srv := newTestServer(t)
 	body := `{"files":{"main.go":"package main\nfunc main(){}\n"}}`

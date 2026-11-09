@@ -116,31 +116,31 @@ test("ошибка компиляции в живом режиме показы�
 
 test("слайды: стрелки листают шаги визуализатора, затем слайды", async ({ page }) => {
   await page.goto("/");
-  await page.getByRole("link", { name: "Слайды модуля" }).first().click();
+  await page.locator('a[href="/slides/02-basics/"]').click();
   await expect(page).toHaveURL(/\/slides\/02-basics\/#1$/);
   const deck = page.locator("[data-deck-counter]");
   await expect(deck).toHaveText(/^1 \/ \d+$/);
   const slides = Number((await deck.textContent())!.split("/ ")[1]);
 
-  // До слайда с визуализатором.
-  for (let i = 0; i < 3; i++) await page.keyboard.press("ArrowRight");
-  await expect(deck).toHaveText(`4 / ${slides}`);
+  // До слайда с визуализатором срезов (пятый экран).
+  for (let i = 0; i < 4; i++) await page.keyboard.press("ArrowRight");
+  await expect(deck).toHaveText(`5 / ${slides}`);
   const viz = page.locator("[data-slide]:visible [data-viz]");
   await expect(counter(viz)).toHaveText("Шаг 1 из 8");
   await page.keyboard.press("ArrowRight");
   await expect(counter(viz)).toHaveText("Шаг 2 из 8");
   await page.keyboard.press("ArrowLeft");
   await page.keyboard.press("ArrowLeft");
-  await expect(deck).toHaveText(`3 / ${slides}`);
+  await expect(deck).toHaveText(`4 / ${slides}`);
 
   // Вперёд до конца шагов — и дальше на следующий слайд.
   await page.keyboard.press("ArrowRight");
   for (let i = 0; i < 7; i++) await page.keyboard.press("ArrowRight");
-  await expect(deck).toHaveText(`4 / ${slides}`);
+  await expect(deck).toHaveText(`5 / ${slides}`);
   await page.keyboard.press("ArrowRight");
-  await expect(deck).toHaveText(`5 / ${slides}`);
+  await expect(deck).toHaveText(`6 / ${slides}`);
   await page.reload();
-  await expect(deck).toHaveText(`5 / ${slides}`);
+  await expect(deck).toHaveText(`6 / ${slides}`);
 });
 
 test("живой визуализатор утечек показывает не завершившиеся горутины", async ({ page }) => {

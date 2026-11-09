@@ -38,9 +38,13 @@ type Config struct {
 	Launcher string
 
 	BuildTimeout time.Duration // лимит на go build
+	// QueueTimeout — сколько запрос ждёт свободный слот, прежде чем получить
+	// ErrBusy. Лимиты сборки и запуска считаются уже после получения слота:
+	// иначе под нагрузкой корректный код выглядел бы как несобирающийся.
+	QueueTimeout time.Duration
 	WallTime     time.Duration // лимит реального времени запуска
 	CPUTime      time.Duration // RLIMIT_CPU
-	MemoryBytes  int64         // RLIMIT_AS и GOMEMLIMIT
+	MemoryBytes  int64         // GOMEMLIMIT программы; жёсткий предел — RLIMIT_DATA, вдвое больше
 	MaxProcs     int           // RLIMIT_NPROC, только вместе с UIDs
 	MaxOutput    int           // лимит stdout и stderr по отдельности
 	// BuildEnv добавляется к окружению go build/go vet (GOPROXY, GOCACHE…).
@@ -65,6 +69,7 @@ func DefaultConfig() Config {
 	return Config{
 		Slots:        4,
 		BuildTimeout: 60 * time.Second,
+		QueueTimeout: 30 * time.Second,
 		WallTime:     10 * time.Second,
 		CPUTime:      10 * time.Second,
 		MemoryBytes:  256 << 20,
@@ -133,7 +138,18 @@ func New(cfg Config) (*Executor, error) {
 // ErrBusy — все слоты заняты дольше, чем готов ждать вызывающий.
 var ErrBusy = errors.New("sandbox: все слоты заняты")
 
+// ErrNoSpace — во временном каталоге песочницы не осталось места: его занял
+// другой запуск (tmpfs рабочих каталогов общий). Ошибка временная, как ErrBusy.
+var ErrNoSpace = errors.New("sandbox: нет места во временном каталоге")
+
+// acquire занимает слот. Ожидание ограничено QueueTimeout, а не временем
+// всего запроса: получив слот, сборка и запуск работают со своими лимитами.
 func (e *Executor) acquire(ctx context.Context) (int, error) {
+	if e.cfg.QueueTimeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, e.cfg.QueueTimeout)
+		defer cancel()
+	}
 	select {
 	case uid := <-e.slots:
 		return uid, nil
@@ -207,7 +223,7 @@ func (e *Executor) newWorkspace(ctx context.Context, uid int, files Files) (*wor
 	}
 	dir, err := os.MkdirTemp(e.cfg.WorkRoot, "run-*")
 	if err != nil {
-		return nil, err
+		return nil, noSpace(err)
 	}
 	ws := &workspace{dir: dir, uid: uid}
 	if _, ok := files["go.mod"]; !ok {
@@ -220,7 +236,7 @@ func (e *Executor) newWorkspace(ctx context.Context, uid int, files Files) (*wor
 	for name, src := range files {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(src), 0o644); err != nil {
 			ws.remove()
-			return nil, err
+			return nil, noSpace(err)
 		}
 	}
 	if uid >= 0 {
@@ -229,7 +245,10 @@ func (e *Executor) newWorkspace(ctx context.Context, uid int, files Files) (*wor
 			return nil, err
 		}
 	}
-	if err := os.Chmod(dir, 0o755); err != nil {
+	// 0700: в каталог запуска входит только его uid (и runner — он root).
+	// Корень рабочих каталогов — 0711, так что имя каталога соседа ещё
+	// нужно угадать, но и угадав, прочитать его не получится.
+	if err := os.Chmod(dir, 0o700); err != nil {
 		ws.remove()
 		return nil, err
 	}
@@ -241,6 +260,32 @@ func (e *Executor) newWorkspace(ctx context.Context, uid int, files Files) (*wor
 }
 
 func (ws *workspace) remove() { os.RemoveAll(ws.dir) }
+
+// noSpace отмечает ошибку «кончилось место» как временную: место занял
+// другой запуск, и ученику нужно не сообщение о внутренней ошибке, а
+// предложение повторить запрос.
+func noSpace(err error) error {
+	if errors.Is(err, syscall.ENOSPC) || errors.Is(err, syscall.EDQUOT) {
+		return fmt.Errorf("%w: %v", ErrNoSpace, err)
+	}
+	return err
+}
+
+// minFreeBytes — сколько места должно оставаться в рабочем каталоге, чтобы
+// неудачу сборки можно было считать ошибкой кода. Бинарник урока — единицы
+// мегабайт, с -race больше.
+const minFreeBytes = 8 << 20
+
+// buildNoSpace сообщает, что сборка не удалась из-за места в tmpfs рабочих
+// каталогов (его занял другой запуск), а не из-за кода ученика: go build
+// пишет бинарник туда же, и его ошибка выглядела бы как ошибка компиляции.
+func buildNoSpace(dir string) error {
+	free, err := freeBytes(dir)
+	if err != nil || free >= minFreeBytes {
+		return nil
+	}
+	return fmt.Errorf("%w: свободно %d байт", ErrNoSpace, free)
+}
 
 // InputError — ошибка во входных данных клиента (HTTP 400).
 type InputError struct{ Err error }
@@ -279,7 +324,10 @@ func (e *Executor) tool(ctx context.Context, dir string, flags Flags, name strin
 	cmd.Stdout, cmd.Stderr = &buf, &buf
 	err = cmd.Run()
 	if ctx.Err() != nil {
-		return buf.String() + "\nсборка не уложилась в " + e.cfg.BuildTimeout.String(), ctx.Err()
+		// Код тут, скорее всего, не виноват: столько сборка занимает, когда
+		// runner перегружен (несколько учеников или много вкладок).
+		return buf.String() + "\nсборка не уложилась в " + e.cfg.BuildTimeout.String() +
+			": runner перегружен, попробуйте ещё раз", ctx.Err()
 	}
 	return strings.ReplaceAll(buf.String(), dir+string(filepath.Separator), ""), err
 }
@@ -340,6 +388,9 @@ func (e *Executor) runWith(ctx context.Context, files Files, flags Flags, after 
 	}
 	out, err := e.goTool(ctx, ws.dir, flags, append(args, ".")...)
 	if err != nil {
+		if nerr := buildNoSpace(ws.dir); nerr != nil {
+			return nil, nerr
+		}
 		return &RunResult{BuildFailed: true, BuildOutput: out}, nil
 	}
 	p := e.exec(ctx, ws, flags, "./prog")
@@ -455,12 +506,16 @@ func (e *Executor) exec(ctx context.Context, ws *workspace, flags Flags, prog st
 			"-fsize", strconv.FormatInt(cmp.Or(ws.fileLimit, defaultFileLimit), 10),
 			"-nofile", "256",
 		}
-		// Адресное пространство с запасом: рантайм Go резервирует больше, чем
-		// использует. Детектор гонок резервирует терабайты под теневую память,
-		// поэтому с -race память держат GOMEMLIMIT и лимит контейнера.
-		if !flags.Race {
-			largs = append(largs, "-as", strconv.FormatInt(e.cfg.MemoryBytes*4, 10))
-		}
+		// Память ограничивает RLIMIT_DATA, а не RLIMIT_AS. Рантайм Go
+		// резервирует гораздо больше адресного пространства, чем использует
+		// (детектор гонок — терабайты под теневую память), и отказ mmap по
+		// RLIMIT_AS он не переживает: программа падает со случайными fatal
+		// error рантайма («unexpected fault address», «traceback did not
+		// unwind completely») примерно в одном запуске из ста. RLIMIT_DATA
+		// считает только отображённые данные, поэтому работает и с -race.
+		// Потолок с запасом к GOMEMLIMIT: тот держит GC у 256 МБ, а жёсткий
+		// предел не даёт программе дойти до лимита памяти контейнера.
+		largs = append(largs, "-data", strconv.FormatInt(e.cfg.MemoryBytes*2, 10))
 		if ws.uid >= 0 {
 			largs = append(largs, "-nproc", strconv.Itoa(e.cfg.MaxProcs))
 		}
@@ -534,6 +589,11 @@ func (e *Executor) exec(ctx context.Context, ws *workspace, flags Flags, prog st
 		if ok && st.Signaled() && st.Signal() == syscall.SIGXCPU ||
 			res.exitCode == 2 && strings.HasPrefix(res.stderr, "SIGXCPU: ") {
 			res.timedOut = true
+		}
+		// Программу убил сигнал, а она ничего не успела написать: без этой
+		// строки ученик видит только exitCode -1 и пустой вывод.
+		if ok && st.Signaled() && !res.timedOut && res.stderr == "" {
+			res.stderr = fmt.Sprintf("программа убита сигналом %v\n", st.Signal())
 		}
 	}
 	return res

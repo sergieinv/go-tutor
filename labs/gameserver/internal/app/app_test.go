@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -192,5 +193,29 @@ func TestShutdownWithStuckHandshakes(t *testing.T) {
 	stop()
 	if d := time.Since(start); d > 2*time.Second {
 		t.Fatalf("shutdown took %s with stuck handshakes", d)
+	}
+}
+
+func TestOpsRejectsCrossSite(t *testing.T) {
+	h := sameOriginOnly(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("ok")) }))
+	for site, want := range map[string]int{"": 200, "none": 200, "same-origin": 200, "same-site": 403, "cross-site": 403} {
+		req := httptest.NewRequest(http.MethodGet, "/debug/pprof/profile", nil)
+		if site != "" {
+			req.Header.Set("Sec-Fetch-Site", site)
+		}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != want {
+			t.Errorf("Sec-Fetch-Site %q: %d, want %d", site, rec.Code, want)
+		}
+	}
+	// Переход по ссылке с другого сайта открывает страницу.
+	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	req.Header.Set("Sec-Fetch-Site", "cross-site")
+	req.Header.Set("Sec-Fetch-Mode", "navigate")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != 200 {
+		t.Errorf("cross-site navigation: %d, want 200", rec.Code)
 	}
 }

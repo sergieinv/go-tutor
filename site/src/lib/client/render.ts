@@ -31,6 +31,51 @@ export function showError(target: HTMLElement, message: string) {
   target.removeAttribute("aria-busy");
 }
 
+/** Проверенный вывод примера из урока (example/output.txt) — на случай, когда runner недоступен. */
+export interface SavedOutput {
+  /** Подпись блока: команда, чей вывод сохранён. */
+  command: string;
+  text: string;
+  /** Оговорки: чего в сохранённом выводе нет. */
+  notes: string[];
+}
+
+/** Абзац с текстом, где `код` в обратных кавычках — <code>. */
+function para(text: string, className = "muted") {
+  const p = el("p", className);
+  for (const [i, part] of text.split("`").entries()) p.append(i % 2 ? el("code", undefined, part) : document.createTextNode(part));
+  return p;
+}
+
+const howToRun = "Чтобы код выполнялся, запустите учебник с песочницей: `docker compose up` (для разработки — `go run ./runner`).";
+
+/** Runner недоступен — вместо запуска показан сохранённый при проверке урока вывод. */
+export function showSaved(target: HTMLElement, saved: SavedOutput, title = "Runner недоступен — показан проверенный вывод примера") {
+  target.removeAttribute("aria-busy");
+  const parts: HTMLElement[] = [status(title, "warn"), para(`Код сейчас не выполнялся: вывод сохранён при проверке урока. ${howToRun}`)];
+  for (const n of saved.notes) parts.push(para(n));
+  parts.push(saved.text ? block(saved.command, saved.text, "out") : el("p", "muted", "Пример ничего не выводит в stdout."));
+  target.replaceChildren(...parts);
+}
+
+/**
+ * Runner недоступен, а сохранённый вывод не подходит: код изменён или режим
+ * (бенчмарки, покрытие, govulncheck…) без сохранённого вывода. offer — кнопка,
+ * которая всё же покажет вывод исходного примера.
+ */
+export function showUnavailable(target: HTMLElement, message: string, detail?: string, offer?: { label: string; show: () => void }) {
+  target.removeAttribute("aria-busy");
+  const parts: HTMLElement[] = [status(message, "bad")];
+  if (detail) parts.push(para(detail));
+  if (offer) {
+    const b = el("button", undefined, offer.label);
+    b.type = "button";
+    b.addEventListener("click", offer.show);
+    parts.push(b);
+  }
+  target.replaceChildren(...parts);
+}
+
 export function showRun(target: HTMLElement, r: RunResult, gcflags?: string) {
   target.removeAttribute("aria-busy");
   if (r.buildFailed) {

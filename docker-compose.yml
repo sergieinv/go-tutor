@@ -1,12 +1,23 @@
 # Учебник целиком: docker compose up --build → http://localhost:8080
 # С базами для модуля 10 и дальше и итоговым проектом модулей 11–12
 # (labs/README.md): docker compose --profile labs up --build
+#
+# Собственные образы называются ${GOTUTOR_REGISTRY:-go-tutor}/<имя>:${GOTUTOR_VERSION:-dev}.
+# Без переменных — go-tutor/<имя>:dev, как всегда. Образы версии курса
+# собирает scripts/images.sh build; запуск из них без пересборки:
+#   GOTUTOR_VERSION=1.0.0 docker compose up -d
+# .env с GOTUTOR_VERSION здесь нет нарочно: up --build из рабочей копии
+# перезаписал бы тег выпуска образами с незакоммиченными правками.
 services:
   site:
     build:
       context: .
       dockerfile: site/Dockerfile
-    image: go-tutor/site:dev
+      args:
+        # Версия курса в образе (подвал сайта); scripts/images.sh
+        # берёт её из файла VERSION.
+        GOTUTOR_VERSION: ${GOTUTOR_VERSION:-dev}
+    image: ${GOTUTOR_REGISTRY:-go-tutor}/site:${GOTUTOR_VERSION:-dev}
     # Только localhost: через /api/ сайт проксирует runner, который
     # исполняет произвольный код, — из локальной сети он недоступен.
     ports:
@@ -20,7 +31,11 @@ services:
     build:
       context: .
       dockerfile: runner/Dockerfile
-    image: go-tutor/runner:dev
+      args:
+        # Версия курса в образе (/api/health); scripts/images.sh
+        # берёт её из файла VERSION.
+        GOTUTOR_VERSION: ${GOTUTOR_VERSION:-dev}
+    image: ${GOTUTOR_REGISTRY:-go-tutor}/runner:${GOTUTOR_VERSION:-dev}
     # tini как PID 1 собирает зомби, оставшиеся от убитых программ.
     init: true
     environment:
@@ -49,6 +64,11 @@ services:
     # Код учеников пишется только во временный каталог в памяти.
     tmpfs:
       - /tmp/runner:size=512m,mode=0711,exec,nosuid,nodev
+    # Программа ученика не может повысить права через execve: setuid-бит и
+    # файловые capabilities не действуют. Бит setuid в образе снят (см.
+    # runner/Dockerfile), это вторая линия защиты.
+    security_opt:
+      - no-new-privileges:true
     # Лимиты на весь runner: защита машины, если что-то пройдёт мимо rlimit'ов слотов.
     mem_limit: 2g
     pids_limit: 1024
@@ -241,7 +261,7 @@ services:
     build:
       context: ./labs
       dockerfile: orders/Dockerfile
-    image: go-tutor/orders:dev
+    image: ${GOTUTOR_REGISTRY:-go-tutor}/orders:${GOTUTOR_VERSION:-dev}
     profiles: [labs]
     environment:
       ORDERS_DB: postgres
@@ -293,7 +313,7 @@ services:
     build:
       context: ./labs
       dockerfile: warehouse/Dockerfile
-    image: go-tutor/warehouse:dev
+    image: ${GOTUTOR_REGISTRY:-go-tutor}/warehouse:${GOTUTOR_VERSION:-dev}
     profiles: [labs]
     environment:
       WAREHOUSE_MYSQL_DSN: warehouse:labs-warehouse@tcp(mysql:3306)/warehouse
@@ -319,7 +339,7 @@ services:
     build:
       context: ./labs
       dockerfile: notifications/Dockerfile
-    image: go-tutor/notifications:dev
+    image: ${GOTUTOR_REGISTRY:-go-tutor}/notifications:${GOTUTOR_VERSION:-dev}
     profiles: [labs]
     environment:
       NOTIFICATIONS_KAFKA_BROKERS: kafka:9092
@@ -348,7 +368,7 @@ services:
     build:
       context: ./labs
       dockerfile: loadgen/Dockerfile
-    image: go-tutor/loadgen:dev
+    image: ${GOTUTOR_REGISTRY:-go-tutor}/loadgen:${GOTUTOR_VERSION:-dev}
     profiles: [loadtest]
     environment:
       LOADGEN_TARGET: http://orders:8080
@@ -373,7 +393,7 @@ services:
       context: ./labs
       dockerfile: gameserver/Dockerfile
       target: gameserver
-    image: go-tutor/gameserver:dev
+    image: ${GOTUTOR_REGISTRY:-go-tutor}/gameserver:${GOTUTOR_VERSION:-dev}
     profiles: [labs]
     environment:
       GAME_SAVE_PATH: /data/world.json
@@ -406,7 +426,7 @@ services:
       context: ./labs
       dockerfile: gameserver/Dockerfile
       target: bots
-    image: go-tutor/gamebots:dev
+    image: ${GOTUTOR_REGISTRY:-go-tutor}/gamebots:${GOTUTOR_VERSION:-dev}
     profiles: [loadtest]
     environment:
       GAMEBOTS_MC: gameserver:25565

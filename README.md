@@ -15,6 +15,7 @@
 | `labs/orders/` | Сквозной учебный сервис «Заказы» (модуль 10 и дальше) — запускается в профиле `labs` |
 | `docs/` | План учебника |
 | `viz/` | Движок визуализаций: примитивы SVG, плеер шагов, построители шагов из трассы |
+| `scripts/images.sh` | Сборка образов с тегом версии курса (`VERSION`) |
 
 ## Запуск в Docker
 
@@ -24,7 +25,7 @@ docker compose --profile labs up --build   # плюс PostgreSQL, MySQL и се�
 ```
 
 - `site` — nginx со статикой Astro, `/api/*` проксируется в `runner`. Порт открыт только на `127.0.0.1`, nginx отвечает лишь на `Host: localhost`/`127.0.0.1` (защита от DNS rebinding), а runner отвергает запросы с чужой страницы (`Sec-Fetch-Site: cross-site`, чужой `Origin`) и без `Content-Type: application/json`: runner исполняет присланный код, и чужой сайт в браузере не должен до него дотянуться.
-- `runner` — Go-тулчейн с прогретым кешем сборки. Каждый запуск идёт в отдельном временном каталоге от имени отдельного uid слота с лимитами: 10 с CPU и реального времени, 256 МБ, 64 процесса, вывод до 64 КБ. После запуска все процессы слота убиваются.
+- `runner` — Go-тулчейн с прогретым кешем сборки. Каждый запуск идёт в отдельном временном каталоге (`0700`, владелец — uid слота) от имени отдельного uid слота с лимитами: 10 с CPU и реального времени, 256 МБ (`GOMEMLIMIT`, жёсткий предел `RLIMIT_DATA` — 512 МБ: `RLIMIT_AS` рантайм Go не переживает, см. `docs/security-audit.md`), 64 процесса, вывод до 64 КБ. Ожидание свободного слота — до 30 с, дальше 503; сборка и запуск считают свои лимиты уже после получения слота. После запуска все процессы слота убиваются. Контейнер работает с `no-new-privileges`, биты setuid в образе сняты, а `/content` (скрытые тесты и эталоны) доступен только самому runner.
 - У `runner` нет выхода в интернет (сеть `internal`); модули — только из кеша образа. Сторонние модули, доступные урокам, перечислены в `runner/sandbox/deps.mod` (среди них `golang.org/x/sync`, `golang.org/x/crypto`, SQLite `modernc.org/sqlite`, `pgx`, `go-sql-driver/mysql`, `goose`, gRPC, franz-go, OpenTelemetry, `valkey-go` и `miniredis`). Модули из `go.sum` примеров со своим `go.mod` тоже скачиваются при сборке образа. В образе есть `govulncheck` и снимок базы уязвимостей vuln.go.dev, который обновляется при каждой пересборке.
 - pprof (`/api/pprof`): профиль записала программа ученика, поэтому `pprof` (собранный `cmd/pprof`: с Go 1.25 тулчейн не содержит его готовым) разбирает его так же, как запускается сама программа, — от имени uid слота и с теми же лимитами.
 - Примеры с `.proto`: перед сборкой runner выполняет `buf generate` (buf и плагины `protoc-gen-go`, `protoc-gen-go-grpc`, `protoc-gen-grpc-gateway` — в образе, зависимости googleapis и protovalidate — в кеше buf образа). buf работает от имени runner, поэтому `buf.gen.yaml` и `buf.lock` всегда свои, присланный `buf.yaml` переписывается в каноническом виде после проверки, а `.proto` вместе — не больше 64 КиБ.
@@ -32,6 +33,7 @@ docker compose --profile labs up --build   # плюс PostgreSQL, MySQL и се�
 - Для модуля 14 профиль `labs` добавляет потоковую реплику PostgreSQL `postgres-replica` (`localhost:55433`, транзакции применяются с задержкой 200 мс — так задержку репликации видно), второй шард «Заказов» `postgres-shard1` (`localhost:55434`, только для сервисов), `valkey` для сервисов (`localhost:56379`, из песочницы недоступен) и `valkey-sandbox` для уроков (`localhost:56380`, пароль администратора `labs-valkey`). Запуск с `labs: [postgres]` получает ещё `POSTGRES_REPLICA_DSN` — свою базу на реплике. Запуск с `labs: [valkey]` получает ACL-пользователя, которому доступны только ключи с префиксом `VALKEY_PREFIX` и закрыты опасные команды (`FLUSHALL`, `CONFIG`, `KEYS`, `ACL`…); после запуска пользователь и ключи удаляются. Репликация из сети песочницы закрыта: поток WAL — это все базы целиком.
 - В `site/package-lock.json` записаны адреса корпоративного Artifactory. Образ сайта ставит пакеты из `registry.npmjs.org`, подменяя префикс через `--replace-registry-host`; integrity-хеши проверяются как обычно. Другой реестр: `docker compose build --build-arg NPM_REGISTRY=... site`.
 - Режим `server` (runner внутри gVisor): `docker compose -f docker-compose.yml -f docker-compose.server.yml up -d`, нужен runtime `runsc`.
+- Аудит безопасности песочницы и нагрузочный тест — [docs/security-audit.md](docs/security-audit.md) и [docs/load-test.md](docs/load-test.md) (модель угроз, принятые риски, критерии нагрузки). Поднимать `RUNNER_SLOTS` имеет смысл вместе с `mem_limit`: под нагрузкой контейнер доходит до 2 ГБ.
 
 ### API runner
 
@@ -60,6 +62,22 @@ docker compose --profile labs up --build   # плюс PostgreSQL, MySQL и се�
 - `-race` в этом режиме выключен.
 - Если программа завершилась через `os.Exit`, паникой в горутине или deadlock'ом, трасса не дописывается, и ответ содержит `traceError`.
 
+## Версии и обновление
+
+Версия курса — файл `VERSION` в корне (сейчас `1.0.0`), выпуск помечается git-тегом `v<версия>`. Собственные образы (`site`, `runner`, `orders`, `warehouse`, `notifications`, `loadgen`, `gameserver`, `gamebots`) называются `${GOTUTOR_REGISTRY:-go-tutor}/<имя>:${GOTUTOR_VERSION:-dev}`; без переменных — `go-tutor/<имя>:dev`, и `docker compose up --build` работает как всегда.
+
+```sh
+scripts/images.sh build    # все образы с тегами 1.0.0 и dev и метками OCI
+scripts/images.sh list     # имена образов версии
+GOTUTOR_VERSION=1.0.0 docker compose --profile labs up -d   # запуск из образов версии, без пересборки
+```
+
+Скрипт сам выбирает `docker compose` или `docker-compose`. Метки образов — `org.opencontainers.image.version`, `revision` (коммит; `-dirty`, если в рабочей копии есть незакоммиченные правки), `created`, `title` и `source` (если у репозитория есть `origin`): `docker inspect --format '{{json .Config.Labels}}' go-tutor/runner:1.0.0`.
+
+Где видна версия: в подвале каждой страницы сайта («Версия курса 1.0.0») и в `GET /api/health` (`{"ok": true, "lessons": …, "version": "1.0.0"}`). Образы, собранные обычным `docker compose up --build`, показывают `dev`.
+
+Обновление: `git pull`, затем `scripts/images.sh build` (или `docker compose up --build` — тогда версия будет `dev`). Образы пока никуда не публикуются: реестр не выбран. Когда он появится, публикация — `GOTUTOR_REGISTRY=<реестр> scripts/images.sh push` (после `docker login`; уходит только тег версии), а обновление у учеников — `git pull` и `docker compose pull` и `docker compose up -d` с теми же `GOTUTOR_REGISTRY` и `GOTUTOR_VERSION` (их можно записать в свой `.env` рядом с `docker-compose.yml`) — без локальной сборки. В CI образы собирает workflow `images` (`.github/workflows/images.yml`) на тег `v*` и вручную; шаг публикации там выключен до выбора реестра.
+
 ## Команды
 
 ```sh
@@ -87,6 +105,10 @@ cd site && npm run build             # статика в site/dist
 cd site && npm test
 # e2e: уроки от начала до конца, визуализаторы и слайды — против docker compose на :8080
 cd site && npx playwright install chromium && npm run e2e
+
+# нагрузочный тест runner через nginx (критерии и результаты — docs/load-test.md)
+go run ./tools/runnerload -clients 8 -duration 90s
+go run ./tools/runnerload -clients 8 -duration 90s -scenario abuse
 ```
 
 Слайды модуля — `/slides/<модуль>/` (ссылка в оглавлении), формат в [content/README.md](content/README.md#slidesmd).

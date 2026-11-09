@@ -57,6 +57,9 @@ func (e *Executor) Test(ctx context.Context, files Files, flags Flags) (*TestRes
 		args = append(args, "-race")
 	}
 	if out, err := e.goTool(ctx, ws.dir, flags, append(args, ".")...); err != nil {
+		if nerr := buildNoSpace(ws.dir); nerr != nil {
+			return nil, nerr
+		}
 		return &TestResult{BuildFailed: true, BuildOutput: out, Tests: []TestCase{}}, nil
 	}
 	if _, err := os.Stat(filepath.Join(ws.dir, "pkg.test")); err != nil {
@@ -256,6 +259,9 @@ func (e *Executor) GoTest(ctx context.Context, files Files, flags Flags, opts Te
 	}
 
 	if out, err := e.goTool(ctx, ws.dir, flags, append(build, ".")...); err != nil {
+		if nerr := buildNoSpace(ws.dir); nerr != nil {
+			return nil, nerr
+		}
 		return &GoTestResult{RunResult: RunResult{BuildFailed: true, BuildOutput: out}}, nil
 	}
 	if _, err := os.Stat(filepath.Join(ws.dir, "pkg.test")); err != nil {

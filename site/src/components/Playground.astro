@@ -6,6 +6,8 @@
 // Урокам с runner.labs runner на каждый запуск создаёт пустую базу профиля labs.
 // С runner.gcflags под выводом — диагностика компилятора, а пример с runtime/pprof
 // получает кнопку «pprof»: запуск и pprof -top по записанным профилям.
+// Без runner (сеть, 502/504) песочница показывает проверенный вывод example/output.txt,
+// если код не менялся; у изменённого кода — кнопка «Показать вывод исходного примера».
 // Без JS остаётся подсвеченный код — пример читается и так.
 import type { Example } from "../lib/content";
 import { highlight, scriptJSON } from "../lib/markdown";
@@ -103,6 +105,7 @@ const files = example.files;
   }
   <script type="application/json" data-initial set:html={scriptJSON(editable)} />
   <script type="application/json" data-files set:html={scriptJSON(files)} />
+  <script type="application/json" data-output set:html={scriptJSON(example.output)} />
   {
     fallbacks.map((f) => (
       <figure class="file-editor">
@@ -194,10 +197,21 @@ const files = example.files;
 </section>
 
 <script>
-  import { buf, format, goTest, pprof, run, RunnerError, vulncheck, type GoTestMode } from "../lib/client/api.ts";
+  import { buf, format, goTest, pprof, run, RunnerError, RunnerUnavailable, vulncheck, type GoTestMode } from "../lib/client/api.ts";
   import { createEditor, getDoc, setDoc } from "../lib/client/editor.ts";
   import { loadDraft, saveDraft, storage } from "../lib/client/progress.ts";
-  import { showBuf, showError, showGoTest, showPending, showProfile, showRun, showVulncheck } from "../lib/client/render.ts";
+  import {
+    showBuf,
+    showError,
+    showGoTest,
+    showPending,
+    showProfile,
+    showRun,
+    showSaved,
+    showUnavailable,
+    showVulncheck,
+    type SavedOutput,
+  } from "../lib/client/render.ts";
   import { fromHash, shareURL } from "../lib/client/share.ts";
   import type { EditorView } from "@codemirror/view";
 
@@ -213,6 +227,17 @@ const files = example.files;
     bench: "Бенчмарки идут несколько секунд…",
     fuzz: "Fuzzing идёт несколько секунд…",
     cover: "Тесты с подсчётом покрытия…",
+  };
+
+  // Режимы, для которых сохранённого вывода нет: его даёт только запуск в runner.
+  const noSaved: Record<Exclude<Mode, "test">, string> = {
+    bench: "Бенчмарки меряют скорость на этой машине — сохранённого вывода для них нет.",
+    fuzz: "Fuzzing ищет входы на лету — сохранённого вывода для него нет.",
+    cover: "Покрытие считает runner — сохранённого отчёта нет.",
+    pprof: "Профили пишет запущенная программа — без runner их нет.",
+    vulncheck: "govulncheck проверяет код в runner по снимку базы уязвимостей — сохранённого отчёта нет.",
+    "buf-lint": "buf проверяет контракт в runner — сохранённого отчёта нет.",
+    "buf-breaking": "buf проверяет контракт в runner — сохранённого отчёта нет.",
   };
 
   // Слот черновика: у main.go — прежний "example", чтобы старые черновики не потерялись.
@@ -236,6 +261,7 @@ const files = example.files;
     const gcflags = root.dataset.gcflags;
     const initial: Record<string, string> = JSON.parse(root.querySelector("[data-initial]")!.textContent!);
     const extra: Record<string, string> = JSON.parse(root.querySelector("[data-files]")!.textContent!);
+    const savedOutput: string = JSON.parse(root.querySelector("[data-output]")!.textContent!);
     const names = Object.keys(initial);
     const result = root.querySelector<HTMLElement>("[data-result]")!;
     const note = root.querySelector<HTMLElement>("[data-note]")!;
@@ -262,6 +288,32 @@ const files = example.files;
       );
     }
     const current = () => Object.fromEntries(names.map((n) => [n, getDoc(editors.get(n)!)]));
+    const unchanged = () => names.every((n) => getDoc(editors.get(n)!) === initial[n]);
+
+    // Проверенный вывод примера: lessonlint сверяет его со stdout запуска
+    // (у примера с тестами — с go test -v, время тестов замаскировано).
+    const saved: SavedOutput = {
+      command: testMode ? "go test -v" : "stdout",
+      text: savedOutput,
+      notes: testMode
+        ? ["Время тестов в сохранённом выводе записано как (0.00s)."]
+        : [
+            "Сохранён только stdout: что программа пишет в stderr, здесь не видно.",
+            ...(gcflags ? [`Диагностики компилятора (-gcflags="${gcflags}") в нём нет.`] : []),
+          ],
+    };
+
+    /** Runner недоступен: сохранённый вывод, если он относится к этому запуску. */
+    function offline(e: RunnerUnavailable, mode?: Mode) {
+      if (mode !== undefined && mode !== "test") showUnavailable(result, e.message, noSaved[mode]);
+      else if (unchanged()) showSaved(result, saved);
+      else {
+        showUnavailable(result, e.message, "Код изменён, поэтому сохранённый вывод исходного примера к нему не относится.", {
+          label: "Показать вывод исходного примера",
+          show: () => showSaved(result, saved, "Runner недоступен — показан проверенный вывод исходного примера, а не вашего кода"),
+        });
+      }
+    }
 
     async function doRun(mode?: Mode, fuzz?: string) {
       if (busy) return;
@@ -278,7 +330,8 @@ const files = example.files;
         else if (mode) showGoTest(result, await goTest(files, mode, lesson, fuzz), mode);
         else showRun(result, await run(files, lesson), gcflags);
       } catch (e) {
-        showError(result, e instanceof RunnerError ? e.message : String(e));
+        if (e instanceof RunnerUnavailable) offline(e, mode);
+        else showError(result, e instanceof RunnerError ? e.message : String(e));
       } finally {
         busy = false;
         for (const b of buttons("run")) b.disabled = false;

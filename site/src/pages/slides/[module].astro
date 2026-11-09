@@ -1,6 +1,8 @@
 ---
 // Режим слайдов: обзор модуля на 8–12 экранов для показа команде.
 // ← / → листают; если на слайде визуализатор, сначала листаются его шаги.
+import ThemeInit from "../../components/ThemeInit.astro";
+import ThemeToggle from "../../components/ThemeToggle.astro";
 import VizPlayer from "../../components/VizPlayer.astro";
 import { loadCourse, type Module } from "../../lib/content";
 import { hasSlides, loadSlides } from "../../lib/slides";
@@ -25,6 +27,7 @@ const slides = await loadSlides(module);
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{`Слайды: ${module.title} — Go для C#-разработчика`}</title>
+    <ThemeInit />
   </head>
   <body class="slides-body">
     <main class="deck" data-deck>
@@ -45,6 +48,7 @@ const slides = await loadSlides(module);
         <span data-deck-counter aria-live="polite">1 / {slides.length}</span>
         <button type="button" data-deck-act="next" aria-label="Следующий слайд">→</button>
         <button type="button" data-deck-act="full">Во весь экран</button>
+        <ThemeToggle />
       </span>
     </nav>
   </body>
@@ -126,8 +130,15 @@ const slides = await loadSlides(module);
     font-size: 2.1rem;
     margin-top: 0;
   }
-  .slide-text :global(pre) {
+  .slide-text :global(pre),
+  .slide-text :global(table) {
     font-size: 1.1rem;
+  }
+  /* Длинный код визуализатора не растягивает слайд: панель прокручивается,
+     активная строка остаётся на виду (revealLine в lib/client/viz.ts). */
+  .slide :global(.viz-code) {
+    max-height: 55vh;
+    overflow: auto;
   }
   .deck-bar {
     position: sticky;

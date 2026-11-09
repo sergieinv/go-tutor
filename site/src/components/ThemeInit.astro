@@ -1,0 +1,13 @@
+---
+// Тема до первой отрисовки: выбор из localStorage сразу ставится на <html data-theme>,
+// поэтому тёмная тема не «вспыхивает» светлой. Ключ и значения — как в lib/client/theme.ts.
+---
+
+<script is:inline>
+  try {
+    var t = localStorage.getItem("gotutor:theme");
+    if (t === "light" || t === "dark") document.documentElement.dataset.theme = t;
+  } catch (e) {
+    // хранилище недоступно — остаётся системная тема
+  }
+</script>

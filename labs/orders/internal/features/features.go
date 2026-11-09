@@ -78,7 +78,9 @@ func (f *Flags) Set(s State) error {
 	return nil
 }
 
-// Handler — GET и POST /admin/features.
+// Handler — GET и POST /admin/features. Порт открыт только на 127.0.0.1,
+// но браузер ученика дотянется и туда: POST с чужой страницы (no-cors,
+// text/plain) отвергает CrossOriginProtection по Sec-Fetch-Site и Origin.
 func (f *Flags) Handler(log *slog.Logger) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /admin/features", func(w http.ResponseWriter, _ *http.Request) {
@@ -100,7 +102,7 @@ func (f *Flags) Handler(log *slog.Logger) http.Handler {
 		log.WarnContext(r.Context(), "features changed", "catalog_cache", *st.CatalogCache, "replica_reads", *st.ReplicaReads)
 		writeJSON(w, http.StatusOK, st)
 	})
-	return mux
+	return http.NewCrossOriginProtection().Handler(mux)
 }
 
 func writeJSON(w http.ResponseWriter, code int, v any) {

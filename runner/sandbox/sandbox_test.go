@@ -73,7 +73,7 @@ func testLauncher(t *testing.T) string {
 // isolated — запуск под root на Linux: слоты с отдельными uid и NPROC.
 func isolated() bool { return runtime.GOOS == "linux" && os.Getuid() == 0 }
 
-func newExecutor(t *testing.T) *Executor {
+func newExecutor(t *testing.T, tweak ...func(*Config)) *Executor {
 	t.Helper()
 	cfg := DefaultConfig()
 	cfg.WallTime = 3 * time.Second
@@ -93,6 +93,9 @@ func newExecutor(t *testing.T) *Executor {
 			t.Fatal(err)
 		}
 		cfg.WorkRoot = root
+	}
+	for _, f := range tweak {
+		f(&cfg)
 	}
 	e, err := New(cfg)
 	if err != nil {
@@ -210,6 +213,31 @@ func TestRunMemoryLimit(t *testing.T) {
 	t.Logf("лимит памяти: exit=%d stderr=%.120s", res.ExitCode, res.Stderr)
 }
 
+// С -race память ограничена так же: RLIMIT_DATA не считает теневую память
+// детектора гонок, поэтому предел работает и здесь (с RLIMIT_AS его
+// приходилось отключать).
+func TestRunMemoryLimitWithRace(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("rlimit'ы применяются только на Linux")
+	}
+	e := newExecutor(t)
+	res, err := e.Run(context.Background(), program(`
+	var keep [][]byte
+	for i := 0; i < 64; i++ {
+		b := make([]byte, 64<<20)
+		for j := range b { b[j] = 1 }
+		keep = append(keep, b)
+	}
+	fmt.Println(len(keep))`, "fmt"), Flags{Race: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.ExitCode == 0 || (res.ExitCode == -1 && !res.TimedOut) {
+		t.Fatalf("ожидалось падение по лимиту памяти: %+v", res)
+	}
+	t.Logf("лимит памяти с -race: exit=%d stderr=%.120s", res.ExitCode, res.Stderr)
+}
+
 func TestRunForkBomb(t *testing.T) {
 	if !isolated() {
 		t.Skip("NPROC и изоляция по uid — только под root на Linux")
@@ -265,6 +293,75 @@ func processesOf(t *testing.T, uid int) int {
 		}
 	}
 	return n
+}
+
+// freeBytes нужен, чтобы отличать «код не собирается» от забитого tmpfs.
+func TestFreeBytes(t *testing.T) {
+	free, err := freeBytes(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if free == 0 {
+		t.Fatal("в каталоге тестов нет места")
+	}
+	if err := buildNoSpace(t.TempDir()); err != nil {
+		t.Fatalf("место есть, а buildNoSpace жалуется: %v", err)
+	}
+}
+
+// Убитая сигналом программа ничего не пишет сама: runner объясняет причину
+// вместо пустого вывода с exitCode -1.
+func TestRunKilledBySignalIsExplained(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("сигналы процессу запуска проверяем на Linux")
+	}
+	e := newExecutor(t)
+	res, err := e.Run(context.Background(), program(
+		`syscall.Kill(syscall.Getpid(), syscall.SIGKILL)`, "syscall"), Flags{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.TimedOut || res.ExitCode != -1 {
+		t.Fatalf("ожидалась смерть от сигнала: %+v", res)
+	}
+	if !strings.Contains(res.Stderr, "убита сигналом") {
+		t.Fatalf("в stderr нет объяснения: %q", res.Stderr)
+	}
+}
+
+// QueueTimeout ограничивает только ожидание слота. Пока он ограничивал весь
+// запрос, под нагрузкой корректный код выглядел как несобирающийся: сборку
+// обрывал таймаут очереди, и ученик видел «не компилируется».
+func TestQueueTimeoutLimitsOnlyWait(t *testing.T) {
+	e := newExecutor(t, func(c *Config) { c.QueueTimeout = 20 * time.Millisecond })
+	res, err := e.Run(context.Background(), program(`fmt.Println("ок")`, "fmt"), Flags{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.BuildFailed || res.Stdout != "ок\n" {
+		t.Fatalf("сборка дольше QueueTimeout не должна срываться: %+v", res)
+	}
+}
+
+// Когда слотов нет дольше QueueTimeout, запрос получает ErrBusy (HTTP 503),
+// а не висит до конца запроса.
+func TestQueueTimeoutBusy(t *testing.T) {
+	e := newExecutor(t, func(c *Config) {
+		c.Slots, c.UIDs, c.QueueTimeout = 1, nil, 50*time.Millisecond
+	})
+	busy := make(chan struct{})
+	go func() {
+		defer close(busy)
+		e.Run(context.Background(), program(`time.Sleep(2 * time.Second)`, "time"), Flags{})
+	}()
+	// Ждём, пока первый запуск займёт единственный слот.
+	for len(e.slots) > 0 {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if _, err := e.Run(context.Background(), program(`fmt.Println(1)`, "fmt"), Flags{}); !errors.Is(err, ErrBusy) {
+		t.Fatalf("ожидался ErrBusy, получено %v", err)
+	}
+	<-busy
 }
 
 func TestRunRejectsBadInput(t *testing.T) {

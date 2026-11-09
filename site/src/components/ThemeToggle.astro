@@ -1,0 +1,64 @@
+---
+// Переключатель темы: по кругу «системная → светлая → тёмная».
+// Текущий выбор — в подписи кнопки (на узком экране — только значок).
+---
+
+<button type="button" class="theme-toggle" data-theme-toggle aria-label="Тема: системная. Сменить тему" title="Тема: системная">
+  <span class="theme-icon" aria-hidden="true" data-theme-icon>◐</span>
+  <span class="theme-text" aria-hidden="true" data-theme-text>Системная</span>
+</button>
+
+<script>
+  import { currentChoice, nextChoice, setChoice, THEME_KEY, themeLabels, type ThemeChoice } from "../lib/client/theme.ts";
+
+  const icons: Record<ThemeChoice, string> = { system: "◐", light: "☀", dark: "☾" };
+
+  function paint() {
+    const c = currentChoice();
+    const label = themeLabels[c];
+    for (const b of document.querySelectorAll<HTMLButtonElement>("[data-theme-toggle]")) {
+      b.setAttribute("aria-label", `Тема: ${label}. Сменить тему`);
+      b.title = `Тема: ${label} (нажмите, чтобы сменить)`;
+      b.querySelector("[data-theme-icon]")!.textContent = icons[c];
+      b.querySelector("[data-theme-text]")!.textContent = label[0].toUpperCase() + label.slice(1);
+    }
+  }
+
+  for (const b of document.querySelectorAll<HTMLButtonElement>("[data-theme-toggle]")) {
+    b.addEventListener("click", () => {
+      setChoice(nextChoice(currentChoice()));
+      paint();
+    });
+  }
+  // Выбор в другой вкладке применяется и здесь.
+  addEventListener("storage", (e) => {
+    if (e.key !== THEME_KEY && e.key !== null) return;
+    const v = e.newValue;
+    const root = document.documentElement;
+    if (v === "light" || v === "dark") root.dataset.theme = v;
+    else delete root.dataset.theme;
+    paint();
+  });
+  paint();
+</script>
+
+<style>
+  .theme-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    white-space: nowrap;
+    padding: 0.3rem 0.6rem;
+  }
+  .theme-icon {
+    font-size: 1.05rem;
+    line-height: 1;
+    width: 1.1em;
+    text-align: center;
+  }
+  @media (max-width: 640px) {
+    .theme-text {
+      display: none;
+    }
+  }
+</style>

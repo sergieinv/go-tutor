@@ -20,6 +20,7 @@ import {
 } from "./game-protocol.ts";
 import { blockCSS, ChunkImages, drawChart, drawMap, readTheme, type Camera, type Series, type Theme, toWorld } from "./game-render.ts";
 import { GameState, HISTORY, step, teleportReason, Throttle } from "./game-state.ts";
+import { onThemeChange } from "./theme.ts";
 
 export const DEFAULT_URL = "ws://127.0.0.1:25580/ws";
 const URL_KEY = "gotutor:game:url";
@@ -121,8 +122,10 @@ export function mountGame(root: HTMLElement) {
   }
 
   let theme: Theme = readTheme(root);
-  matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
+  // Карта перерисовывается каждый кадр, график — по флагу.
+  onThemeChange(() => {
     theme = readTheme(root);
+    chartDirty = true;
   });
 
   let ws: WebSocket | null = null;

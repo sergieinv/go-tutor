@@ -5,7 +5,7 @@ import { builders, type LiveBuilder } from "../../../../viz/src/live/index.ts";
 import { Player } from "../../../../viz/src/player.ts";
 import { createSurface, renderScene, type Surface } from "../../../../viz/src/render.ts";
 import type { Step } from "../../../../viz/src/types.ts";
-import { race, run, trace, RunnerError, type Files, type Flags } from "./api.ts";
+import { race, run, trace, RunnerError, RunnerUnavailable, type Files, type Flags } from "./api.ts";
 import { createEditor, getDoc, highlightLines, setDoc } from "./editor.ts";
 import { loadDraft, saveDraft, storage } from "./progress.ts";
 import { showError, showPending, showRun } from "./render.ts";
@@ -101,12 +101,23 @@ function fillList(list: HTMLOListElement, steps: Step[]) {
   );
 }
 
+/** Если панель кода прокручивается (слайды ограничивают её высоту), держит активную строку на виду, не трогая прокрутку страницы. */
+function revealLine(panel: HTMLElement, line: HTMLElement | undefined) {
+  if (!line || panel.scrollHeight <= panel.clientHeight) return;
+  const top = line.offsetTop - panel.offsetTop;
+  if (top < panel.scrollTop || top + line.offsetHeight > panel.scrollTop + panel.clientHeight) {
+    panel.scrollTop = Math.max(0, top - panel.clientHeight / 3);
+  }
+}
+
 function mountScenario(root: HTMLElement) {
   const data: { width: number; height: number; steps: Step[] } = JSON.parse(root.querySelector("[data-steps]")!.textContent!);
   const ui = bindUi(root, data.width, data.height);
-  const lines = [...root.querySelectorAll<HTMLElement>("[data-code] .line")];
+  const code = root.querySelector<HTMLElement>("[data-code]")!;
+  const lines = [...code.querySelectorAll<HTMLElement>(".line")];
   bindPlayer(ui, new Player(data.steps), (active) => {
     lines.forEach((el, i) => el.classList.toggle("is-active", active.includes(i + 1)));
+    revealLine(code, lines[active[0] - 1]);
   });
 }
 
@@ -164,7 +175,9 @@ function mountLive(root: HTMLElement) {
       fillList(ui.list, built.steps);
       player.load(built.steps);
     } catch (e) {
-      showError(result, e instanceof RunnerError ? e.message : String(e));
+      // Живая схема строится только по настоящему запуску — сохранённого вывода тут нет.
+      if (e instanceof RunnerUnavailable) showError(result, `${e.message} Живая визуализация строится по реальному запуску, без runner её не построить.`);
+      else showError(result, e instanceof RunnerError ? e.message : String(e));
     } finally {
       busy = false;
       runBtn.disabled = false;

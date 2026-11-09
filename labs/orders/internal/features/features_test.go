@@ -50,3 +50,15 @@ func TestFeaturesEndpoint(t *testing.T) {
 		t.Errorf("DELETE = %d, want 405", code)
 	}
 }
+
+func TestFeaturesRejectsCrossOrigin(t *testing.T) {
+	f := features.New(true, false)
+	h := f.Handler(slog.New(slog.DiscardHandler))
+	req := httptest.NewRequest(http.MethodPost, "/admin/features", strings.NewReader(`{"catalog_cache": false}`))
+	req.Header.Set("Sec-Fetch-Site", "cross-site")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden || !f.CatalogCache() {
+		t.Errorf("cross-site POST = %d, catalog_cache = %v; want 403 and unchanged", rec.Code, f.CatalogCache())
+	}
+}

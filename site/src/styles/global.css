@@ -21,11 +21,15 @@
   --syn-type: #953800;
   --syn-function: #8250df;
   --syn-definition: #24292f;
-  color-scheme: light dark;
+  --primary-fg: #fff;
+  color-scheme: light;
 }
 
+/* Тёмная тема: по системной настройке, если не выбрана светлая, или явно —
+   переключателем в шапке (data-theme на <html>, см. ThemeInit.astro).
+   Палитры двух блоков одинаковы. */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --bg: #0d1117;
     --bg-soft: #161b22;
     --fg: #e6edf3;
@@ -43,12 +47,41 @@
     --syn-type: #ffa657;
     --syn-function: #d2a8ff;
     --syn-definition: #e6edf3;
+    --primary-fg: #0d1117;
+    color-scheme: dark;
   }
-  .shiki,
-  .shiki span {
+  :root:not([data-theme="light"]) .shiki,
+  :root:not([data-theme="light"]) .shiki span {
     color: var(--shiki-dark) !important;
     background-color: var(--shiki-dark-bg) !important;
   }
+}
+
+:root[data-theme="dark"] {
+  --bg: #0d1117;
+  --bg-soft: #161b22;
+  --fg: #e6edf3;
+  --fg-muted: #9198a1;
+  --border: #30363d;
+  --accent-strong: #5fd3ef;
+  --warn-bg: #2b2111;
+  --warn-border: #9e6a03;
+  --ok: #3fb950;
+  --bad: #f85149;
+  --syn-keyword: #ff7b72;
+  --syn-string: #a5d6ff;
+  --syn-constant: #79c0ff;
+  --syn-comment: #8b949e;
+  --syn-type: #ffa657;
+  --syn-function: #d2a8ff;
+  --syn-definition: #e6edf3;
+  --primary-fg: #0d1117;
+  color-scheme: dark;
+}
+:root[data-theme="dark"] .shiki,
+:root[data-theme="dark"] .shiki span {
+  color: var(--shiki-dark) !important;
+  background-color: var(--shiki-dark-bg) !important;
 }
 
 * {
@@ -60,6 +93,8 @@ body {
   background: var(--bg);
   color: var(--fg);
   font: 16px/1.6 var(--sans);
+  /* Длинные слова и идентификаторы переносятся, а не растягивают страницу. */
+  overflow-wrap: break-word;
 }
 
 main {
@@ -109,6 +144,17 @@ pre.plain {
   background: var(--bg-soft);
 }
 
+:not(pre) > code {
+  overflow-wrap: anywhere;
+}
+
+/* В таблицах код не рвётся посреди слова: широкая таблица прокручивается сама. */
+.prose td code,
+.prose th code {
+  overflow-wrap: normal;
+  white-space: nowrap;
+}
+
 pre code {
   background: none;
   padding: 0;
@@ -117,6 +163,8 @@ pre code {
 
 .prose pre {
   margin: 0.75rem 0;
+  /* Блоки без подсветки (язык, которого нет у Shiki) тоже прокручиваются сами. */
+  overflow-x: auto;
 }
 
 details > summary {
@@ -124,14 +172,33 @@ details > summary {
 }
 
 .site-header {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  min-height: 3.25rem;
   border-bottom: 1px solid var(--border);
-  padding: 0.75rem 1rem;
+  padding: 0.5rem 1rem;
 }
 
 .brand {
   font-weight: 600;
   text-decoration: none;
   color: var(--fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.header-tools {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .muted {
@@ -188,13 +255,7 @@ button:disabled {
 button.primary {
   background: var(--accent-strong);
   border-color: var(--accent-strong);
-  color: #fff;
-}
-
-@media (prefers-color-scheme: dark) {
-  button.primary {
-    color: #0d1117;
-  }
+  color: var(--primary-fg);
 }
 
 .toolbar {

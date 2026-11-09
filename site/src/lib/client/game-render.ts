@@ -28,7 +28,8 @@ export function readTheme(el: Element): Theme {
     accent: v("--accent", "#00add8"),
     ok: v("--ok", "#1a7f37"),
     bad: v("--bad", "#cf222e"),
-    dark: matchMedia("(prefers-color-scheme: dark)").matches,
+    // Итог темы сайта: и системная настройка, и переключатель в шапке.
+    dark: cs.colorScheme === "dark",
   };
 }
 

@@ -11,6 +11,7 @@
 //	RUNNER_CONTENT  каталог контента, по умолчанию ./content
 //	RUNNER_SLOTS    число параллельных запусков, по умолчанию 4
 //	RUNNER_UID_BASE первый uid слотов, по умолчанию 20000
+//	GOTUTOR_VERSION версия курса для /api/health, по умолчанию dev
 //	RUNNER_GOVULNCHECK путь к govulncheck; пусто — ищется в PATH, нет — /api/vulncheck выключен
 //	RUNNER_VULNDB   база уязвимостей для govulncheck -db, например file:///opt/vulndb
 //	RUNNER_BUF      путь к buf (плагины protoc-gen-* рядом); пусто — ищется в PATH, нет — примеры с .proto не собираются

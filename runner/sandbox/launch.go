@@ -16,7 +16,7 @@ import (
 func Launch(args []string) error {
 	fs := flag.NewFlagSet("launch", flag.ContinueOnError)
 	cpu := fs.Uint64("cpu", 0, "RLIMIT_CPU, секунды")
-	as := fs.Uint64("as", 0, "RLIMIT_AS, байты")
+	data := fs.Uint64("data", 0, "RLIMIT_DATA, байты")
 	fsize := fs.Uint64("fsize", 0, "RLIMIT_FSIZE, байты")
 	nofile := fs.Uint64("nofile", 0, "RLIMIT_NOFILE")
 	nproc := fs.Uint64("nproc", 0, "RLIMIT_NPROC")
@@ -31,7 +31,8 @@ func Launch(args []string) error {
 		val uint64
 	}{
 		{syscall.RLIMIT_CPU, *cpu},
-		{syscall.RLIMIT_AS, *as},
+		// Память — RLIMIT_DATA, а не RLIMIT_AS: см. комментарий в exec.
+		{syscall.RLIMIT_DATA, *data},
 		{syscall.RLIMIT_FSIZE, *fsize},
 		{syscall.RLIMIT_NOFILE, *nofile},
 		{limitNPROC, *nproc},

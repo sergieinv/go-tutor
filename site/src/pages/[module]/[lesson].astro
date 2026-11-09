@@ -132,4 +132,18 @@ const sections = await renderLessonBody(lesson.body);
     padding-top: 1rem;
     border-top: 1px solid var(--border);
   }
+  .pager a {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+  /* Узкий экран: назад, оглавление и вперёд — друг под другом. */
+  @media (max-width: 640px) {
+    .pager {
+      flex-direction: column;
+      gap: 0.5rem;
+    }
+    .pager :global([rel="next"]) {
+      text-align: right;
+    }
+  }
 </style>
