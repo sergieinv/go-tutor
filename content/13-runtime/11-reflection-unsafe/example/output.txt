@@ -1,0 +1,15 @@
+type: main.Config kind: struct fields: 4
+duration: time.Duration kind: int64
+  Host    string        exported=true  env="HOST" true
+  Port    int           exported=true  env="PORT,required" true
+  Timeout time.Duration exported=true  env="TIMEOUT" true
+  secret  string        exported=false env="" false
+copy settable: false
+via pointer settable: true unexported: false
+after reflect set: 8080 3s
+Addr via reflect: localhost:8080
+padded: 24 offset B: 8 align: 8
+packed: 16
+float bits equal: true
+zero-copy string: read-only payload true
+bytes of [2]uint16: 4

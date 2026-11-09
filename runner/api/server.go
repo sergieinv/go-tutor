@@ -1,5 +1,5 @@
 // Package api — HTTP-интерфейс runner: /api/run, /api/test, /api/gotest,
-// /api/vulncheck, /api/buf, /api/fmt, /api/trace, /api/race.
+// /api/vulncheck, /api/buf, /api/fmt, /api/trace, /api/race, /api/pprof.
 package api
 
 import (
@@ -48,6 +48,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/solution", s.handleSolution)
 	mux.HandleFunc("POST /api/trace", s.handleTrace)
 	mux.HandleFunc("POST /api/race", s.handleRace)
+	mux.HandleFunc("POST /api/pprof", s.handlePprof)
 	mux.HandleFunc("GET /api/health", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "lessons": len(s.lessons)})
 	})
@@ -147,6 +148,32 @@ func (s *Server) handleRace(w http.ResponseWriter, r *http.Request) {
 	}
 	s.log.Info("race", "lesson", req.Lesson, "ms", res.DurationMs, "exit", res.ExitCode,
 		"buildFailed", res.BuildFailed, "races", len(res.Races))
+	writeJSON(w, http.StatusOK, res)
+}
+
+// handlePprof запускает программу и строит pprof -top по профилям, которые
+// она записала через runtime/pprof. Не кешируется: профиль — это замер.
+func (s *Server) handlePprof(w http.ResponseWriter, r *http.Request) {
+	var req runRequest
+	if !decode(w, r, &req) {
+		return
+	}
+	flags, ok := s.runFlags(w, req)
+	if !ok {
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), s.queueTimeout)
+	defer cancel()
+	res, err := s.exec.Profile(ctx, req.Files, flags)
+	if errors.Is(err, sandbox.ErrNoPprof) {
+		writeError(w, http.StatusNotImplemented, "в этом runner нет pprof")
+		return
+	}
+	if s.fail(w, r, err) {
+		return
+	}
+	s.log.Info("pprof", "lesson", req.Lesson, "ms", res.DurationMs, "exit", res.ExitCode,
+		"buildFailed", res.BuildFailed, "profiles", len(res.Profiles))
 	writeJSON(w, http.StatusOK, res)
 }
 
@@ -341,6 +368,12 @@ func validateFlags(f sandbox.Flags) error {
 	if f.GOMAXPROCS < 0 || f.GOMAXPROCS > 64 {
 		return fmt.Errorf("GOMAXPROCS должен быть от 1 до 64")
 	}
+	if err := sandbox.ValidGCFlags(f.GCFlags); err != nil {
+		return err
+	}
+	if err := sandbox.ValidTraceback(f.GOTRACEBACK); err != nil {
+		return err
+	}
 	return sandbox.ValidLabs(f.Labs)
 }
 
@@ -354,6 +387,12 @@ func merge(base, over sandbox.Flags) sandbox.Flags {
 	}
 	if over.GODEBUG != "" {
 		base.GODEBUG = over.GODEBUG
+	}
+	if over.GCFlags != "" {
+		base.GCFlags = over.GCFlags
+	}
+	if over.GOTRACEBACK != "" {
+		base.GOTRACEBACK = over.GOTRACEBACK
 	}
 	for _, lab := range over.Labs {
 		if !slices.Contains(base.Labs, lab) {

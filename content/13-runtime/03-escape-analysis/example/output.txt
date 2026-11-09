@@ -1,0 +1,8 @@
+byValue    0
+byPointer  1
+local      0
+any(7)     0
+any(1000)  1
+any(ptr)   0
+make(32)   0
+make(33)   1

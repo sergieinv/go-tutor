@@ -1,0 +1,116 @@
+questions:
+  - id: weak-pointer
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"runtime"
+      	"weak"
+      )
+
+      type node struct {
+      	next *node
+      	data [32]byte
+      }
+
+      func main() {
+      	n := &node{}
+      	w := weak.Make(n)
+      	runtime.GC()
+      	fmt.Println(w.Value() == n)
+      	runtime.KeepAlive(n)
+
+      	runtime.GC()
+      	fmt.Println(w.Value() == nil)
+      }
+    options:
+      - text: |-
+          true
+          true
+        correct: true
+        explain: "До `runtime.KeepAlive(n)` объект достижим из стека и переживает первую сборку. После последнего использования `n` его ничто не держит: слабый указатель не считается, и после второй сборки `Value()` возвращает `nil`."
+      - text: |-
+          true
+          false
+        explain: "`weak.Pointer` не удерживает объект: когда сильных ссылок не осталось, сборщик его освобождает, и `Value()` возвращает `nil`."
+      - text: |-
+          false
+          true
+        explain: "Пока `n` используется дальше (`KeepAlive`), объект жив, и слабый указатель возвращает тот же адрес."
+
+  - id: cleanup-self
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"runtime"
+      )
+
+      type file struct{ fd int }
+
+      func main() {
+      	defer func() { fmt.Println("паника:", recover() != nil) }()
+      	f := &file{fd: 3}
+      	runtime.AddCleanup(f, func(f *file) { fmt.Println("close", f.fd) }, f)
+      	fmt.Println("cleanup добавлен")
+      }
+    options:
+      - text: "паника: true"
+        correct: true
+        explain: "Если `arg` ссылается на сам объект, объект не станет недостижимым никогда. Самый простой случай — `arg == ptr` — `AddCleanup` ловит и паникует. Передавайте в cleanup только ресурс: `f.fd`."
+      - text: |-
+          cleanup добавлен
+          паника: false
+        explain: "`AddCleanup` проверяет `arg == ptr` и паникует сразу — до печати."
+      - text: |-
+          cleanup добавлен
+          close 3
+          паника: false
+        explain: "Даже без паники cleanup не обязан выполниться до выхода из программы, а здесь объект и вовсе держал бы сам себя."
+
+  - id: stw-phases
+    kind: multiple
+    prompt: Какие фазы цикла GC останавливают мир (STW)?
+    options:
+      - text: Sweep termination — начало цикла
+        correct: true
+        explain: "Все P доходят до безопасной точки, включаются барьер записи и mark assist."
+      - text: Маркировка
+        explain: "Маркировка конкурентная: стек горутины сканируется, пока приостановлена только она, остальные работают."
+      - text: Mark termination — конец маркировки
+        correct: true
+        explain: "Короткая пауза, чтобы убедиться, что серых объектов не осталось, и выключить воркеры."
+      - text: Sweep
+        explain: "Подметание идёт конкурентно: лениво при выделении памяти и в фоновой горутине."
+
+  - id: barrier
+    kind: single
+    prompt: "Во время маркировки программа выполняет `obj.ref = p`. Что делает барьер записи Go?"
+    options:
+      - text: Красит в серый объект `obj`, чтобы его просмотрели заново
+        explain: "Это подход «перекрашивания контейнера». Go красит не контейнер, а указатели: старое и новое значение слота."
+      - text: Красит в серый старое значение `obj.ref` и новое `p`
+        correct: true
+        explain: "Гибридный барьер: часть Юасы не даёт потерять объект, у которого стёрли последнюю ссылку из кучи, часть Дейкстры — спрятать белый объект в чёрном."
+      - text: Ничего — барьер нужен только для поколений
+        explain: "Поколений в Go нет; барьер нужен для конкурентной маркировки и включён только на её время."
+      - text: Останавливает мир до конца записи
+        explain: "Барьер — несколько инструкций перед записью, а не пауза."
+
+  - id: new-object-color
+    kind: single
+    prompt: Какого цвета объект, выделенный во время маркировки?
+    options:
+      - text: Белый — его ещё никто не нашёл
+        explain: "Белый объект освободили бы в конце цикла, хотя на него только что получили указатель."
+      - text: Серый — его надо просмотреть
+        explain: "Просматривать нечего: все его поля только что обнулены или записаны через барьер."
+      - text: Чёрный
+        correct: true
+        explain: "Новый объект заведомо жив в этом цикле, поэтому сразу чёрный (`mgc.go`: «Newly allocated objects are immediately marked black»). Если он умрёт до конца маркировки, его соберёт следующий цикл."

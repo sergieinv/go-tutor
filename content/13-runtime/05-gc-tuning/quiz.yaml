@@ -1,0 +1,114 @@
+questions:
+  - id: set-gc-percent
+    kind: output
+    prompt: Что выведет программа (переменная `GOGC` не задана)?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"runtime/debug"
+      )
+
+      func main() {
+      	old := debug.SetGCPercent(50)
+      	fmt.Println(old)
+      	fmt.Println(debug.SetGCPercent(-1))
+      	fmt.Println(debug.SetGCPercent(old))
+      }
+    options:
+      - text: |-
+          100
+          50
+          -1
+        correct: true
+        explain: "`SetGCPercent` возвращает прежнее значение: по умолчанию 100, затем 50, затем −1 (GOGC=off). Последний вызов возвращает настройку к 100."
+      - text: |-
+          50
+          -1
+          100
+        explain: "Функция возвращает не новое значение, а то, что было до вызова."
+      - text: |-
+          100
+          50
+          0
+        explain: "Выключенный GC (`GOGC=off`) рантайм хранит как −1, а не 0. `GOGC=0` — это другое: цель кучи равна живой куче, сборки почти непрерывны."
+
+  - id: memory-limit-metric
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"runtime/debug"
+      	"runtime/metrics"
+      )
+
+      func main() {
+      	prev := debug.SetMemoryLimit(512 << 20)
+      	defer debug.SetMemoryLimit(prev)
+
+      	fmt.Println(debug.SetMemoryLimit(-1) >> 20)
+      	s := []metrics.Sample{{Name: "/gc/gomemlimit:bytes"}}
+      	metrics.Read(s)
+      	fmt.Println(s[0].Value.Uint64() >> 20)
+      }
+    options:
+      - text: |-
+          512
+          512
+        correct: true
+        explain: "Отрицательный аргумент ничего не меняет и только возвращает текущий лимит. Новый лимит действует сразу и виден в `/gc/gomemlimit:bytes`."
+      - text: |-
+          -1
+          512
+        explain: "`SetMemoryLimit` возвращает прежнее значение лимита, а отрицательный аргумент лимит не меняет — возвращается 512 МиБ."
+      - text: |-
+          512
+          0
+        explain: "Метрика `/gc/gomemlimit:bytes` показывает действующий лимит, а не потреблённую память."
+
+  - id: heap-goal
+    kind: single
+    prompt: "После цикла GC живая куча — 100 МиБ, стеки — 4 МиБ, глобальные — пренебрежимо малы, `GOGC=50`, лимита нет. Какой будет цель кучи?"
+    options:
+      - text: "150 МиБ"
+        explain: "Стеки тоже входят в базу: 100 + (100 + 4) × 50 / 100."
+      - text: "152 МиБ"
+        correct: true
+        explain: "Цель = живая + (живая + стеки + глобальные) × GOGC / 100 = 100 + 104 × 0,5 = 152 МиБ."
+      - text: "204 МиБ"
+        explain: "Это цель при GOGC=100. При 50 куче разрешено вырасти только на половину базы."
+      - text: "50 МиБ"
+        explain: "GOGC — процент роста сверх живой кучи, а не размер кучи."
+
+  - id: limit-below-live
+    kind: single
+    prompt: "Живых данных 300 МиБ, а `GOMEMLIMIT=256MiB`. Что произойдёт?"
+    options:
+      - text: Рантайм завершит программу с ошибкой нехватки памяти
+        explain: "Лимит мягкий: рантайм не падает из-за него. Убить процесс может только ОС, если упрётся в лимит контейнера."
+      - text: "Сборщик будет работать почти непрерывно, но ограничитель CPU не даст ему занять больше 50%; память останется выше лимита"
+        correct: true
+        explain: "Цель кучи упирается в живые данные — «спираль смерти». Ограничитель (`mgclimit.go`) отключает mark assist, когда GC берёт больше половины CPU, и куча переходит лимит, но программа продолжает работать."
+      - text: Рантайм освободит часть живых объектов, чтобы уложиться
+        explain: "Сборщик никогда не освобождает достижимые объекты."
+      - text: Лимит будет проигнорирован — он действует только при GOGC=off
+        explain: "Лимит действует всегда, в том числе вместе с GOGC: берётся меньшая из двух целей."
+
+  - id: limit-includes
+    kind: multiple
+    prompt: Что учитывает GOMEMLIMIT?
+    options:
+      - text: Объекты кучи и свободные, но не возвращённые ОС страницы кучи
+        correct: true
+        explain: "Лимит считает всю память рантайма за вычетом возвращённой ОС: `/memory/classes/total:bytes − /memory/classes/heap/released:bytes`."
+      - text: Стеки горутин
+        correct: true
+        explain: "Стеки выделяет рантайм — они входят в лимит."
+      - text: Память, выделенная C-кодом через cgo
+        explain: "Её рантайм не видит; она не входит в лимит, поэтому GOMEMLIMIT ставят с запасом от лимита контейнера."
+      - text: Код исполняемого файла
+        explain: "Исполняемый файл в лимит не входит — это ещё одна причина оставлять запас."

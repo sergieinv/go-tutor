@@ -38,7 +38,15 @@ const sections = await renderLessonBody(lesson.body);
 
     {sections.csharp && <CSharpBridge differences={sections.csharp} files={lesson.csharp} />}
 
-    <Playground lesson={lesson.id} example={lesson.example} race={lesson.meta.runner?.race} vulncheck={!!lesson.meta.govulncheck} labs={lesson.meta.runner?.labs} />
+    <Playground
+      lesson={lesson.id}
+      example={lesson.example}
+      race={lesson.meta.runner?.race}
+      gcflags={lesson.meta.runner?.gcflags}
+      gotraceback={lesson.meta.runner?.gotraceback}
+      vulncheck={!!lesson.meta.govulncheck}
+      labs={lesson.meta.runner?.labs}
+    />
 
     {
       sections.internals && (

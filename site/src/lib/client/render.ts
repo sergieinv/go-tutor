@@ -1,5 +1,5 @@
 // Отрисовка результатов runner. Вывод программ — только через textContent.
-import type { GoTestMode, GoTestResult, RunResult, TestResult, VulncheckResult, BufResult } from "./api.ts";
+import type { GoTestMode, GoTestResult, ProfileResult, RunResult, TestResult, VulncheckResult, BufResult } from "./api.ts";
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, className?: string, text?: string) {
   const e = document.createElement(tag);
@@ -31,12 +31,39 @@ export function showError(target: HTMLElement, message: string) {
   target.removeAttribute("aria-busy");
 }
 
-export function showRun(target: HTMLElement, r: RunResult) {
+export function showRun(target: HTMLElement, r: RunResult, gcflags?: string) {
   target.removeAttribute("aria-busy");
   if (r.buildFailed) {
     target.replaceChildren(status("Ошибка компиляции", "bad"), block("go build", r.buildOutput ?? "", "err"));
     return;
   }
+  const parts = runParts(r);
+  if (gcflags) {
+    parts.push(
+      r.compilerOutput
+        ? block(`go build -gcflags="${gcflags}"`, r.compilerOutput, "out")
+        : el("p", "muted", `Компилятор с -gcflags="${gcflags}" ничего не сообщил.`),
+    );
+  }
+  target.replaceChildren(...parts);
+}
+
+/** Запуск примера, затем pprof -top по каждому профилю, который он записал. */
+export function showProfile(target: HTMLElement, r: ProfileResult) {
+  target.removeAttribute("aria-busy");
+  if (r.buildFailed) {
+    target.replaceChildren(status("Ошибка компиляции", "bad"), block("go build", r.buildOutput ?? "", "err"));
+    return;
+  }
+  const parts = runParts(r);
+  for (const p of r.profiles) parts.push(block(`go tool pprof -top ${p.name}`, p.top, p.failed ? "err" : "out"));
+  if (r.profiles.length === 0) {
+    parts.push(el("p", "muted", "Программа не записала ни одного профиля: pprof ищет файлы *.pprof в рабочем каталоге."));
+  }
+  target.replaceChildren(...parts);
+}
+
+function runParts(r: RunResult): HTMLElement[] {
   const parts: HTMLElement[] = [];
   if (r.timedOut) parts.push(status("Программа прервана: превышен лимит времени", "bad", r.durationMs));
   else if (r.truncated) parts.push(status("Программа прервана: слишком большой вывод (лимит 64 КБ)", "bad", r.durationMs));
@@ -45,7 +72,7 @@ export function showRun(target: HTMLElement, r: RunResult) {
   if (r.stdout) parts.push(block("stdout", r.stdout, "out"));
   if (r.stderr) parts.push(block("stderr", r.stderr, "err"));
   if (!r.stdout && !r.stderr) parts.push(el("p", "muted", "Программа ничего не вывела."));
-  target.replaceChildren(...parts);
+  return parts;
 }
 
 /** Результат go test для примера: вывод как в терминале плюс покрытие или найденные фаззером входы. */

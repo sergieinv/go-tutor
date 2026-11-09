@@ -181,6 +181,20 @@ func (c *Checker) checkLive(ctx context.Context, l *Lesson, p *Problems) {
 	}
 	files := sandbox.Files{"main.go": string(src)}
 	builder := string(m[1])
+	if builder == "escape" {
+		flags := l.Meta.Runner
+		flags.GCFlags = "-m"
+		res, err := c.Exec.Run(ctx, files, flags)
+		switch {
+		case err != nil:
+			p.Errorf("live: %v", err)
+		case res.BuildFailed:
+			p.Errorf("live: не компилируется\n%s", indent(res.BuildOutput))
+		case !escapeLine.MatchString(res.CompilerOutput):
+			p.Errorf("live: компилятор не перенёс в кучу ни одной переменной main.go — визуализатору нечего показать\n%s", indent(res.CompilerOutput))
+		}
+		return
+	}
 	if builder == "race" {
 		res, err := livetrace.RunRace(ctx, c.Exec, files, l.Meta.Runner)
 		switch {
@@ -217,6 +231,38 @@ func (c *Checker) checkLive(ctx context.Context, l *Lesson, p *Problems) {
 		p.Warnf("live: %d событий, показаны будут первые %d — сократите программу", res.Trace.Total, livetrace.MaxEvents)
 	}
 }
+
+// usesPprof — пример пишет профили через runtime/pprof: в песочнице у него
+// кнопка «pprof».
+func usesPprof(l *Lesson) bool {
+	src, err := os.ReadFile(filepath.Join(l.Dir, "example", "main.go"))
+	return err == nil && bytes.Contains(src, []byte(`"runtime/pprof"`))
+}
+
+// checkPprof запускает пример, как кнопка «pprof», и требует хотя бы один
+// профиль, который pprof смог прочитать.
+func (c *Checker) checkPprof(ctx context.Context, l *Lesson, files sandbox.Files, p *Problems) {
+	res, err := c.Exec.Profile(ctx, files, l.Meta.Runner)
+	switch {
+	case err != nil:
+		p.Errorf("pprof: %v", err)
+		return
+	case res.BuildFailed || res.ExitCode != 0:
+		p.Errorf("pprof: exit=%d\n%s", res.ExitCode, indent(res.Stderr))
+		return
+	case len(res.Profiles) == 0:
+		p.Errorf("pprof: пример импортирует runtime/pprof, но не записал ни одного *.pprof в рабочий каталог")
+	}
+	for _, pr := range res.Profiles {
+		if pr.Failed {
+			p.Errorf("pprof: %s не читается\n%s", pr.Name, indent(pr.Top))
+		}
+	}
+}
+
+// escapeLine — диагностика escape analysis в main.go, как её разбирает
+// построитель escape (viz/src/live/escape.ts).
+var escapeLine = regexp.MustCompile(`(?m)^\./main\.go:\d+:\d+: (moved to heap: |.* escapes to heap)`)
 
 // checkVulncheck прогоняет govulncheck по примеру, как кнопка в песочнице,
 // и требует найти перечисленные в frontmatter уязвимости. Новые записи
@@ -313,6 +359,11 @@ func (c *Checker) checkExample(ctx context.Context, l *Lesson, p *Problems) {
 	}
 	if testMode {
 		c.checkTestModes(ctx, l, files, p)
+	} else if l.Meta.Runner.GCFlags != "" && res.CompilerOutput == "" {
+		p.Errorf("example: с runner.gcflags %q компилятор ничего не вывел", l.Meta.Runner.GCFlags)
+	}
+	if !testMode && usesPprof(l) {
+		c.checkPprof(ctx, l, files, p)
 	}
 	outPath := filepath.Join(l.Dir, "example", "output.txt")
 	if c.Update {

@@ -1,0 +1,115 @@
+questions:
+  - id: compare-panic
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      func main() {
+      	defer func() { fmt.Println("recovered:", recover() != nil) }()
+      	var a, b any = 1, "1"
+      	fmt.Println(a == b)
+      	a, b = []int{1}, []int{1}
+      	fmt.Println(a == b)
+      }
+    options:
+      - text: "false\nrecovered: true"
+        correct: true
+        explain: "Разные динамические типы — просто `false`. Одинаковый несравнимый тип `[]int` — паника `comparing uncomparable type []int` во время выполнения; компилятор её не видит, потому что `any` сравним."
+      - text: "false\nfalse\nrecovered: false"
+        explain: "Для срезов внутри интерфейса рантайм не возвращает `false`: функции равенства у типа `[]int` нет, и `efaceeq` паникует."
+      - text: "false\ntrue\nrecovered: false"
+        explain: "Срезы не сравниваются по содержимому ни напрямую, ни через интерфейс."
+      - text: Ошибка компиляции
+        explain: "`[]int{1} == []int{1}` не скомпилировалось бы, но здесь сравниваются значения типа `any` — для компилятора это законно."
+
+  - id: boxed-copy
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import "fmt"
+
+      type Counter struct{ N int }
+
+      func main() {
+      	c := Counter{N: 1}
+      	var a any = c
+      	var b any = &c
+      	c.N = 2
+      	fmt.Println(a.(Counter).N, b.(*Counter).N)
+      }
+    options:
+      - text: "1 2"
+        correct: true
+        explain: "Значение при упаковке копируется — `a` хранит свою копию с `N = 1`. Указатель кладётся в слово `data` как есть, поэтому через `b` видно изменение."
+      - text: "2 2"
+        explain: "Интерфейс не ссылается на переменную `c`: для не-указателя рантайм копирует значение, как boxing в C#."
+      - text: "1 1"
+        explain: "`b` хранит указатель на `c`, а не копию — изменение видно."
+      - text: panic
+        explain: "Динамические типы совпадают с проверяемыми — assertion успешен."
+
+  - id: free-boxing
+    kind: multiple
+    prompt: Какие присваивания `sink = x` (`sink` — глобальная `any`, `x` — изменяемая глобальная переменная) не выделяют память в куче?
+    options:
+      - text: "`x` типа `int` со значением 200"
+        correct: true
+        explain: "`convT64` берёт адрес из статической таблицы `staticuint64s` для значений 0–255."
+      - text: "`x` типа `*bytes.Buffer`"
+        correct: true
+        explain: "Указатель кладётся прямо во второе слово интерфейса, копировать нечего."
+      - text: "`x` типа `string`, значение `\"\"`"
+        correct: true
+        explain: "`convTstring` для пустой строки возвращает адрес общих нулевых данных `zeroVal`."
+      - text: "`x` типа `int` со значением 1000"
+        explain: "Вне диапазона 0–255 `convT64` выделяет 8 байт в куче — интерфейс убегает в глобальную переменную."
+      - text: "`x` типа `struct{ A, B int }`"
+        explain: "Структура из двух полей копируется в кучу через `convTnoptr`: интерфейс убегает."
+
+  - id: devirtualize
+    kind: single
+    prompt: Почему вызов метода через интерфейс в горячем цикле бывает заметно дороже прямого вызова?
+    options:
+      - text: "Компилятор не знает, какой метод вызовется, поэтому не встраивает его и считает, что аргументы убегают в кучу"
+        correct: true
+        explain: "Сама косвенность — пара загрузок из itab. Главная цена — потерянные оптимизации: нет inlining и escape analysis через вызов. Девиртуализация (статическая или по PGO) их возвращает."
+      - text: "При каждом вызове рантайм ищет itab в глобальной хеш-таблице"
+        explain: "itab ищется при конвертации или type assertion, а вызов просто берёт адрес из уже сохранённого `tab.Fun`."
+      - text: "Каждый вызов упаковывает получатель в интерфейс заново"
+        explain: "Упаковка происходит один раз, при присваивании интерфейсу; вызов передаёт готовое слово `data`."
+      - text: "Вызов через интерфейс всегда проходит через рефлексию"
+        explain: "Рефлексия не участвует: вызов — обычный косвенный call по адресу из таблицы методов."
+
+  - id: nil-pointer-assert
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"bytes"
+      	"fmt"
+      	"io"
+      )
+
+      func main() {
+      	var buf *bytes.Buffer
+      	var w io.Writer = buf
+      	b, ok := w.(*bytes.Buffer)
+      	fmt.Println(w == nil, ok, b == nil)
+      }
+    options:
+      - text: "false true true"
+        correct: true
+        explain: "В `w` лежит itab для `*bytes.Buffer` и nil в слове данных — интерфейс не nil. Assertion сравнивает тип и успешен, а достаёт nil-указатель."
+      - text: "true false true"
+        explain: "Интерфейс равен nil, только если пусто и первое слово (itab). Здесь тип известен."
+      - text: "false false true"
+        explain: "Assertion проверяет динамический тип, а не значение: тип совпадает, `ok` = true."
+      - text: panic
+        explain: "Форма с `ok` не паникует, а здесь и тип совпадает."

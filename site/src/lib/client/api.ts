@@ -6,11 +6,14 @@ export interface Flags {
   race?: boolean;
   gomaxprocs?: number;
   godebug?: string;
+  gcflags?: string;
 }
 
 export interface RunResult {
   buildFailed: boolean;
   buildOutput?: string;
+  /** Диагностика компилятора, если урок включил runner.gcflags. */
+  compilerOutput?: string;
   stdout: string;
   stderr: string;
   exitCode: number;
@@ -124,6 +127,13 @@ export const buf = (files: Files, lesson?: string, against?: Files) => post<BufR
 export const format = (files: Files) => post<FmtResult>("fmt", { files });
 
 export const solution = (lesson: string) => post<{ files: Files }>("solution", { lesson });
+
+/** Запуск и pprof -top по профилям *.pprof, которые записала программа; повторяет sandbox.ProfileResult. */
+export interface ProfileResult extends RunResult {
+  profiles: { name: string; top: string; failed?: boolean }[];
+}
+
+export const pprof = (files: Files, lesson?: string) => post<ProfileResult>("pprof", { files, lesson });
 
 /** Запуск с runtime/trace для живой визуализации; тип ответа — viz/src/live/trace.ts. */
 export const trace = <T>(files: Files, lesson?: string, flags?: Flags) =>

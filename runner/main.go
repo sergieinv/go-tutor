@@ -14,6 +14,7 @@
 //	RUNNER_GOVULNCHECK путь к govulncheck; пусто — ищется в PATH, нет — /api/vulncheck выключен
 //	RUNNER_VULNDB   база уязвимостей для govulncheck -db, например file:///opt/vulndb
 //	RUNNER_BUF      путь к buf (плагины protoc-gen-* рядом); пусто — ищется в PATH, нет — примеры с .proto не собираются
+//	RUNNER_PPROF    путь к собранному cmd/pprof; пусто — ищется в PATH, нет — /api/pprof выключен
 //	RUNNER_LAB_POSTGRES DSN администратора PostgreSQL профиля labs (runner.labs: [postgres])
 //	RUNNER_LAB_MYSQL    DSN администратора MySQL профиля labs (runner.labs: [mysql])
 //	RUNNER_LAB_KAFKA    брокеры Kafka профиля labs через запятую (runner.labs: [kafka])
@@ -87,6 +88,10 @@ func serve(log *slog.Logger) error {
 	cfg.Buf = os.Getenv("RUNNER_BUF")
 	if cfg.Buf == "" {
 		cfg.Buf, _ = osexec.LookPath("buf")
+	}
+	cfg.Pprof = os.Getenv("RUNNER_PPROF")
+	if cfg.Pprof == "" {
+		cfg.Pprof, _ = osexec.LookPath("pprof")
 	}
 	cfg.Labs = map[string]string{}
 	for name, key := range map[string]string{sandbox.LabPostgres: "RUNNER_LAB_POSTGRES", sandbox.LabMySQL: "RUNNER_LAB_MYSQL", sandbox.LabKafka: "RUNNER_LAB_KAFKA"} {

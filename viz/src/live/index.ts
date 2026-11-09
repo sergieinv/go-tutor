@@ -1,6 +1,7 @@
 // Построители живых визуализаторов: какой эндпоинт runner вызвать и как
 // превратить ответ в шаги. Имя построителя — поле builder в viz.ts урока.
 import type { Step } from "../types.ts";
+import { ESCAPE_WIDTH, escapeHeight, escapeSteps, parseEscape, type EscapeResult } from "./escape.ts";
 import { GOROUTINES_WIDTH, goroutinesHeight, goroutinesSteps } from "./goroutines.ts";
 import { RACE_HEIGHT, RACE_WIDTH, raceSteps, type RaceResult } from "./race.ts";
 import { SELECT_WIDTH, selectHeight, selectSteps } from "./select.ts";
@@ -14,7 +15,10 @@ export interface Built {
 }
 
 export interface LiveBuilder {
-  endpoint: "trace" | "race";
+  /** run — обычный запуск; с flags.gcflags runner вернёт диагностику компилятора. */
+  endpoint: "trace" | "race" | "run";
+  /** Флаги запуска, которые нужны построителю. */
+  flags?: { gcflags?: string };
   /** Шаги из ответа runner; строка — почему построить нельзя. */
   build(result: unknown): Built | string;
 }
@@ -32,6 +36,15 @@ export const builders: Record<string, LiveBuilder> = {
   select: { endpoint: "trace", build: fromTrace(selectSteps, SELECT_WIDTH, selectHeight) },
   goroutines: { endpoint: "trace", build: fromTrace(goroutinesSteps, GOROUTINES_WIDTH, goroutinesHeight) },
   spans: { endpoint: "trace", build: fromTrace(spansSteps, SPANS_WIDTH, spansHeight) },
+  escape: {
+    endpoint: "run",
+    flags: { gcflags: "-m" },
+    build: (result) => {
+      const r = result as EscapeResult;
+      if (r.buildFailed) return "Программа не собралась.";
+      return { steps: escapeSteps(r), width: ESCAPE_WIDTH, height: escapeHeight(parseEscape(r.compilerOutput ?? "").diags) };
+    },
+  },
   race: {
     endpoint: "race",
     build: (result) => {

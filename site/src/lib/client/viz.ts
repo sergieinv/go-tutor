@@ -1,11 +1,11 @@
 // Плеер визуализаций на странице: сценарный режим листает шаги из JSON,
 // собранного при сборке; живой — запускает код в runner и строит шаги из трассы.
 import type { EditorView } from "@codemirror/view";
-import { builders } from "../../../../viz/src/live/index.ts";
+import { builders, type LiveBuilder } from "../../../../viz/src/live/index.ts";
 import { Player } from "../../../../viz/src/player.ts";
 import { createSurface, renderScene, type Surface } from "../../../../viz/src/render.ts";
 import type { Step } from "../../../../viz/src/types.ts";
-import { race, trace, RunnerError } from "./api.ts";
+import { race, run, trace, RunnerError, type Files, type Flags } from "./api.ts";
 import { createEditor, getDoc, highlightLines, setDoc } from "./editor.ts";
 import { loadDraft, saveDraft, storage } from "./progress.ts";
 import { showError, showPending, showRun } from "./render.ts";
@@ -138,12 +138,18 @@ function mountLive(root: HTMLElement) {
     busy = true;
     runBtn.disabled = true;
     player.pause();
-    showPending(result, builder.endpoint === "race" ? "Запуск с детектором гонок…" : "Запуск с трассировкой…");
+    const pendingText = { race: "Запуск с детектором гонок…", trace: "Запуск с трассировкой…", run: "Сборка с диагностикой компилятора…" };
+    showPending(result, pendingText[builder.endpoint]);
     try {
-      const flags = procs?.value ? { gomaxprocs: Number(procs.value) } : undefined;
-      const call = builder.endpoint === "race" ? race : trace;
-      const r = await call<Parameters<typeof showRun>[1]>({ "main.go": getDoc(editor) }, lesson, flags);
-      showRun(result, r);
+      const flags: Flags = { ...builder.flags, ...(procs?.value ? { gomaxprocs: Number(procs.value) } : {}) };
+      type R = Parameters<typeof showRun>[1];
+      const calls: Record<LiveBuilder["endpoint"], (f: Files) => Promise<R>> = {
+        race: (f) => race<R>(f, lesson, flags),
+        trace: (f) => trace<R>(f, lesson, flags),
+        run: (f) => run(f, lesson, flags),
+      };
+      const r = await calls[builder.endpoint]({ "main.go": getDoc(editor) });
+      showRun(result, r, builder.flags?.gcflags);
       const built = builder.build(r);
       if (typeof built === "string") {
         if (!r.buildFailed) {

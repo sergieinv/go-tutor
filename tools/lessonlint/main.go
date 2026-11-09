@@ -3,7 +3,7 @@
 // компилируется и не проходит тесты, ответы квизов совпадают с запуском.
 //
 //	go run ./tools/lessonlint [-update] [-run 05-concurrency/] [-j 4] [-govulncheck path] [-vulndb url]
-//	    [-postgres dsn] [-mysql dsn] [-sqlc path] [-buf path] [content]
+//	    [-postgres dsn] [-mysql dsn] [-sqlc path] [-buf path] [-pprof path] [content]
 //
 // Уроки с runner.labs запускаются на настоящих базах профиля labs
 // (docker compose --profile labs up), если переданы DSN администратора:
@@ -21,6 +21,7 @@ import (
 	"os"
 	osexec "os/exec"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"slices"
 	"strings"
@@ -39,6 +40,7 @@ func main() {
 	mysql := flag.String("mysql", "", "DSN администратора MySQL профиля labs")
 	sqlc := flag.String("sqlc", "", "путь к sqlc для сверки сгенерированного кода; по умолчанию ищется в PATH")
 	buf := flag.String("buf", "", "путь к buf (плагины protoc-gen-* рядом) для примеров с .proto; по умолчанию ищется в PATH")
+	pprof := flag.String("pprof", "", "путь к собранному cmd/pprof для примеров с runtime/pprof; по умолчанию ищется в PATH, иначе собирается")
 	flag.Parse()
 	root := "content"
 	if flag.NArg() > 0 {
@@ -81,6 +83,15 @@ func main() {
 	if cfg.Govulncheck == "" {
 		cfg.Govulncheck, _ = osexec.LookPath("govulncheck")
 	}
+	cfg.Pprof = *pprof
+	cleanup := func() {}
+	if cfg.Pprof == "" && slices.ContainsFunc(lessons, usesPprof) {
+		cfg.Pprof, cleanup, err = pprofBinary()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "lessonlint:", err)
+			os.Exit(2)
+		}
+	}
 	exec, err := sandbox.New(cfg)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "lessonlint:", err)
@@ -104,6 +115,7 @@ func main() {
 		})
 	}
 	wg.Wait()
+	cleanup()
 
 	ids := make([]string, 0, len(problems))
 	for id := range problems {
@@ -133,4 +145,22 @@ func main() {
 	if failed > 0 {
 		os.Exit(1)
 	}
+}
+
+// pprofBinary ищет pprof в PATH, а если его нет — собирает cmd/pprof во
+// временный каталог: с Go 1.25 тулчейн не содержит его готовым.
+func pprofBinary() (path string, cleanup func(), err error) {
+	if path, err := osexec.LookPath("pprof"); err == nil {
+		return path, func() {}, nil
+	}
+	dir, err := os.MkdirTemp("", "lessonlint-pprof-")
+	if err != nil {
+		return "", nil, err
+	}
+	path = filepath.Join(dir, "pprof")
+	if out, err := osexec.Command("go", "build", "-o", path, "cmd/pprof").CombinedOutput(); err != nil {
+		os.RemoveAll(dir)
+		return "", nil, fmt.Errorf("сборка cmd/pprof: %v\n%s", err, out)
+	}
+	return path, func() { os.RemoveAll(dir) }, nil
 }

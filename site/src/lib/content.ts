@@ -24,6 +24,9 @@ export interface RunnerFlags {
   race?: boolean;
   gomaxprocs?: number;
   godebug?: string;
+  /** Флаги компилятора (-m, -d=ssa/check_bce/debug=1): песочница показывает его диагностику. */
+  gcflags?: string;
+  gotraceback?: "none" | "single" | "all" | "system";
   /** Базы профиля labs: runner создаёт на запуск пустую базу и передаёт DSN в окружении. */
   labs?: ("postgres" | "mysql")[];
 }
@@ -81,6 +84,8 @@ export interface Example {
   /** Есть ли в тестах бенчмарки и какие fuzz-цели — для кнопок песочницы. */
   bench: boolean;
   fuzz: string[];
+  /** Пример пишет профили через runtime/pprof — в песочнице кнопка «pprof». */
+  pprof: boolean;
 }
 
 // Те же выражения, что в tools/lessonlint/checks.go.
@@ -102,6 +107,8 @@ function loadExample(dir: string): Example {
     mod: names.includes("go.mod") ? read(dir, "example", "go.mod") : undefined,
     bench: benchFunc.test(testSrc),
     fuzz: [...testSrc.matchAll(fuzzFunc)].map((m) => m[1]),
+    // Как usesPprof в tools/lessonlint/checks.go.
+    pprof: Object.keys(tests).length === 0 && read(dir, "example", "main.go").includes('"runtime/pprof"'),
   };
 }
 

@@ -18,6 +18,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -54,6 +55,9 @@ type Config struct {
 	// Buf — путь к buf; плагины protoc-gen-* лежат рядом с ним. Пусто —
 	// примеры с .proto не собираются, /api/buf недоступен.
 	Buf string
+	// Pprof — путь к собранному cmd/pprof (в тулчейне с Go 1.25 его нет
+	// готовым). Пусто — /api/pprof недоступен.
+	Pprof string
 }
 
 // DefaultConfig — лимиты из плана: 10 с CPU, 256 МБ, вывод до 64 КБ.
@@ -74,6 +78,12 @@ type Flags struct {
 	Race       bool   `json:"race,omitempty" yaml:"race"`
 	GOMAXPROCS int    `json:"gomaxprocs,omitempty" yaml:"gomaxprocs"`
 	GODEBUG    string `json:"godebug,omitempty" yaml:"godebug"`
+	// GCFlags — флаги компилятора для пакета программы (ValidGCFlags): -m —
+	// escape analysis и inlining, -d=ssa/check_bce/debug=1 — оставшиеся
+	// проверки границ. Диагностика приходит в RunResult.CompilerOutput.
+	GCFlags string `json:"gcflags,omitempty" yaml:"gcflags"`
+	// GOTRACEBACK — сколько стеков печатать при панике: none, single, all, system.
+	GOTRACEBACK string `json:"gotraceback,omitempty" yaml:"gotraceback"`
 	// Labs — базы профиля labs, которые нужны программе (LabNames).
 	Labs []string `json:"labs,omitempty" yaml:"labs"`
 }
@@ -84,6 +94,8 @@ type Files map[string]string
 type RunResult struct {
 	BuildFailed bool   `json:"buildFailed"`
 	BuildOutput string `json:"buildOutput,omitempty"`
+	// CompilerOutput — диагностика компилятора при успешной сборке с GCFlags.
+	CompilerOutput string `json:"compilerOutput,omitempty"`
 	Stdout      string `json:"stdout"`
 	Stderr      string `json:"stderr"`
 	ExitCode    int    `json:"exitCode"`
@@ -285,18 +297,36 @@ const maxCollect = defaultFileLimit
 // RunCollect как Run, но после запуска читает файл collect из рабочего
 // каталога программы (например, трассу runtime/trace). Нет файла — nil.
 func (e *Executor) RunCollect(ctx context.Context, files Files, flags Flags, collect string) (*RunResult, []byte, error) {
+	var data []byte
+	res, err := e.runWith(ctx, files, flags, func(ws *workspace, _ *RunResult) error {
+		if collect == "" {
+			return nil
+		}
+		var err error
+		data, err = readCapped(filepath.Join(ws.dir, collect), maxCollect)
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return err
+	})
+	return res, data, err
+}
+
+// runWith собирает и запускает программу, а после запуска, пока рабочий
+// каталог ещё на месте, вызывает after (если сборка удалась).
+func (e *Executor) runWith(ctx context.Context, files Files, flags Flags, after func(ws *workspace, res *RunResult) error) (*RunResult, error) {
 	uid, err := e.acquire(ctx)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	defer e.release(uid)
 	ws, err := e.newWorkspace(ctx, uid, files)
 	var genErr *GenerateError
 	if errors.As(err, &genErr) {
-		return &RunResult{BuildFailed: true, BuildOutput: genErr.Output}, nil, nil
+		return &RunResult{BuildFailed: true, BuildOutput: genErr.Output}, nil
 	}
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	defer ws.remove()
 
@@ -304,8 +334,13 @@ func (e *Executor) RunCollect(ctx context.Context, files Files, flags Flags, col
 	if flags.Race {
 		args = append(args, "-race")
 	}
-	if out, err := e.goTool(ctx, ws.dir, flags, append(args, ".")...); err != nil {
-		return &RunResult{BuildFailed: true, BuildOutput: out}, nil, nil
+	if flags.GCFlags != "" {
+		// Без all=: флаги действуют только на пакет программы, не на fmt и рантайм.
+		args = append(args, "-gcflags="+flags.GCFlags)
+	}
+	out, err := e.goTool(ctx, ws.dir, flags, append(args, ".")...)
+	if err != nil {
+		return &RunResult{BuildFailed: true, BuildOutput: out}, nil
 	}
 	p := e.exec(ctx, ws, flags, "./prog")
 	res := &RunResult{
@@ -316,14 +351,50 @@ func (e *Executor) RunCollect(ctx context.Context, files Files, flags Flags, col
 		Truncated:  p.truncated,
 		DurationMs: p.duration.Milliseconds(),
 	}
-	if collect == "" {
-		return res, nil, nil
+	if flags.GCFlags != "" {
+		res.CompilerOutput = compilerOutput(out)
 	}
-	data, err := readCapped(filepath.Join(ws.dir, collect), maxCollect)
-	if errors.Is(err, os.ErrNotExist) {
-		return res, nil, nil
+	if after != nil {
+		if err := after(ws, res); err != nil {
+			return nil, err
+		}
 	}
-	return res, data, err
+	return res, nil
+}
+
+// compilerOutput убирает из вывода go build строку «# пакет» перед диагностикой.
+func compilerOutput(out string) string {
+	var b strings.Builder
+	for line := range strings.Lines(out) {
+		if !strings.HasPrefix(line, "# ") {
+			b.WriteString(line)
+		}
+	}
+	return b.String()
+}
+
+// gcFlagsAllowed — флаги компилятора, которые урок может включить: только
+// диагностика и отключение оптимизаций, ничего, что читает или пишет файлы.
+var gcFlagsAllowed = []string{"-m", "-m=1", "-m=2", "-l", "-N", "-d=ssa/check_bce/debug=1"}
+
+// ValidGCFlags проверяет флаги компилятора: слова через пробел из gcFlagsAllowed.
+func ValidGCFlags(s string) error {
+	for _, f := range strings.Fields(s) {
+		if !slices.Contains(gcFlagsAllowed, f) {
+			return fmt.Errorf("флаг компилятора %q не поддерживается, допустимы: %s", f, strings.Join(gcFlagsAllowed, " "))
+		}
+	}
+	return nil
+}
+
+var tracebackLevels = []string{"none", "single", "all", "system"}
+
+// ValidTraceback проверяет значение GOTRACEBACK.
+func ValidTraceback(s string) error {
+	if s != "" && !slices.Contains(tracebackLevels, s) {
+		return fmt.Errorf("GOTRACEBACK %q не поддерживается, допустимы: %s", s, strings.Join(tracebackLevels, ", "))
+	}
+	return nil
 }
 
 // readCapped читает обычный файл не длиннее limit: программа могла
@@ -410,6 +481,9 @@ func (e *Executor) exec(ctx context.Context, ws *workspace, flags Flags, prog st
 	}
 	if flags.GODEBUG != "" {
 		cmd.Env = append(cmd.Env, "GODEBUG="+flags.GODEBUG)
+	}
+	if flags.GOTRACEBACK != "" {
+		cmd.Env = append(cmd.Env, "GOTRACEBACK="+flags.GOTRACEBACK)
 	}
 	labEnv, labNote, dropLabs := e.labs.prepare(ctx, flags.Labs)
 	defer dropLabs()

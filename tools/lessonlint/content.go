@@ -186,6 +186,12 @@ func loadLesson(l *Lesson, update bool, p *Problems) {
 	if err := sandbox.ValidLabs(m.Runner.Labs); err != nil {
 		p.Errorf("frontmatter: runner.labs: %v", err)
 	}
+	if err := sandbox.ValidGCFlags(m.Runner.GCFlags); err != nil {
+		p.Errorf("frontmatter: runner.gcflags: %v", err)
+	}
+	if err := sandbox.ValidTraceback(m.Runner.GOTRACEBACK); err != nil {
+		p.Errorf("frontmatter: runner.gotraceback: %v", err)
+	}
 	for _, d := range m.Docs {
 		if d.Title == "" || !strings.HasPrefix(d.URL, "https://") {
 			p.Errorf("frontmatter: ссылка в docs должна иметь title и https-url: %+v", d)

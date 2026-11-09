@@ -190,6 +190,29 @@ func TestGoTest(t *testing.T) {
 	}
 }
 
+// Флаги компилятора и GOTRACEBACK — только из белого списка.
+func TestRunCompilerFlags(t *testing.T) {
+	srv := newTestServer(t)
+	files := map[string]string{"main.go": "package main\n\nfunc f() *int { x := 1; return &x }\n\nfunc main() { println(*f()) }\n"}
+	var res sandbox.RunResult
+	if code := post(t, srv, "/api/run", map[string]any{"files": files, "flags": map[string]any{"gcflags": "-m"}}, &res); code != http.StatusOK {
+		t.Fatalf("status %d", code)
+	}
+	if !strings.Contains(res.CompilerOutput, "moved to heap: x") {
+		t.Errorf("compilerOutput = %q", res.CompilerOutput)
+	}
+	for _, flags := range []map[string]any{{"gcflags": "-S"}, {"gcflags": "all=-m"}, {"gotraceback": "crash"}} {
+		var msg map[string]string
+		if code := post(t, srv, "/api/run", map[string]any{"files": files, "flags": flags}, &msg); code != http.StatusBadRequest {
+			t.Errorf("%v: status %d, %v", flags, code, msg)
+		}
+	}
+	var msg map[string]string
+	if code := post(t, srv, "/api/pprof", map[string]any{"files": files}, &msg); code != http.StatusNotImplemented {
+		t.Errorf("pprof без бинарника: status %d, %v", code, msg)
+	}
+}
+
 // Без govulncheck в конфигурации /api/vulncheck честно отвечает 501.
 func TestVulncheckNotConfigured(t *testing.T) {
 	srv := newTestServer(t)

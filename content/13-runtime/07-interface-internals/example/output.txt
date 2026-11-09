@@ -1,0 +1,19 @@
+sizeof any, io.Writer: 16 16
+data word is the pointer itself: true
+allocs int 7:         0
+allocs int 1000:      1
+allocs const 1000:    0
+allocs bool:          0
+allocs "":            0
+allocs "gopher":      1
+allocs struct{}:      0
+allocs Square{300}:   1
+allocs Square{3}:     0
+allocs *Rect:         0
+boxed copy: 90000 original: 100
+area: 16
+assert: true true false
+1 == "1": false
+compare slices: panic: runtime error: comparing uncomparable type []int
+nil pointer inside: false true
+errors.Is: true

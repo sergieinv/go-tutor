@@ -11,6 +11,7 @@ import { GOROUTINES_WIDTH, goroutinesHeight, goroutinesSteps, MAX_FRAMES } from 
 import { SPANS_WIDTH, spansHeight, spansSteps } from "../../viz/src/live/spans.ts";
 import { builders } from "../../viz/src/live/index.ts";
 import { raceSteps, type RaceResult } from "../../viz/src/live/race.ts";
+import { ESCAPE_WIDTH, escapeHeight, escapeSteps, parseEscape } from "../../viz/src/live/escape.ts";
 import { type Clock, Player } from "../../viz/src/player.ts";
 import type { Step, Viz } from "../../viz/src/types.ts";
 
@@ -242,8 +243,64 @@ test("гонка: три шага на отчёт со строками дост
   assert.match(clean[0].note, /ничего не нашёл/);
 });
 
+// Настоящий вывод go build -gcflags=-m (Go 1.27) для программы из восьми функций.
+const escapeOutput = `./main.go:7:6: can inline newPoint
+./main.go:25:15: inlining call to newPoint
+./main.go:32:13: inlining call to fmt.Println
+./main.go:8:2: moved to heap: p
+./main.go:12:10: ps does not escape
+./main.go:20:11: leaking param: p
+./main.go:26:13: make([]point, 8) does not escape
+./main.go:30:7: &point{...} escapes to heap
+./main.go:32:13: ... argument does not escape
+./main.go:32:17: ~r0 escapes to heap
+./main.go:32:27: len(dyn) escapes to heap
+./main.go:32:27: len(dyn) escapes to heap
+./other.go:3:2: moved to heap: q
+`;
+
+test("escape: шаг на каждую диагностику main.go по порядку строк, inlining только считается", () => {
+  const { diags, inlined } = parseEscape(escapeOutput);
+  assert.equal(inlined, 2);
+  // Повтор строки и чужой файл отброшены.
+  assert.deepEqual(
+    diags.map((d) => [d.line, d.kind, d.what]),
+    [
+      [8, "moved", "p"],
+      [12, "stack", "ps"],
+      [20, "leak", "p"],
+      [26, "stack", "make([]point, 8)"],
+      [30, "escapes", "&point{...}"],
+      [32, "stack", "... argument"],
+      [32, "escapes", "~r0"],
+      [32, "escapes", "len(dyn)"],
+    ],
+  );
+  const s = escapeSteps({ buildFailed: false, exitCode: 0, compilerOutput: escapeOutput });
+  assert.equal(s.length, 1 + 8);
+  assert.match(s[0].note, /в кучу — 5, на стеке — 3; встроено вызовов \(inlining\) — 2/);
+  assert.deepEqual(s[1].lines, [8]);
+  assert.match(s[1].note, /переезжает в кучу/);
+  assert.match(s[5].note, /создаёт объект в куче/);
+  assert.match(s[7].note, /результата вызова/);
+  assert.match(s[8].note, /интерфейс/);
+  const h = escapeHeight(diags);
+  for (const step of s)
+    for (const sh of step.scene) {
+      if (sh.type !== "rect") continue;
+      assert.ok(sh.x + sh.w <= ESCAPE_WIDTH && sh.y + sh.h <= h, `${sh.id}`);
+    }
+  // Текущая диагностика подсвечена, предыдущие — нет.
+  assert.ok(s[2].scene.some((x) => x.id === "d12:10:stack" && x.cls?.includes("v-hl")));
+  assert.ok(s[2].scene.some((x) => x.id === "d8:2:moved" && !x.cls?.includes("v-hl")));
+  const app = escapeSteps({ buildFailed: false, exitCode: 0, compilerOutput: "./main.go:5:9: append escapes to heap\n" });
+  assert.match(app[1].note, /выделяет `append`/);
+  const empty = escapeSteps({ buildFailed: false, exitCode: 0, compilerOutput: "" });
+  assert.equal(empty.length, 1);
+});
+
 test("все живые построители зарегистрированы", () => {
-  for (const name of ["select", "goroutines", "race"]) assert.ok(builders[name], name);
+  for (const name of ["select", "goroutines", "race", "spans", "escape"]) assert.ok(builders[name], name);
   assert.equal(typeof builders.select.build({ buildFailed: true }), "string");
   assert.equal(typeof builders.goroutines.build({ buildFailed: false, traceError: "нет" }), "string");
 });

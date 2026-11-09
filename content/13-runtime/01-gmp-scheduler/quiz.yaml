@@ -1,0 +1,104 @@
+questions:
+  - id: gomaxprocs-zero
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"runtime"
+      )
+
+      func main() {
+      	prev := runtime.GOMAXPROCS(3)
+      	now := runtime.GOMAXPROCS(0)
+      	back := runtime.GOMAXPROCS(prev)
+      	fmt.Println(now, back)
+      }
+    options:
+      - text: "3 3"
+        correct: true
+        explain: "`GOMAXPROCS(n)` возвращает **прежнее** значение. `GOMAXPROCS(0)` ничего не меняет и просто сообщает текущее — 3; вызов `GOMAXPROCS(prev)` возвращает то, что было до него, — тоже 3."
+      - text: "0 3"
+        explain: "При `n < 1` значение не меняется, а функция возвращает текущее — 3, а не 0."
+      - text: "3 0"
+        explain: "Вызов `GOMAXPROCS(prev)` возвращает прежнее значение, то есть 3."
+
+  - id: runnext-order
+    kind: single
+    prompt: Что, скорее всего, выведет программа на Go 1.27 (без `-race`)?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"runtime"
+      	"sync"
+      )
+
+      func main() {
+      	runtime.GOMAXPROCS(1)
+      	var wg sync.WaitGroup
+      	for _, name := range []string{"a", "b", "c"} {
+      		wg.Go(func() { fmt.Print(name) })
+      	}
+      	wg.Wait()
+      	fmt.Println()
+      }
+    options:
+      - text: "abc"
+        explain: "Так было бы при чистой FIFO-очереди. Но каждая новая горутина занимает `runnext`, а прежняя уходит в хвост локальной очереди."
+      - text: "cab"
+        correct: true
+        explain: "После цикла в `runnext` лежит `c`, в локальной очереди — `a`, `b`. Когда `main` блокируется в `Wait`, единственный P берёт сначала `runnext`, потом очередь с головы. Это деталь реализации, а не гарантия: под `-race` планировщик специально перемешивает порядок, а с несколькими P горутины выполняются параллельно."
+      - text: "cba"
+        explain: "Стеком работает только слот `runnext` на одну горутину, локальная очередь — FIFO."
+      - text: "Порядок всегда случайный"
+        explain: "Язык порядок не гарантирует, но планировщик детерминированный: на одном P без детектора гонок этот код почти всегда печатает одно и то же."
+
+  - id: busy-loop
+    kind: single
+    prompt: "`GOMAXPROCS(1)`, горутина крутит `for { x++ }` без вызовов функций, а `main` вызвала `time.Sleep(50 * time.Millisecond)`. Что будет через 50 мс?"
+    options:
+      - text: "`main` проснётся примерно через 50–60 мс и продолжит работу"
+        correct: true
+        explain: "С Go 1.14 sysmon вытесняет горутину, которая занимает P дольше 10 мс, сигналом `SIGURG` — даже в цикле без вызовов. Цикл уходит в глобальную очередь, P выполняет таймер и `main`."
+      - text: "`main` не проснётся никогда: цикл не отдаёт процессор"
+        explain: "Так было до Go 1.14: вытеснение срабатывало только в прологе функции. Сейчас есть асинхронное вытеснение (его отключает `GODEBUG=asyncpreemptoff=1`)."
+      - text: "Рантайм запустит `main` на втором потоке параллельно с циклом"
+        explain: "Второй поток может появиться, но Go-код выполняется только на потоке с P, а P один. Без вытеснения `main` ждала бы."
+      - text: "Программа упадёт с fatal error: all goroutines are asleep"
+        explain: "Никто не спит: цикл работает. Deadlock рантайм сообщает, только когда все горутины заблокированы."
+
+  - id: frees-thread
+    kind: multiple
+    prompt: Горутина ждёт. В каких случаях её поток ОС освобождается и выполняет другие горутины, без передачи P новому потоку?
+    options:
+      - text: "`conn.Read` на TCP-соединении без данных"
+        correct: true
+        explain: "Сокет неблокирующий: горутина паркуется в netpoller (epoll/kqueue), поток идёт дальше."
+      - text: "Получение из пустого канала"
+        correct: true
+        explain: "Горутина встаёт в очередь ожидания канала и паркуется — это чисто пользовательское ожидание внутри рантайма."
+      - text: "`os.ReadFile` с медленного диска"
+        explain: "Обычные файлы не обслуживает netpoller: `read(2)` блокирует поток вместе с горутиной. Через тик sysmon P отдают другому потоку — потоков становится больше."
+      - text: "Вызов C-функции через cgo, которая долго работает"
+        explain: "Поток занят кодом на C. Как и в syscall, P у него отберут и отдадут другому потоку."
+      - text: "`mu.Lock()` на занятом `sync.Mutex`"
+        correct: true
+        explain: "После короткого вращения горутина паркуется на семафоре рантайма, поток свободен."
+
+  - id: container-limit
+    kind: single
+    prompt: "Под в Kubernetes на узле с 32 ядрами: `resources.requests.cpu: 2`, `limits.cpu` не задан. Сервис собран Go 1.27, в `go.mod` — `go 1.25.0`, переменной `GOMAXPROCS` нет. Чему будет равен GOMAXPROCS?"
+    options:
+      - text: "32"
+        correct: true
+        explain: "Рантайм учитывает только лимит CPU из cgroup (квоту), а request квоту не создаёт. Без лимита GOMAXPROCS — число доступных ядер узла."
+      - text: "2"
+        explain: "Было бы 2 при `limits.cpu: 2`: тогда cgroup задаёт квоту, и рантайм с Go 1.25 её учитывает."
+      - text: "1"
+        explain: "Даже при лимите меньше 2 CPU рантайм округляет значение вверх и не опускает его ниже 2."
+      - text: "Зависит от числа горутин"
+        explain: "GOMAXPROCS — число P, оно не зависит от числа горутин."

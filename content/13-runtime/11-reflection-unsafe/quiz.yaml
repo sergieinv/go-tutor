@@ -1,0 +1,128 @@
+questions:
+  - id: kind-vs-type
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"reflect"
+      	"time"
+      )
+
+      type Level string
+
+      func main() {
+      	d := reflect.TypeFor[time.Duration]()
+      	l := reflect.TypeOf(Level("debug"))
+      	fmt.Println(d.Kind(), d, l.Kind(), l.Name())
+      }
+    options:
+      - text: "int64 time.Duration string Level"
+        correct: true
+        explain: "`Kind` — представление типа из фиксированного списка, а `Type` — сам именованный тип. У `time.Duration` форма `int64`, у `Level` — `string`; `Name()` возвращает имя без пакета."
+      - text: "time.Duration time.Duration Level Level"
+        explain: "`Kind` не бывает именованным: это одно из значений `reflect.Kind` вроде `int64`, `string`, `struct`."
+      - text: "int64 int64 string string"
+        explain: "Печать `reflect.Type` выводит именованный тип (`time.Duration`), а `Name()` — `Level`, а не базовый тип."
+      - text: "struct time.Duration string main.Level"
+        explain: "`time.Duration` объявлен как `type Duration int64` — это не структура. А `Name()` не включает имя пакета."
+
+  - id: canset
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"reflect"
+      )
+
+      type Config struct {
+      	Port int
+      	host string
+      }
+
+      func main() {
+      	c := Config{}
+      	a := reflect.ValueOf(c).Field(0).CanSet()
+      	v := reflect.ValueOf(&c).Elem()
+      	fmt.Println(a, v.Field(0).CanSet(), v.Field(1).CanSet())
+      }
+    options:
+      - text: "false true false"
+        correct: true
+        explain: "`ValueOf(c)` получает копию — она не адресуема. Через указатель и `Elem()` экспортированное поле можно менять, а неэкспортированное `host` — нет, даже через указатель."
+      - text: "true true true"
+        explain: "Изменение копии не дошло бы до `c`, поэтому рефлексия запрещает его. А неэкспортированные поля не меняются никогда."
+      - text: "false true true"
+        explain: "Неэкспортированные поля рефлексия только читает: `CanSet` учитывает происхождение значения."
+      - text: panic
+        explain: "`CanSet` ничего не меняет и не паникует — паниковал бы `SetInt` на неадресуемом значении."
+
+  - id: struct-size
+    kind: output
+    prompt: Что выведет программа (64-битная платформа)?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"unsafe"
+      )
+
+      type A struct {
+      	X bool
+      	Y int64
+      	Z bool
+      }
+
+      type B struct {
+      	Y int64
+      	X bool
+      	Z bool
+      }
+
+      func main() {
+      	fmt.Println(unsafe.Sizeof(A{}), unsafe.Sizeof(B{}), unsafe.Offsetof(A{}.Y))
+      }
+    options:
+      - text: "24 16 8"
+        correct: true
+        explain: "`int64` выравнивается по 8 байтам: в `A` после `X` 7 байт выравнивания, после `Z` ещё 7, чтобы размер был кратен 8. В `B` два `bool` идут подряд после `Y`: 8 + 2 + 6 = 16."
+      - text: "10 10 1"
+        explain: "Поля выравниваются: `int64` не может начинаться со смещения 1."
+      - text: "16 16 8"
+        explain: "Компилятор Go не переупорядочивает поля — в `A` после `Z` нужен хвост выравнивания до 24."
+      - text: "24 24 8"
+        explain: "В `B` два `bool` помещаются в одно 8-байтовое слово после `Y`."
+
+  - id: valid-unsafe
+    kind: single
+    prompt: Какой фрагмент соответствует допустимым шаблонам `unsafe.Pointer`?
+    options:
+      - text: "`p := unsafe.Add(unsafe.Pointer(&arr[0]), 8)`"
+        correct: true
+        explain: "Арифметика без промежуточного `uintptr`: результат — указатель, который видит сборщик мусора (если смещение остаётся внутри массива)."
+      - text: "`u := uintptr(unsafe.Pointer(&x)); p := unsafe.Pointer(u + 8)`"
+        explain: "`uintptr` сохранён в переменную: между строками объект могут собрать или перенести стек горутины. Шаблон 3 требует одного выражения."
+      - text: "`end := unsafe.Pointer(uintptr(unsafe.Pointer(&b[0])) + uintptr(len(b)))`"
+        explain: "Указатель за конец объекта запрещён прямо в документации: он может указывать на соседний объект."
+      - text: "`var h reflect.SliceHeader; h.Data = uintptr(p); s := *(*[]byte)(unsafe.Pointer(&h))`"
+        explain: "Заголовок, объявленный как обычная переменная, не держит `Data` как ссылку — документация называет это неверным. Используйте `unsafe.Slice(p, n)`."
+
+  - id: json-cache
+    kind: single
+    prompt: Почему повторный `json.Marshal` значения того же типа заметно быстрее первого?
+    options:
+      - text: "`encoding/json` кеширует разобранные поля и функцию кодирования по `reflect.Type` в `sync.Map`"
+        correct: true
+        explain: "Теги, имена и порядок полей разбираются один раз (`lookupArshalerCache` в `encoding/json/v2`; до Go 1.27 — `fieldCache`/`encoderCache`), дальше работает готовый план."
+      - text: "Компилятор генерирует код кодирования при первом вызове"
+        explain: "В Go нет JIT: код не генерируется во время выполнения, работает рефлексия с кешем."
+      - text: "Рантайм запоминает результат Marshal для одинаковых значений"
+        explain: "Кешируется описание типа, а не результат: значения каждый раз кодируются заново."
+      - text: "`reflect.TypeOf` при повторном вызове возвращает закешированную копию структуры"
+        explain: "`reflect.TypeOf` и так дешёвый — он достаёт указатель на дескриптор типа из интерфейса. Дорогой разбор тегов — в `encoding/json`, и кеширует его именно он."

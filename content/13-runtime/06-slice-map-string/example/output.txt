@@ -1,0 +1,14 @@
+sizeof []int, string, map: 24 16 8
+substring shares bytes: true
+caps: [1 2 4 8 16 32 64 128 256 512 848 1280 1792 2560]
+append 5 to nil: len 5 cap 6
+allocs string(b): 1
+allocs m[string(b)]: 0
+allocs string(b) == s: 0
+allocs []byte(s): 1
+allocs +=: 5
+allocs Builder: 1
+len after clear: 0
+memory kept after clear: true
+memory freed with new map: true
+iteration order changes: true

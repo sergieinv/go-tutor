@@ -286,3 +286,30 @@
 .v-muted-box {
   opacity: 0.55;
 }
+
+/* Цвета трёхцветной маркировки GC: белый — не найден, серый — найден, но не
+   просмотрен, чёрный — просмотрен. Чёрный остаётся тёмным и в тёмной теме. */
+.v-gc-white {
+  fill: #fff;
+  stroke: var(--v-fg);
+  stroke-width: 1.2;
+}
+
+.v-gc-grey {
+  fill: #9aa4ae;
+  stroke: var(--v-fg);
+  stroke-width: 1.2;
+}
+
+.v-gc-black {
+  fill: #1f2328;
+  stroke: var(--v-muted);
+  stroke-width: 1.5;
+}
+
+.v-gc-white.v-waiting,
+.v-gc-grey.v-waiting,
+.v-gc-black.v-waiting {
+  stroke: var(--warn-border, #f0b429);
+  stroke-width: 3;
+}

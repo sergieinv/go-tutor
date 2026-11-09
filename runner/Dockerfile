@@ -9,6 +9,9 @@ RUN CGO_ENABLED=0 go build -trimpath -o /out/runner .
 # govulncheck для урока о зависимостях — инструмент runner, а не модуль урока,
 # поэтому его версия не ограничена версией языка курса.
 RUN CGO_ENABLED=0 GOBIN=/out go install -trimpath golang.org/x/vuln/cmd/govulncheck@v1.9.0
+# pprof для /api/pprof: с Go 1.25 тулчейн не содержит его готовым, а go tool
+# pprof собирал бы его в песочнице при каждом запуске.
+RUN CGO_ENABLED=0 go build -trimpath -o /out/pprof cmd/pprof
 # buf и плагины генерации для примеров с .proto. Версии плагинов совпадают
 # с модулями песочницы (sandbox/deps.mod): protobuf, grpc-gateway.
 RUN CGO_ENABLED=0 GOBIN=/out/buf-bin go install -trimpath github.com/bufbuild/buf/cmd/buf@v1.75.0 \
@@ -55,7 +58,7 @@ ADD https://vuln.go.dev/vulndb.zip /tmp/vulndb.zip
 RUN python3 -m zipfile -e /tmp/vulndb.zip /opt/vulndb && rm /tmp/vulndb.zip \
     && chmod -R a+rX /opt/vulndb && cat /opt/vulndb/index/db.json
 ENV RUNNER_VULNDB=file:///opt/vulndb
-COPY --from=build /out/runner /out/govulncheck /usr/local/bin/
+COPY --from=build /out/runner /out/govulncheck /out/pprof /usr/local/bin/
 COPY content /content
 # Примеры со своим go.mod (например, уязвимая версия модуля для govulncheck):
 # всё, что перечислено в их go.sum, скачивается в кеш, пока у сборки есть сеть,

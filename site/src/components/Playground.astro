@@ -4,6 +4,8 @@
 // а кнопки запускают тесты, бенчмарки, fuzzing и покрытие. У примера со своим go.mod
 // он тоже редактируется; govulncheck проверяет модуль по снимку базы уязвимостей.
 // Урокам с runner.labs runner на каждый запуск создаёт пустую базу профиля labs.
+// С runner.gcflags под выводом — диагностика компилятора, а пример с runtime/pprof
+// получает кнопку «pprof»: запуск и pprof -top по записанным профилям.
 // Без JS остаётся подсвеченный код — пример читается и так.
 import type { Example } from "../lib/content";
 import { highlight, scriptJSON } from "../lib/markdown";
@@ -12,10 +14,12 @@ interface Props {
   lesson: string;
   example: Example;
   race?: boolean;
+  gcflags?: string;
+  gotraceback?: string;
   vulncheck?: boolean;
   labs?: ("postgres" | "mysql")[];
 }
-const { lesson, example, race, vulncheck, labs = [] } = Astro.props;
+const { lesson, example, race, gcflags, gotraceback, vulncheck, labs = [] } = Astro.props;
 const labInfo = { postgres: ["PostgreSQL", "POSTGRES_DSN"], mysql: ["MySQL", "MYSQL_DSN"] } as const;
 const editable: Record<string, string> = {
   ...example.protos,
@@ -32,13 +36,38 @@ const fallbacks = await Promise.all(
 const files = example.files;
 ---
 
-<section class="playground" aria-label="Песочница" data-playground data-lesson={lesson} data-test-mode={testMode ? "" : undefined}>
+<section
+  class="playground"
+  aria-label="Песочница"
+  data-playground
+  data-lesson={lesson}
+  data-test-mode={testMode ? "" : undefined}
+  data-gcflags={gcflags}
+>
   <h2>Песочница</h2>
   <p class="muted hint">
     {testMode ? "Измените код или тесты и запустите их." : "Измените пример и запустите его."}
     <kbd>Ctrl</kbd>/<kbd>⌘</kbd>+<kbd>Enter</kbd> — {testMode ? "тесты" : "запуск"}, <kbd>Tab</kbd> — отступ,
     <kbd>Esc</kbd> и затем <kbd>Tab</kbd> — выйти из редактора.
     {race && <> Код собирается с детектором гонок <code>-race</code>.</>}
+    {
+      gcflags && (
+        <>
+          {" "}
+          Сборка идёт с <code>-gcflags="{gcflags}"</code>: под выводом программы — что сообщил компилятор.
+        </>
+      )
+    }
+    {gotraceback && <> Программа запускается с <code>GOTRACEBACK={gotraceback}</code>.</>}
+    {
+      example.pprof && (
+        <>
+          {" "}
+          «pprof» запускает программу и показывает <code>go tool pprof -top</code> по каждому файлу <code>*.pprof</code>, который
+          она записала.
+        </>
+      )
+    }
     {
       hasProto && (
         <>
@@ -118,6 +147,13 @@ const files = example.files;
       )
     }
     {
+      example.pprof && (
+        <button type="button" data-action="run" data-mode="pprof" disabled>
+          pprof
+        </button>
+      )
+    }
+    {
       vulncheck && (
         <button type="button" data-action="run" data-mode="vulncheck" disabled>
           govulncheck
@@ -145,17 +181,18 @@ const files = example.files;
 </section>
 
 <script>
-  import { buf, format, goTest, run, RunnerError, vulncheck, type GoTestMode } from "../lib/client/api.ts";
+  import { buf, format, goTest, pprof, run, RunnerError, vulncheck, type GoTestMode } from "../lib/client/api.ts";
   import { createEditor, getDoc, setDoc } from "../lib/client/editor.ts";
   import { loadDraft, saveDraft, storage } from "../lib/client/progress.ts";
-  import { showBuf, showError, showGoTest, showPending, showRun, showVulncheck } from "../lib/client/render.ts";
+  import { showBuf, showError, showGoTest, showPending, showProfile, showRun, showVulncheck } from "../lib/client/render.ts";
   import { fromHash, shareURL } from "../lib/client/share.ts";
   import type { EditorView } from "@codemirror/view";
 
   const kv = storage();
 
-  type Mode = GoTestMode | "vulncheck" | "buf-lint" | "buf-breaking";
+  type Mode = GoTestMode | "vulncheck" | "buf-lint" | "buf-breaking" | "pprof";
   const pending: Record<Mode, string> = {
+    pprof: "Запуск и разбор профилей…",
     vulncheck: "govulncheck сверяет вызовы с базой уязвимостей…",
     "buf-lint": "buf lint проверяет контракт…",
     "buf-breaking": "buf breaking сравнивает контракт с исходным…",
@@ -183,6 +220,7 @@ const files = example.files;
   for (const root of document.querySelectorAll<HTMLElement>("[data-playground]")) {
     const lesson = root.dataset.lesson!;
     const testMode = root.hasAttribute("data-test-mode");
+    const gcflags = root.dataset.gcflags;
     const initial: Record<string, string> = JSON.parse(root.querySelector("[data-initial]")!.textContent!);
     const extra: Record<string, string> = JSON.parse(root.querySelector("[data-files]")!.textContent!);
     const names = Object.keys(initial);
@@ -221,10 +259,11 @@ const files = example.files;
         const files = { ...extra, ...current() };
         const protos = (f: Record<string, string>) => Object.fromEntries(Object.entries(f).filter(([n]) => n.endsWith(".proto") || n === "buf.yaml"));
         if (mode === "vulncheck") showVulncheck(result, await vulncheck(files, lesson));
+        else if (mode === "pprof") showProfile(result, await pprof(files, lesson));
         else if (mode === "buf-lint") showBuf(result, await buf(protos(files), lesson), false);
         else if (mode === "buf-breaking") showBuf(result, await buf(protos(files), lesson, protos({ ...extra, ...initial })), true);
         else if (mode) showGoTest(result, await goTest(files, mode, lesson, fuzz), mode);
-        else showRun(result, await run(files, lesson));
+        else showRun(result, await run(files, lesson), gcflags);
       } catch (e) {
         showError(result, e instanceof RunnerError ? e.message : String(e));
       } finally {

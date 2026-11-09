@@ -1,0 +1,115 @@
+questions:
+  - id: return-pointer
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"testing"
+      )
+
+      type user struct{ id, age int }
+
+      var sink *user
+      var sinkN int
+
+      //go:noinline
+      func newUser(id int) *user { return &user{id: id} }
+
+      //go:noinline
+      func age(id int) int {
+      	u := &user{id: id, age: 30}
+      	return u.age
+      }
+
+      func main() {
+      	a := testing.AllocsPerRun(100, func() { sink = newUser(1) })
+      	b := testing.AllocsPerRun(100, func() { sinkN = age(1) })
+      	fmt.Println(a, b)
+      }
+    options:
+      - text: "1 0"
+        correct: true
+        explain: "Указатель из `newUser` переживает функцию — объект в куче. В `age` `&user{}` никуда не уходит, и компилятор кладёт его на стек: `&` сам по себе кучу не означает."
+      - text: "1 1"
+        explain: "`&user{...}` в `age` не убегает — компилятор пишет `does not escape`, выделения нет."
+      - text: "0 0"
+        explain: "Возврат указателя на локальный объект из невстраиваемой функции заставляет выделить его в куче."
+      - text: "0 1"
+        explain: "Наоборот: убегает как раз результат `newUser`."
+
+  - id: boxing-small
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"testing"
+      )
+
+      var sink any
+
+      //go:noinline
+      func box(v int) any { return v }
+
+      func main() {
+      	small := testing.AllocsPerRun(100, func() { sink = box(200) })
+      	big := testing.AllocsPerRun(100, func() { sink = box(300) })
+      	fmt.Println(small, big)
+      }
+    options:
+      - text: "0 1"
+        correct: true
+        explain: "Упаковка `int` в интерфейс копирует его в кучу, но значения 0–255 рантайм берёт из готовой таблицы `staticuint64s` — без выделения."
+      - text: "1 1"
+        explain: "Для маленьких чисел у рантайма есть таблица готовых значений: `convT64` выделяет память только для 256 и больше."
+      - text: "0 0"
+        explain: "300 не помещается в таблицу `staticuint64s`, и `box` возвращает интерфейс, который убегает, — значение копируется в кучу."
+
+  - id: variable-make
+    kind: single
+    prompt: "Компилятор сообщил `make([]byte, n) does not escape` для `buf := make([]byte, n)` внутри функции. Что это значит для вызова с `n = 1000`?"
+    options:
+      - text: Буфер точно окажется на стеке
+        explain: "Размер неизвестен при компиляции. На стеке зарезервировано 32 байта; если `n` больше, `make` выделит память в куче во время работы."
+      - text: "Буфер переживёт функцию"
+        explain: "Наоборот: `does not escape` значит, что ссылка на буфер не переживает вызов."
+      - text: "На стеке есть место только под 32 байта, поэтому 1000 байт выделятся в куче во время работы"
+        correct: true
+        explain: "С Go 1.25 для `make` переменного размера, который не убегает, компилятор держит на стеке буфер в 32 байта и проверяет `n` во время работы. Если размер ограничен сверху, лучше объявить массив и взять срез."
+      - text: Программа не скомпилируется — размер стекового буфера должен быть константой
+        explain: "`make` с переменным размером допустим всегда, вопрос только в том, где окажется память."
+
+  - id: what-escapes
+    kind: multiple
+    prompt: "В каких функциях выделенная память убежит в кучу (если они не встроены)?"
+    options:
+      - text: "`func f() []int { s := make([]int, 4); return s }`"
+        correct: true
+        explain: "Срез возвращается — его массив должен пережить кадр функции."
+      - text: "`func f(p *T) { global = p }`"
+        correct: true
+        explain: "Указатель сохраняется в глобальной переменной: `leaking param: p`, объект у вызывающего — в куче."
+      - text: "`func f() int { a := [8]int{}; s := a[:]; return len(s) }`"
+        explain: "Срез массива никуда не уходит — массив остаётся на стеке."
+      - text: "`func f() func() int { n := 0; return func() int { n++; return n } }`"
+        correct: true
+        explain: "Замыкание возвращается и уносит с собой `n`: `moved to heap: n`, `func literal escapes to heap`."
+      - text: "`func f(xs []int) int { t := 0; for _, x := range xs { t += x }; return t }`"
+        explain: "Здесь ничего не выделяется, а `xs` компилятор помечает `does not escape`."
+
+  - id: sort-interface
+    kind: single
+    prompt: "Почему `sort.Sort(byLen(words))` выделяет память, а `slices.SortFunc(words, cmp)` — нет?"
+    options:
+      - text: "`sort.Sort` копирует весь срез перед сортировкой"
+        explain: "Сортировка идёт на месте; копируется только заголовок среза при упаковке в интерфейс."
+      - text: "Срез `byLen` упаковывается в интерфейс `sort.Interface`, его методы вызываются динамически, и компилятор не может доказать, что значение не утечёт"
+        correct: true
+        explain: "Вызов через интерфейс — «чёрный ящик» для escape analysis: параметр помечается как утекающий, и заголовок среза (24 байта) копируется в кучу. `slices.SortFunc` — дженерик без интерфейса."
+      - text: "`slices.SortFunc` использует `unsafe`"
+        explain: "Дело не в `unsafe`: дженерик-функция работает с конкретным типом, и упаковывать нечего."

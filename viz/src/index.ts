@@ -12,7 +12,7 @@ export function validate(v: Viz): string[] {
   const problems: string[] = [];
   if (!v.title) problems.push("нет title");
   if (v.kind === "live") {
-    if (!["select", "goroutines", "race", "spans"].includes(v.builder)) problems.push(`неизвестный builder ${v.builder}`);
+    if (!["select", "goroutines", "race", "spans", "escape"].includes(v.builder)) problems.push(`неизвестный builder ${v.builder}`);
     if (!v.file.endsWith(".go")) problems.push("file должен указывать на .go-файл");
     return problems;
   }

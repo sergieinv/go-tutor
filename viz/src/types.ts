@@ -76,9 +76,10 @@ export interface LiveSpec {
   /**
    * Построитель шагов (viz/src/live/index.ts):
    * select — операторы select по трассе; goroutines — стадии и передачи между
-   * горутинами, утечки (pipeline, fan-in/out); race — отчёт детектора гонок.
+   * горутинами, утечки (pipeline, fan-in/out); race — отчёт детектора гонок;
+   * spans — задачи и регионы runtime/trace; escape — escape analysis по -gcflags=-m.
    */
-  builder: "select" | "goroutines" | "race" | "spans";
+  builder: "select" | "goroutines" | "race" | "spans" | "escape";
   /** Программа относительно папки урока; её проверяет lessonlint. */
   file: string;
   /** Варианты GOMAXPROCS в интерфейсе; пусто — без выбора. */
