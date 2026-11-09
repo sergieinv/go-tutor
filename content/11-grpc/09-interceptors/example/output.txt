@@ -1,0 +1,24 @@
+GetOrder(1)
+  logging: → /interceptors.v1.OrderService/GetOrder rid=req-1
+      auth: ok
+        handler: GetOrder(1), user=alice
+  logging: ← /interceptors.v1.OrderService/GetOrder rid=req-1 code=OK
+клиент: заказ 1 paid
+
+GetOrder(2)
+  logging: → /interceptors.v1.OrderService/GetOrder rid=req-2
+      auth: нет или неверный токен
+  logging: ← /interceptors.v1.OrderService/GetOrder rid=req-2 code=Unauthenticated
+клиент: ошибка Unauthenticated: invalid token
+
+GetOrder(13)
+  logging: → /interceptors.v1.OrderService/GetOrder rid=req-3
+      auth: ok
+        handler: GetOrder(13), user=alice
+    recovery: паника в /interceptors.v1.OrderService/GetOrder: assignment to entry in nil map
+  logging: ← /interceptors.v1.OrderService/GetOrder rid=req-3 code=Internal
+клиент: ошибка Internal: internal error
+
+ListOrders
+  stream: /interceptors.v1.OrderService/ListOrders отправлено=2 code=OK
+клиент: заказы 7 new, 8 new

@@ -1,0 +1,61 @@
+// Контракт для открытых тестов: в нём есть и правильные, и неправильные
+// имена. Lint должен найти ровно те нарушения, что перечислены в тестах.
+syntax = "proto3";
+
+package shop.lint.v1;
+
+option go_package = "lesson/proto;task";
+
+service OrderService {
+  rpc GetOrder(GetOrderRequest) returns (Order);
+  rpc ListOrders(OrderServiceListOrdersRequest) returns (OrderServiceListOrdersResponse);
+  rpc CancelOrder(CancelRequest) returns (CancelOrderResponse);
+}
+
+message GetOrderRequest {
+  int64 order_id = 1;
+}
+
+message OrderServiceListOrdersRequest {
+  int32 page_size = 1;
+  string pageToken = 2;
+}
+
+message OrderServiceListOrdersResponse {
+  repeated Order orders = 1;
+}
+
+message CancelRequest {
+  int64 order_id = 1;
+}
+
+message CancelOrderResponse {}
+
+message Order {
+  message Line {
+    string sku = 1;
+    uint32 Quantity = 2;
+    enum Kind {
+      KIND_UNSPECIFIED = 0;
+      KIND_GIFT = 1;
+    }
+    Kind kind = 3;
+  }
+  enum Status {
+    STATUS_NEW = 0;
+    STATUS_PAID = 1;
+  }
+  int64 id = 1;
+  repeated Line lines = 2;
+  map<string, string> labelMap = 3;
+  oneof payment {
+    string card_last4 = 4;
+    bool cashOnDelivery = 5;
+  }
+  Status status = 6;
+}
+
+enum Channel {
+  CHANNEL_UNSPECIFIED = 0;
+  CHANNEL_WEB = 1;
+}

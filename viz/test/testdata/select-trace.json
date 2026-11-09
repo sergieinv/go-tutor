@@ -5,7 +5,7 @@
   "exitCode": 0,
   "timedOut": false,
   "truncated": false,
-  "durationMs": 337,
+  "durationMs": 379,
   "trace": {
     "goroutines": [
       {
@@ -91,8 +91,8 @@
           }
         ],
         "counts": [
-          6,
-          4
+          3,
+          7
         ]
       }
     ],
@@ -107,7 +107,7 @@
         "case": 0
       },
       {
-        "t": 1,
+        "t": 0,
         "g": 1,
         "kind": "go",
         "file": "main.go",
@@ -125,7 +125,7 @@
         "case": 0
       },
       {
-        "t": 14,
+        "t": 16,
         "g": 22,
         "kind": "block",
         "file": "main.go",
@@ -134,7 +134,7 @@
         "case": 0
       },
       {
-        "t": 24,
+        "t": 18,
         "g": 1,
         "kind": "block",
         "file": "main.go",
@@ -143,7 +143,7 @@
         "case": 0
       },
       {
-        "t": 25,
+        "t": 19,
         "g": 23,
         "kind": "block",
         "file": "main.go",
@@ -152,14 +152,14 @@
         "case": 0
       },
       {
-        "t": 11035,
+        "t": 12041,
         "g": 0,
         "kind": "unblock",
         "target": 22,
         "case": 0
       },
       {
-        "t": 11045,
+        "t": 12048,
         "g": 22,
         "kind": "unblock",
         "file": "main.go",
@@ -168,13 +168,13 @@
         "case": 0
       },
       {
-        "t": 11045,
+        "t": 12048,
         "g": 22,
         "kind": "end",
         "case": 0
       },
       {
-        "t": 11058,
+        "t": 12070,
         "g": 1,
         "kind": "case",
         "file": "main.go",
@@ -183,7 +183,7 @@
         "case": 0
       },
       {
-        "t": 11129,
+        "t": 12153,
         "g": 1,
         "kind": "select",
         "file": "main.go",
@@ -192,7 +192,7 @@
         "case": 0
       },
       {
-        "t": 11165,
+        "t": 12157,
         "g": 1,
         "kind": "block",
         "file": "main.go",
@@ -201,14 +201,14 @@
         "case": 0
       },
       {
-        "t": 41261,
+        "t": 44167,
         "g": 0,
         "kind": "unblock",
         "target": 1,
         "case": 0
       },
       {
-        "t": 41272,
+        "t": 44172,
         "g": 1,
         "kind": "case",
         "file": "main.go",
@@ -217,7 +217,7 @@
         "case": 2
       },
       {
-        "t": 41293,
+        "t": 44177,
         "g": 1,
         "kind": "select",
         "file": "main.go",
@@ -226,7 +226,7 @@
         "case": 0
       },
       {
-        "t": 41293,
+        "t": 44178,
         "g": 1,
         "kind": "case",
         "file": "main.go",
@@ -235,7 +235,7 @@
         "case": 1
       },
       {
-        "t": 41303,
+        "t": 44185,
         "g": 1,
         "kind": "select",
         "file": "main.go",
@@ -244,61 +244,7 @@
         "case": 0
       },
       {
-        "t": 41304,
-        "g": 1,
-        "kind": "case",
-        "file": "main.go",
-        "line": 52,
-        "select": 3,
-        "case": 0
-      },
-      {
-        "t": 41304,
-        "g": 1,
-        "kind": "select",
-        "file": "main.go",
-        "line": 51,
-        "select": 3,
-        "case": 0
-      },
-      {
-        "t": 41305,
-        "g": 1,
-        "kind": "case",
-        "file": "main.go",
-        "line": 52,
-        "select": 3,
-        "case": 0
-      },
-      {
-        "t": 41305,
-        "g": 1,
-        "kind": "select",
-        "file": "main.go",
-        "line": 51,
-        "select": 3,
-        "case": 0
-      },
-      {
-        "t": 41305,
-        "g": 1,
-        "kind": "case",
-        "file": "main.go",
-        "line": 52,
-        "select": 3,
-        "case": 0
-      },
-      {
-        "t": 41305,
-        "g": 1,
-        "kind": "select",
-        "file": "main.go",
-        "line": 51,
-        "select": 3,
-        "case": 0
-      },
-      {
-        "t": 41305,
+        "t": 44188,
         "g": 1,
         "kind": "case",
         "file": "main.go",
@@ -307,7 +253,7 @@
         "case": 1
       },
       {
-        "t": 41306,
+        "t": 44199,
         "g": 1,
         "kind": "select",
         "file": "main.go",
@@ -316,43 +262,7 @@
         "case": 0
       },
       {
-        "t": 41306,
-        "g": 1,
-        "kind": "case",
-        "file": "main.go",
-        "line": 52,
-        "select": 3,
-        "case": 0
-      },
-      {
-        "t": 41306,
-        "g": 1,
-        "kind": "select",
-        "file": "main.go",
-        "line": 51,
-        "select": 3,
-        "case": 0
-      },
-      {
-        "t": 41306,
-        "g": 1,
-        "kind": "case",
-        "file": "main.go",
-        "line": 52,
-        "select": 3,
-        "case": 0
-      },
-      {
-        "t": 41306,
-        "g": 1,
-        "kind": "select",
-        "file": "main.go",
-        "line": 51,
-        "select": 3,
-        "case": 0
-      },
-      {
-        "t": 41307,
+        "t": 44199,
         "g": 1,
         "kind": "case",
         "file": "main.go",
@@ -361,7 +271,7 @@
         "case": 1
       },
       {
-        "t": 41307,
+        "t": 44199,
         "g": 1,
         "kind": "select",
         "file": "main.go",
@@ -370,7 +280,7 @@
         "case": 0
       },
       {
-        "t": 41307,
+        "t": 44200,
         "g": 1,
         "kind": "case",
         "file": "main.go",
@@ -379,7 +289,7 @@
         "case": 1
       },
       {
-        "t": 41308,
+        "t": 44200,
         "g": 1,
         "kind": "select",
         "file": "main.go",
@@ -388,7 +298,25 @@
         "case": 0
       },
       {
-        "t": 41312,
+        "t": 44200,
+        "g": 1,
+        "kind": "case",
+        "file": "main.go",
+        "line": 54,
+        "select": 3,
+        "case": 1
+      },
+      {
+        "t": 44200,
+        "g": 1,
+        "kind": "select",
+        "file": "main.go",
+        "line": 51,
+        "select": 3,
+        "case": 0
+      },
+      {
+        "t": 44201,
         "g": 1,
         "kind": "case",
         "file": "main.go",
@@ -397,7 +325,7 @@
         "case": 0
       },
       {
-        "t": 41312,
+        "t": 44201,
         "g": 1,
         "kind": "select",
         "file": "main.go",
@@ -406,7 +334,79 @@
         "case": 0
       },
       {
-        "t": 41312,
+        "t": 44201,
+        "g": 1,
+        "kind": "case",
+        "file": "main.go",
+        "line": 52,
+        "select": 3,
+        "case": 0
+      },
+      {
+        "t": 44201,
+        "g": 1,
+        "kind": "select",
+        "file": "main.go",
+        "line": 51,
+        "select": 3,
+        "case": 0
+      },
+      {
+        "t": 44201,
+        "g": 1,
+        "kind": "case",
+        "file": "main.go",
+        "line": 54,
+        "select": 3,
+        "case": 1
+      },
+      {
+        "t": 44201,
+        "g": 1,
+        "kind": "select",
+        "file": "main.go",
+        "line": 51,
+        "select": 3,
+        "case": 0
+      },
+      {
+        "t": 44202,
+        "g": 1,
+        "kind": "case",
+        "file": "main.go",
+        "line": 54,
+        "select": 3,
+        "case": 1
+      },
+      {
+        "t": 44202,
+        "g": 1,
+        "kind": "select",
+        "file": "main.go",
+        "line": 51,
+        "select": 3,
+        "case": 0
+      },
+      {
+        "t": 44202,
+        "g": 1,
+        "kind": "case",
+        "file": "main.go",
+        "line": 52,
+        "select": 3,
+        "case": 0
+      },
+      {
+        "t": 44202,
+        "g": 1,
+        "kind": "select",
+        "file": "main.go",
+        "line": 51,
+        "select": 3,
+        "case": 0
+      },
+      {
+        "t": 44203,
         "g": 1,
         "kind": "case",
         "file": "main.go",
@@ -416,6 +416,8 @@
       }
     ],
     "total": 36,
-    "durationUs": 41312
+    "durationUs": 44203,
+    "spans": [],
+    "logs": []
   }
 }

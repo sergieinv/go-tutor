@@ -1,10 +1,11 @@
-// Package orders — домен сервиса «Заказы»: заказ, позиции, статусы, склад,
-// доменные ошибки и сервис с бизнес-правилами.
+// Package orders — домен сервиса «Заказы»: заказ, позиции, статусы,
+// каталог, доменные ошибки и сервис с бизнес-правилами, в том числе сага
+// создания заказа (резерв на складе → запись заказа → компенсация).
 //
-// Пакет не знает ни про HTTP, ни про конкретную базу: хранилище он видит
-// через интерфейс Store, объявленный здесь же, на стороне потребителя
-// (в C# интерфейс обычно лежит рядом с реализацией — в Go наоборот).
-// Доменные типы без JSON-тегов: формат API — забота пакета httpapi.
+// Пакет не знает ни про gRPC, ни про HTTP, ни про конкретную базу или
+// Kafka: хранилище и склад он видит через интерфейсы Store и Warehouse,
+// объявленные здесь же, на стороне потребителя (в C# интерфейс обычно
+// лежит рядом с реализацией — в Go наоборот).
 package orders
 
 import "time"
@@ -13,21 +14,19 @@ import "time"
 type Status string
 
 const (
-	// StatusNew — заказ принят, резерв ещё не подтверждён. Сейчас заказ и
-	// резерв создаются в одной транзакции, и заказ сразу получает
-	// StatusReserved. В модуле 11 резерв уйдёт в сервис «Склад» (saga),
-	// и этот статус станет видимым.
-	StatusNew Status = "new"
-	// StatusReserved — товар зарезервирован на складе.
+	// StatusReserved — товар зарезервирован на складе. Заказ записывается
+	// только после успешного резерва, поэтому заказов «без резерва» в базе
+	// не бывает. (В модуле 10 был ещё статус new: резерв и заказ делались
+	// в одной транзакции одной базы. Теперь резерв — в другом сервисе, и
+	// промежуточное состояние живёт только в памяти саги.)
 	StatusReserved Status = "reserved"
-	// StatusCancelled — заказ отменён, резерв возвращён на склад. Конечный статус.
+	// StatusCancelled — заказ отменён, резерв возвращён. Конечный статус.
 	StatusCancelled Status = "cancelled"
 )
 
 // transitions — допустимые переходы. Таблица, а не цепочка if: новый
 // статус (оплачен, отгружен) добавляется одной строкой.
 var transitions = map[Status][]Status{
-	StatusNew:      {StatusReserved, StatusCancelled},
 	StatusReserved: {StatusCancelled},
 }
 
@@ -59,34 +58,42 @@ type Item struct {
 	PriceCents int64
 }
 
-// Product — товар каталога с текущим остатком на складе.
+// Product — товар каталога. Каталог и цены — у «Заказов», остатки — у
+// «Склада»: каждый сервис владеет своими данными, общих таблиц нет.
 type Product struct {
 	ID         int64
 	Name       string
 	PriceCents int64
-	Available  int
 }
 
 // NewProduct — данные для добавления товара в каталог.
 type NewProduct struct {
 	Name       string
 	PriceCents int64
-	Available  int
 }
 
-// Типы событий outbox. Имена — часть контракта с потребителями (модуль 12):
-// меняются только с версионированием.
+// Типы событий — полные имена сообщений protobuf из events.v1 (заголовок
+// event-type записи Kafka). Это часть контракта с потребителями.
 const (
-	EventOrderCreated   = "order.created"
-	EventOrderCancelled = "order.cancelled"
+	EventOrderCreated   = "events.v1.OrderCreated"
+	EventOrderCancelled = "events.v1.OrderCancelled"
 )
 
-// Event — событие в таблице outbox. Payload — готовый JSON: публикатор
-// отправит его в Kafka как есть.
+// Event — событие в таблице outbox.
 type Event struct {
-	ID        int64 // присваивает база
-	Type      string
-	OrderID   int64
-	Payload   []byte
-	CreatedAt time.Time
+	// ID — номер строки outbox (присваивает база); задаёт порядок публикации.
+	ID int64
+	// EventID — глобально уникальный id события: по нему потребители
+	// отбрасывают дубли (доставка at-least-once).
+	EventID string
+	Type    string
+	OrderID int64
+	// Payload — events.v1.OrderEvent в бинарном protobuf; relay отправит
+	// его в Kafka как есть.
+	Payload []byte
+	// TraceContext — контекст трассы запроса, создавшего событие
+	// (traceparent/tracestate). Relay публикует событие позже, из другой
+	// горутины, и продолжает по нему ту же трассу.
+	TraceContext map[string]string
+	CreatedAt    time.Time
 }

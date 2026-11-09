@@ -1,0 +1,112 @@
+{
+  "swagger": "2.0",
+  "info": {
+    "title": "warehouse/v1/warehouse.proto",
+    "description": "Контракт сервиса «Склад»: остатки и резервы товара. Внутренний API —\nего вызывает «Заказы» по gRPC. Наружу через grpc-gateway выставлен только\nGetStock: у Reserve и Release нет аннотаций google.api.http, поэтому\nREST-маршрутов для них просто не существует.",
+    "version": "version not set"
+  },
+  "tags": [
+    {
+      "name": "WarehouseService",
+      "description": "WarehouseService — остатки и резервы.\n\nReserve и Release идемпотентны по order_id: повтор того же вызова (после\nтаймаута, обрыва связи, повторной попытки клиента) не меняет остатки\nвторой раз. Поэтому клиент может безопасно повторять их при UNAVAILABLE."
+    }
+  ],
+  "consumes": [
+    "application/json"
+  ],
+  "produces": [
+    "application/json"
+  ],
+  "paths": {
+    "/v1/stock/{productId}": {
+      "get": {
+        "summary": "GetStock возвращает остаток товара. Товар, которого склад не знает, —\nнулевой остаток, а не NOT_FOUND: каталогом склад не владеет.",
+        "operationId": "WarehouseService_GetStock",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1GetStockResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "productId",
+            "in": "path",
+            "required": true,
+            "type": "string",
+            "format": "int64"
+          }
+        ],
+        "tags": [
+          "WarehouseService"
+        ]
+      }
+    }
+  },
+  "definitions": {
+    "protobufAny": {
+      "type": "object",
+      "properties": {
+        "@type": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": {}
+    },
+    "rpcStatus": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "message": {
+          "type": "string"
+        },
+        "details": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/protobufAny"
+          }
+        }
+      }
+    },
+    "v1GetStockResponse": {
+      "type": "object",
+      "properties": {
+        "stock": {
+          "$ref": "#/definitions/v1Stock"
+        }
+      }
+    },
+    "v1Stock": {
+      "type": "object",
+      "properties": {
+        "productId": {
+          "type": "string",
+          "format": "int64"
+        },
+        "available": {
+          "type": "integer",
+          "format": "int32",
+          "description": "Можно зарезервировать."
+        },
+        "reserved": {
+          "type": "integer",
+          "format": "int32",
+          "description": "Числится за действующими резервами."
+        }
+      },
+      "description": "Stock — остаток товара."
+    }
+  }
+}

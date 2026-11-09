@@ -1,0 +1,108 @@
+questions:
+  - id: consecutive-alternating
+    kind: output
+    prompt: "Breaker размыкается после 3 неудач подряд. Что выведет программа?"
+    code: |
+      package main
+
+      import "fmt"
+
+      func main() {
+      	failures, open := 0, false
+      	results := []bool{false, true, false, true, false, true, false, true} // true — успех
+      	for _, ok := range results {
+      		if ok {
+      			failures = 0
+      			continue
+      		}
+      		failures++
+      		if failures >= 3 {
+      			open = true
+      		}
+      	}
+      	fmt.Println(open, failures)
+      }
+    options:
+      - text: "false 0"
+        correct: true
+        explain: "Половина вызовов падает, но ни разу не три подряд: каждый успех обнуляет счётчик. Порог «неудач подряд» такую деградацию не видит — для неё нужен порог по доле ошибок в окне."
+      - text: "true 0"
+        explain: "Чтобы разомкнуться, нужно три неудачи подряд, а здесь они чередуются с успехами."
+      - text: "true 4"
+        explain: "Счётчик считает неудачи подряд, а не всего: успех сбрасывает его в 0."
+
+  - id: ratio-min-calls
+    kind: output
+    prompt: "Порог: в окне не меньше 5 вызовов и неудач ≥ 50%. Что выведет программа?"
+    code: |
+      package main
+
+      import "fmt"
+
+      func trips(window []bool) bool { // true — неудача
+      	fails := 0
+      	for _, f := range window {
+      		if f {
+      			fails++
+      		}
+      	}
+      	return len(window) >= 5 && float64(fails) >= 0.5*float64(len(window))
+      }
+
+      func main() {
+      	fmt.Println(
+      		trips([]bool{true}),
+      		trips([]bool{true, true, false, false, false}),
+      		trips([]bool{true, true, true, false, false}),
+      	)
+      }
+    options:
+      - text: "false false true"
+        correct: true
+        explain: "Одна неудача — это 100% ошибок, но вызовов меньше минимума: без него breaker размыкался бы от любой ночной ошибки. 2 из 5 — 40%, ниже порога. 3 из 5 — 60%."
+      - text: "true false true"
+        explain: "Минимум вызовов в окне (5) не набран — доля ошибок по одному вызову ничего не значит."
+      - text: "false true true"
+        explain: "2 из 5 — это 40%, меньше 50%."
+
+  - id: what-is-failure
+    kind: multiple
+    prompt: "Какие ответы соседа breaker должен считать неудачами?"
+    options:
+      - text: "`Unavailable`"
+        correct: true
+        explain: "Сосед недоступен — главный признак, ради которого breaker существует."
+      - text: "`DeadlineExceeded`"
+        correct: true
+        explain: "Сосед не уложился в таймаут: медленный ответ занимал горутину и соединение весь таймаут — это тоже нездоровье."
+      - text: "`ResourceExhausted`"
+        correct: true
+        explain: "Сосед перегружен — снизить на него нагрузку и есть задача breaker."
+      - text: "`InvalidArgument`"
+        explain: "Здоровый сервис отверг кривой запрос. Если считать такие ответы, один клиент с ошибкой в коде разомкнёт breaker для всех."
+      - text: "`NotFound`"
+        explain: "Нормальный ответ здорового сервиса: заказа с таким id нет."
+
+  - id: stale-result
+    kind: single
+    prompt: "Вызов начался, когда breaker был closed, и длился 5 секунд. За это время другие вызовы разомкнули breaker. Теперь медленный вызов вернул успех. Что правильно?"
+    options:
+      - text: "Проигнорировать результат: он относится к прошлому поколению"
+        correct: true
+        explain: "Успех, полученный до того, как сосед начал падать, ничего не говорит о его текущем состоянии. Breaker запоминает поколение на входе вызова и учитывает итог, только если поколение не менялось."
+      - text: "Замкнуть breaker: сосед ответил успешно"
+        explain: "Так один запоздавший успех отменит решение, принятое по десяткам свежих неудач, и поток запросов снова пойдёт к лежащему соседу."
+      - text: "Перевести breaker в half-open досрочно"
+        explain: "Переход в half-open — по таймауту open. Пробы должны быть свежими вызовами, начатыми в half-open."
+
+  - id: retry-and-breaker
+    kind: single
+    prompt: "Как сочетать повторы и circuit breaker для одного соседа?"
+    options:
+      - text: "Повторы снаружи, breaker внутри каждой попытки; `ErrOpen` не повторять"
+        correct: true
+        explain: "Каждая попытка учитывается breaker'ом, а когда он разомкнут, политика повторов сразу возвращает отказ, не тратя бюджет времени на паузы."
+      - text: "Breaker снаружи, повторы внутри: breaker считает только итог всех попыток"
+        explain: "Тогда breaker видит одну неудачу вместо трёх и размыкается втрое позже, а при открытом breaker повторы всё равно не нужны."
+      - text: "Повторять `ErrOpen` с экспоненциальной паузой: breaker скоро закроется"
+        explain: "Таймаут open — секунды, а дедлайн запроса обычно меньше. Повторы съедят бюджет времени, а пользователь получит ошибку позже, чем мог бы."

@@ -1,0 +1,342 @@
+{
+  "swagger": "2.0",
+  "info": {
+    "title": "orders/v1/orders.proto",
+    "description": "Контракт сервиса «Заказы». Один источник истины для gRPC, REST\n(grpc-gateway по аннотациям google.api.http) и валидации (protovalidate).\nПравила эволюции: номера полей не меняются и не переиспользуются,\nудалённые поля — в reserved, несовместимые изменения — только в orders.v2.",
+    "version": "version not set"
+  },
+  "tags": [
+    {
+      "name": "OrderService",
+      "description": "OrderService — заказы покупателей.\n\nСоздание заказа — сага: резерв товара в «Складе» (WarehouseService.Reserve),\nзатем запись заказа и события в outbox; при сбое записи резерв отменяется\n(Release). События уходят в Kafka (events.v1.OrderEvent)."
+    }
+  ],
+  "consumes": [
+    "application/json"
+  ],
+  "produces": [
+    "application/json"
+  ],
+  "paths": {
+    "/v1/orders": {
+      "get": {
+        "summary": "ListOrders возвращает заказы покупателя, новые первыми, страницами.\nПагинация по курсору (page_token), а не по смещению: страница не\n«съезжает», когда появляются новые заказы.",
+        "operationId": "OrderService_ListOrders",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ListOrdersResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "customerId",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "int64"
+          },
+          {
+            "name": "pageSize",
+            "description": "Размер страницы; 0 — по умолчанию (20).",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          },
+          {
+            "name": "pageToken",
+            "description": "Непрозрачный курсор из next_page_token предыдущего ответа. Действует\nтолько с тем же customer_id.",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "OrderService"
+        ]
+      },
+      "post": {
+        "summary": "CreateOrder создаёт заказ и резервирует товар.\nОшибки: INVALID_ARGUMENT — запрос не прошёл валидацию или товара нет в\nкаталоге (детали — google.rpc.BadRequest); FAILED_PRECONDITION — не\nхватает товара (google.rpc.PreconditionFailure, google.rpc.ErrorInfo с\nreason OUT_OF_STOCK); UNAVAILABLE — склад недоступен, запрос можно\nповторить.",
+        "operationId": "OrderService_CreateOrder",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1CreateOrderResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/v1CreateOrderRequest"
+            }
+          }
+        ],
+        "tags": [
+          "OrderService"
+        ]
+      }
+    },
+    "/v1/orders/{orderId}": {
+      "get": {
+        "summary": "GetOrder возвращает заказ. NOT_FOUND — заказа нет.",
+        "operationId": "OrderService_GetOrder",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1GetOrderResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "orderId",
+            "in": "path",
+            "required": true,
+            "type": "string",
+            "format": "int64"
+          }
+        ],
+        "tags": [
+          "OrderService"
+        ]
+      }
+    },
+    "/v1/orders/{orderId}:cancel": {
+      "post": {
+        "summary": "CancelOrder отменяет заказ и возвращает товар на склад. Идемпотентен:\nповторная отмена возвращает тот же отменённый заказ.",
+        "operationId": "OrderService_CancelOrder",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1CancelOrderResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "orderId",
+            "in": "path",
+            "required": true,
+            "type": "string",
+            "format": "int64"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/OrderServiceCancelOrderBody"
+            }
+          }
+        ],
+        "tags": [
+          "OrderService"
+        ]
+      }
+    }
+  },
+  "definitions": {
+    "OrderServiceCancelOrderBody": {
+      "type": "object"
+    },
+    "protobufAny": {
+      "type": "object",
+      "properties": {
+        "@type": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": {}
+    },
+    "rpcStatus": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "message": {
+          "type": "string"
+        },
+        "details": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/protobufAny"
+          }
+        }
+      }
+    },
+    "v1CancelOrderResponse": {
+      "type": "object",
+      "properties": {
+        "order": {
+          "$ref": "#/definitions/v1Order"
+        }
+      }
+    },
+    "v1CreateOrderItem": {
+      "type": "object",
+      "properties": {
+        "productId": {
+          "type": "string",
+          "format": "int64"
+        },
+        "quantity": {
+          "type": "integer",
+          "format": "int32"
+        }
+      },
+      "description": "CreateOrderItem — что и сколько заказать."
+    },
+    "v1CreateOrderRequest": {
+      "type": "object",
+      "properties": {
+        "customerId": {
+          "type": "string",
+          "format": "int64",
+          "description": "Покупатель. Пока берётся из запроса как есть — аутентификации нет\n(см. labs/README.md, «Чего нет»)."
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1CreateOrderItem"
+          }
+        }
+      }
+    },
+    "v1CreateOrderResponse": {
+      "type": "object",
+      "properties": {
+        "order": {
+          "$ref": "#/definitions/v1Order"
+        }
+      }
+    },
+    "v1GetOrderResponse": {
+      "type": "object",
+      "properties": {
+        "order": {
+          "$ref": "#/definitions/v1Order"
+        }
+      }
+    },
+    "v1ListOrdersResponse": {
+      "type": "object",
+      "properties": {
+        "orders": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1Order"
+          }
+        },
+        "nextPageToken": {
+          "type": "string",
+          "description": "Пустой — страниц больше нет."
+        }
+      }
+    },
+    "v1Order": {
+      "type": "object",
+      "properties": {
+        "orderId": {
+          "type": "string",
+          "format": "int64"
+        },
+        "customerId": {
+          "type": "string",
+          "format": "int64"
+        },
+        "status": {
+          "$ref": "#/definitions/v1OrderStatus"
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1OrderItem"
+          },
+          "description": "Позиции упорядочены по product_id."
+        },
+        "totalCents": {
+          "type": "string",
+          "format": "int64",
+          "description": "Сумма в копейках: деньги не передаются во float."
+        },
+        "createTime": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updateTime": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "description": "Order — заказ с позициями."
+    },
+    "v1OrderItem": {
+      "type": "object",
+      "properties": {
+        "productId": {
+          "type": "string",
+          "format": "int64"
+        },
+        "quantity": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "priceCents": {
+          "type": "string",
+          "format": "int64"
+        }
+      },
+      "description": "OrderItem — позиция заказа. Цена фиксируется на момент заказа."
+    },
+    "v1OrderStatus": {
+      "type": "string",
+      "enum": [
+        "ORDER_STATUS_UNSPECIFIED",
+        "ORDER_STATUS_RESERVED",
+        "ORDER_STATUS_CANCELLED"
+      ],
+      "default": "ORDER_STATUS_UNSPECIFIED",
+      "description": "OrderStatus — статус заказа.\n\n - ORDER_STATUS_UNSPECIFIED: Нулевое значение обязано означать «не задано»: его получит поле,\nкоторое отправитель не заполнил (или заполнил значением из будущей\nверсии контракта, неизвестной получателю).\n - ORDER_STATUS_RESERVED: Товар зарезервирован на складе. Заказ без резерва не записывается.\n - ORDER_STATUS_CANCELLED: Заказ отменён, резерв возвращён. Конечный статус."
+    }
+  }
+}

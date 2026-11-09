@@ -1,0 +1,14 @@
+запуск 1:
+  p0@0 A-1 created
+  p0@1 A-1 paid
+  p0@2 A-1 shipped
+  p1@0 B-2 created
+  p1@1 B-2 paid: ОШИБКА
+  p1@2 B-2 shipped: пропущено
+закоммичено: p0=3 p1=1 p2=0
+запуск 2:
+  p1@1 B-2 paid
+  p1@2 B-2 shipped
+партиций: first=4 second=0
+партиций: first=2 second=2
+партиций: first=4 second=0

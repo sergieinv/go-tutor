@@ -1,0 +1,131 @@
+questions:
+  - id: unknown-service
+    kind: output
+    prompt: "Что выведет программа? Health-сервер не знает сервис `billing`."
+    code: |
+      package main
+
+      import (
+      	"context"
+      	"fmt"
+      	"net"
+
+      	"google.golang.org/grpc"
+      	"google.golang.org/grpc/credentials/insecure"
+      	"google.golang.org/grpc/health"
+      	healthpb "google.golang.org/grpc/health/grpc_health_v1"
+      	"google.golang.org/grpc/status"
+      	"google.golang.org/grpc/test/bufconn"
+      )
+
+      func main() {
+      	lis := bufconn.Listen(1 << 20)
+      	srv := grpc.NewServer()
+      	healthpb.RegisterHealthServer(srv, health.NewServer())
+      	go srv.Serve(lis)
+      	defer srv.Stop()
+      	conn, _ := grpc.NewClient("passthrough:///bufnet",
+      		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) { return lis.DialContext(ctx) }),
+      		grpc.WithTransportCredentials(insecure.NewCredentials()))
+      	defer conn.Close()
+      	hc := healthpb.NewHealthClient(conn)
+      	req := &healthpb.HealthCheckRequest{Service: "billing"}
+
+      	resp, err := hc.Check(context.Background(), req)
+      	fmt.Println(resp.GetStatus(), status.Code(err))
+
+      	ctx, cancel := context.WithCancel(context.Background())
+      	defer cancel()
+      	w, _ := hc.Watch(ctx, req)
+      	m, err := w.Recv()
+      	fmt.Println(m.GetStatus(), status.Code(err))
+      }
+    options:
+      - text: |-
+          UNKNOWN NotFound
+          SERVICE_UNKNOWN OK
+        correct: true
+        explain: "`Check` про неизвестный сервис отвечает ошибкой `NotFound` (ответа нет, геттер у `nil` вернул нулевое значение `UNKNOWN`). `Watch` — подписка: он не падает, а присылает `SERVICE_UNKNOWN` и ждёт, вдруг сервис появится."
+      - text: |-
+          UNKNOWN NotFound
+          UNKNOWN NotFound
+        explain: "Так было бы, если бы `Watch` вёл себя как `Check`. По протоколу он не завершает стрим, а шлёт статус `SERVICE_UNKNOWN`: сервис может зарегистрироваться позже."
+      - text: |-
+          SERVING OK
+          SERVING OK
+        explain: "По умолчанию SERVING только пустое имя — «сервер целиком». Про `billing` health-сервер ничего не знает."
+      - text: |-
+          NOT_SERVING OK
+          NOT_SERVING OK
+        explain: "NOT_SERVING — это известный сервис, который не готов. Неизвестный сервис — другой случай: ошибка в `Check`, `SERVICE_UNKNOWN` в `Watch`."
+
+  - id: shutdown-sticky
+    kind: output
+    prompt: "Что выведет программа? Методы health.Server вызываются напрямую, без сети."
+    code: |
+      package main
+
+      import (
+      	"context"
+      	"fmt"
+
+      	"google.golang.org/grpc/health"
+      	healthpb "google.golang.org/grpc/health/grpc_health_v1"
+      )
+
+      func main() {
+      	hs := health.NewServer()
+      	hs.SetServingStatus("orders", healthpb.HealthCheckResponse_SERVING)
+      	hs.Shutdown()
+      	hs.SetServingStatus("orders", healthpb.HealthCheckResponse_SERVING)
+
+      	for _, name := range []string{"", "orders"} {
+      		resp, _ := hs.Check(context.Background(), &healthpb.HealthCheckRequest{Service: name})
+      		fmt.Printf("%q: %v\n", name, resp.GetStatus())
+      	}
+      }
+    options:
+      - text: |-
+          "": NOT_SERVING
+          "orders": NOT_SERVING
+        correct: true
+        explain: "`Shutdown` переводит в NOT_SERVING все известные сервисы, включая пустое имя, и запрещает изменения: следующий `SetServingStatus` игнорируется. Вернуть всё может только `Resume`. Так случайный фоновый апдейт не объявит готовым сервер, который уже останавливается."
+      - text: |-
+          "": NOT_SERVING
+          "orders": SERVING
+        explain: "После `Shutdown` все вызовы `SetServingStatus` игнорируются, иначе фоновая проверка «оживила» бы останавливающийся сервер."
+      - text: |-
+          "": SERVING
+          "orders": SERVING
+        explain: "`Shutdown` меняет статусы всех известных сервисов, в том числе пустого имени."
+      - text: "Паника: SetServingStatus после Shutdown"
+        explain: "Паники нет: health.Server молча (с записью в лог grpc) игнорирует изменение."
+
+  - id: liveness-db
+    kind: single
+    prompt: "Liveness-проба пода — gRPC health-проверка, которая возвращает NOT_SERVING, когда недоступна PostgreSQL. База упала на минуту. Что случится?"
+    options:
+      - text: "k8s начнёт перезапускать все поды сервиса, хотя сами они исправны — перезапуск базу не починит, а старт под нагрузкой ещё и ударит по ней"
+        correct: true
+        explain: "Liveness отвечает на вопрос «процесс завис — перезапустить?». Зависимости в нём проверять нельзя. Состояние базы — дело readiness: под временно убирают из балансировки, но не убивают."
+      - text: "Поды уберут из балансировки, а когда база вернётся — вернут"
+        explain: "Это поведение readiness-пробы. При проваленной liveness kubelet перезапускает контейнер."
+      - text: "Ничего: liveness-пробы gRPC проверяют только, что порт открыт"
+        explain: "gRPC-проба вызывает `grpc.health.v1.Health/Check` и считает успехом только SERVING."
+      - text: "k8s переключит трафик на реплику базы"
+        explain: "Пробы касаются пода, а не его зависимостей. О реплике базы k8s ничего не знает."
+
+  - id: reflection-prod
+    kind: multiple
+    prompt: "Что верно про reflection в продакшене?"
+    options:
+      - text: "Reflection отдаёт полный контракт: все сервисы, методы и поля, включая внутренние админские методы"
+        correct: true
+        explain: "Любой, кто достучался до порта, получит карту API, как с открытым Swagger UI. Это помогает атакующему."
+      - text: "Его выключают или закрывают аутентификацией; для отладки в проде у grpcurl есть флаг `-proto` с файлами контракта"
+        correct: true
+        explain: "`grpcurl -proto orders.proto ...` собирает запрос по локальному .proto без reflection на сервере."
+      - text: "Без reflection сервер не может обслуживать клиентов на других языках"
+        explain: "Клиенты генерируются из .proto заранее, reflection им не нужен. Он нужен инструментам вроде grpcurl и grpcui, которые не знают контракт."
+      - text: "Reflection заметно замедляет обычные вызовы"
+        explain: "Это отдельный сервис: на чужие вызовы он не влияет. Причина выключать его — раскрытие контракта, а не производительность."

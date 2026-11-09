@@ -1,0 +1,19 @@
+// Контракт примера: сервис, за здоровьем которого следит health.
+syntax = "proto3";
+
+package shop.v1;
+
+option go_package = "lesson/proto;main";
+
+service OrderService {
+  rpc GetOrder(GetOrderRequest) returns (GetOrderResponse);
+}
+
+message GetOrderRequest {
+  int64 id = 1;
+}
+
+message GetOrderResponse {
+  int64 id = 1;
+  string status = 2;
+}

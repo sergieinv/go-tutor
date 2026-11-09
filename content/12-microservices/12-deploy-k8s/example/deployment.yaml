@@ -1,0 +1,58 @@
+# Манифест для сервиса из main.go (пример не читает этот файл — он для чтения).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: orders
+spec:
+  replicas: 3
+  selector:
+    matchLabels: {app: orders}
+  template:
+    metadata:
+      labels: {app: orders}
+    spec:
+      # Время от SIGTERM до SIGKILL: пауза draining + Shutdown + закрытие зависимостей.
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532          # пользователь nonroot из distroless
+      containers:
+        - name: orders
+          image: registry.example.com/orders:1.4.2   # тег = версия из -ldflags
+          ports:
+            - {name: http, containerPort: 8080}
+            - {name: grpc, containerPort: 9090}
+          env:
+            - name: ORDERS_ADDR
+              value: ":8080"
+            - name: GOMEMLIMIT      # мягкий предел кучи ~90% от limits.memory
+              value: "460MiB"
+            # GOMAXPROCS не задаём: Go 1.25 сам берёт limits.cpu из cgroup.
+            - name: ORDERS_DB_PASSWORD_FILE
+              value: /etc/orders/secrets/db-password
+          volumeMounts:
+            - {name: secrets, mountPath: /etc/orders/secrets, readOnly: true}
+          resources:
+            requests: {cpu: "500m", memory: "512Mi"}
+            limits: {cpu: "2", memory: "512Mi"}
+          startupProbe:             # до 60 с на миграции и прогрев
+            httpGet: {path: /startupz, port: http}
+            periodSeconds: 2
+            failureThreshold: 30
+          livenessProbe:            # только «процесс жив», без зависимостей
+            httpGet: {path: /livez, port: http}
+            periodSeconds: 10
+            failureThreshold: 3
+          readinessProbe:           # стадия + критичные зависимости
+            httpGet: {path: /readyz, port: http}
+            periodSeconds: 5
+            failureThreshold: 2
+          # Для gRPC-сервиса проба может спрашивать grpc.health.v1:
+          # readinessProbe: {grpc: {port: 9090, service: orders.v1.OrderService}}
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}
+      volumes:
+        - name: secrets
+          secret: {secretName: orders-db}

@@ -9,7 +9,6 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"gotutor/labs/orders/internal/orders"
 	"gotutor/labs/orders/internal/store/postgres"
 	"gotutor/labs/orders/internal/storetest"
 )
@@ -24,7 +23,7 @@ func TestStore(t *testing.T) {
 	if adminDSN == "" {
 		t.Skip("ORDERS_TEST_POSTGRES is not set")
 	}
-	storetest.Run(t, func(t *testing.T) orders.Store {
+	storetest.Run(t, func(t *testing.T) storetest.Store {
 		return newTestStore(t, adminDSN)
 	})
 }

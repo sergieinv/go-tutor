@@ -1,0 +1,18 @@
+// Контракт задачи: тесты собирают по нему байты через proto.Marshal
+// и сверяют их с тем, что прочитал ваш разбор.
+syntax = "proto3";
+
+package shop.task.v1;
+
+option go_package = "lesson/proto;task";
+
+// Order — заказ; номера полей важнее имён: по проводу идут только они.
+message Order {
+  int64 id = 1;
+  string customer_email = 2;
+  // Скидка в процентах; optional — «не задана» отличается от 0.
+  optional uint32 discount_percent = 3;
+  repeated string tags = 4;
+  fixed64 checksum = 5;
+  sint64 balance_delta = 6;
+}

@@ -1,47 +1,57 @@
-// Package storetest — контрактный набор тестов для реализаций orders.Store.
+// Package storetest — контрактный набор тестов для хранилищ «Заказов»
+// (orders.Store и outbox.Store) и фейк «Склада» для тестов домена.
 //
 // Один набор запускается для каждой базы (см. store_test.go в пакетах
 // internal/store/*): поведение, которое видит сервис, обязано совпадать
-// у PostgreSQL, MySQL и SQLite. Новый тест здесь сразу проверяет все три.
+// у PostgreSQL и SQLite. Новый тест здесь сразу проверяет обе.
 package storetest
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
+	"maps"
 	"slices"
 	"sync"
 	"testing"
 	"time"
 
+	"google.golang.org/protobuf/proto"
+
+	eventsv1 "gotutor/labs/api/gen/events/v1"
 	"gotutor/labs/orders/internal/orders"
+	"gotutor/labs/orders/internal/outbox"
 )
 
-// NewStore возвращает пустое хранилище с применёнными миграциями.
+// Store — хранилище целиком: домен и relay.
+type Store interface {
+	orders.Store
+	outbox.Store
+}
+
+// NewStore возвращает пустое хранилище с применёнными миграциями
+// (демо-каталог в нём есть — тесты заводят свои товары).
 // Каждый вызов — отдельная база: тесты не видят данных друг друга.
-// Закрытие и удаление базы — забота функции (через t.Cleanup).
-type NewStore func(t *testing.T) orders.Store
+type NewStore func(t *testing.T) Store
 
 // Run запускает весь контрактный набор.
 func Run(t *testing.T, newStore NewStore) {
 	tests := []struct {
 		name string
-		fn   func(t *testing.T, s orders.Store)
+		fn   func(t *testing.T, s Store)
 	}{
-		{"ProductRoundTrip", testProductRoundTrip},
-		{"ProductNotFound", testProductNotFound},
+		{"ProductsByIDs", testProductsByIDs},
+		{"NextOrderIDIsUnique", testNextOrderIDIsUnique},
 		{"CreateOrder", testCreateOrder},
-		{"CreateOrderOutOfStockIsAtomic", testCreateOrderOutOfStockIsAtomic},
-		{"CreateOrderUnknownProduct", testCreateOrderUnknownProduct},
 		{"OrderNotFound", testOrderNotFound},
+		{"ListOrdersPages", testListOrdersPages},
 		{"CancelOrder", testCancelOrder},
 		{"CancelOrderTwiceIsIdempotent", testCancelOrderTwice},
 		{"CancelOrderNotFound", testCancelOrderNotFound},
 		{"RollbackDiscardsChanges", testRollbackDiscardsChanges},
-		{"ReserveStockInsufficient", testReserveStockInsufficient},
 		{"UpdateOrderStatusConflict", testUpdateOrderStatusConflict},
-		{"ConcurrentReservation", testConcurrentReservation},
 		{"ConcurrentCancel", testConcurrentCancel},
+		{"PublishPending", testPublishPending},
+		{"PublishFailureKeepsEvents", testPublishFailureKeepsEvents},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -50,481 +60,462 @@ func Run(t *testing.T, newStore NewStore) {
 	}
 }
 
-// now — фиксированные часы: время в тестах детерминировано. Наносекунды
+// Now — фиксированные часы: время в тестах детерминировано. Наносекунды
 // заданы нарочно — сервис обязан обрезать их до микросекунд.
-var now = time.Date(2026, 3, 14, 15, 9, 26, 535897932, time.UTC)
+var Now = time.Date(2026, 3, 14, 15, 9, 26, 535897932, time.UTC)
 
-func newService(s orders.Store) *orders.Service {
-	return orders.NewService(s, func() time.Time { return now })
+// Warehouse — фейк «Склада» в памяти: запоминает вызовы, ошибки задаются
+// полями. Не моки с ожиданиями, а простая реализация интерфейса.
+type Warehouse struct {
+	mu         sync.Mutex
+	reserved   map[int64][]orders.ItemRequest
+	releases   map[int64]int
+	ReserveErr error // вернуть из Reserve вместо резерва
+	ReleaseErr error // вернуть из Release
 }
 
-func createProduct(t *testing.T, s orders.Store, name string, price int64, available int) orders.Product {
+// NewWarehouse создаёт фейк.
+func NewWarehouse() *Warehouse {
+	return &Warehouse{reserved: map[int64][]orders.ItemRequest{}, releases: map[int64]int{}}
+}
+
+// Reserve запоминает резерв.
+func (w *Warehouse) Reserve(_ context.Context, orderID int64, items []orders.ItemRequest) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.ReserveErr != nil {
+		return w.ReserveErr
+	}
+	w.reserved[orderID] = slices.Clone(items)
+	return nil
+}
+
+// Release считает возвраты.
+func (w *Warehouse) Release(_ context.Context, orderID int64) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.releases[orderID]++
+	return w.ReleaseErr
+}
+
+// Reserved возвращает позиции резерва заказа.
+func (w *Warehouse) Reserved(orderID int64) []orders.ItemRequest {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.reserved[orderID]
+}
+
+// Releases — сколько раз вызван Release для заказа.
+func (w *Warehouse) Releases(orderID int64) int {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.releases[orderID]
+}
+
+// Set меняет ошибки под блокировкой (тесты с горутинами).
+func (w *Warehouse) Set(reserveErr, releaseErr error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.ReserveErr, w.ReleaseErr = reserveErr, releaseErr
+}
+
+func newService(s orders.Store, w orders.Warehouse) *orders.Service {
+	return orders.NewService(s, w, orders.Options{Now: func() time.Time { return Now }})
+}
+
+func createProduct(t *testing.T, s orders.Store, name string, price int64) orders.Product {
 	t.Helper()
-	p, err := s.CreateProduct(t.Context(), orders.NewProduct{Name: name, PriceCents: price, Available: available})
+	p, err := s.CreateProduct(t.Context(), orders.NewProduct{Name: name, PriceCents: price})
 	if err != nil {
 		t.Fatalf("CreateProduct(%q): %v", name, err)
 	}
 	return p
 }
 
-func available(t *testing.T, s orders.Store, productID int64) int {
+func createOrder(t *testing.T, svc *orders.Service, customerID int64, items ...orders.ItemRequest) orders.Order {
 	t.Helper()
-	p, err := s.Product(t.Context(), productID)
-	if err != nil {
-		t.Fatalf("Product(%d): %v", productID, err)
-	}
-	return p.Available
-}
-
-func pendingEvents(t *testing.T, s orders.Store) []orders.Event {
-	t.Helper()
-	events, err := s.PendingEvents(t.Context(), 1000)
-	if err != nil {
-		t.Fatalf("PendingEvents: %v", err)
-	}
-	return events
-}
-
-func testProductRoundTrip(t *testing.T, s orders.Store) {
-	p := createProduct(t, s, "Ручка «Паркер»", 129900, 42)
-	if p.ID <= 0 {
-		t.Fatalf("CreateProduct: ID = %d, want positive", p.ID)
-	}
-	got, err := s.Product(t.Context(), p.ID)
-	if err != nil {
-		t.Fatalf("Product: %v", err)
-	}
-	if got != p {
-		t.Errorf("Product = %+v, want %+v", got, p)
-	}
-}
-
-func testProductNotFound(t *testing.T, s orders.Store) {
-	_, err := s.Product(t.Context(), 999_999)
-	if !errors.Is(err, orders.ErrNotFound) {
-		t.Fatalf("Product(missing) error = %v, want ErrNotFound", err)
-	}
-}
-
-func testCreateOrder(t *testing.T, s orders.Store) {
-	ctx := t.Context()
-	pen := createProduct(t, s, "Ручка", 15000, 10)
-	pad := createProduct(t, s, "Блокнот", 30000, 5)
-	svc := newService(s)
-
-	// Позиции нарочно не по порядку id: сервис их сортирует.
-	created, err := svc.CreateOrder(ctx, orders.CreateOrderRequest{
-		CustomerID: 7,
-		Items: []orders.ItemRequest{
-			{ProductID: pad.ID, Quantity: 2},
-			{ProductID: pen.ID, Quantity: 3},
-		},
-	})
+	o, err := svc.CreateOrder(t.Context(), orders.CreateOrderRequest{CustomerID: customerID, Items: items})
 	if err != nil {
 		t.Fatalf("CreateOrder: %v", err)
 	}
+	return o
+}
 
-	wantTime := now.Truncate(time.Microsecond)
-	want := orders.Order{
-		ID:         created.ID,
-		CustomerID: 7,
-		Status:     orders.StatusReserved,
-		Items: []orders.Item{
-			{ProductID: pen.ID, Quantity: 3, PriceCents: 15000},
-			{ProductID: pad.ID, Quantity: 2, PriceCents: 30000},
-		},
-		TotalCents: 3*15000 + 2*30000,
-		CreatedAt:  wantTime,
-		UpdatedAt:  wantTime,
+// PendingEvents забирает неопубликованные события, не отмечая их
+// (publish возвращает ошибку — отметки нет).
+func PendingEvents(t *testing.T, s outbox.Store) []orders.Event {
+	t.Helper()
+	var got []orders.Event
+	errPeek := errors.New("peek")
+	_, err := s.PublishPending(t.Context(), 1000, func(_ context.Context, evs []orders.Event) error {
+		got = slices.Clone(evs)
+		return errPeek
+	})
+	if err != nil && !errors.Is(err, errPeek) {
+		t.Fatalf("PublishPending: %v", err)
 	}
-	if created.ID <= 0 {
-		t.Fatalf("CreateOrder: ID = %d, want positive", created.ID)
+	return got
+}
+
+func testProductsByIDs(t *testing.T, s Store) {
+	a := createProduct(t, s, "Ручка «Паркер»", 129900)
+	b := createProduct(t, s, "Блокнот", 30000)
+	got, err := s.ProductsByIDs(t.Context(), []int64{b.ID, 999_999, a.ID})
+	if err != nil {
+		t.Fatalf("ProductsByIDs: %v", err)
+	}
+	want := []orders.Product{a, b}
+	if a.ID > b.ID {
+		want = []orders.Product{b, a}
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("ProductsByIDs = %+v, want %+v (sorted, missing skipped)", got, want)
+	}
+}
+
+func testNextOrderIDIsUnique(t *testing.T, s Store) {
+	const n = 20
+	ids := make(chan int64, n)
+	var wg sync.WaitGroup
+	for range n {
+		wg.Go(func() {
+			id, err := s.NextOrderID(t.Context())
+			if err != nil {
+				t.Errorf("NextOrderID: %v", err)
+				return
+			}
+			ids <- id
+		})
+	}
+	wg.Wait()
+	close(ids)
+	seen := map[int64]bool{}
+	for id := range ids {
+		if id <= 0 || seen[id] {
+			t.Errorf("id %d is not positive or repeated", id)
+		}
+		seen[id] = true
+	}
+}
+
+func testCreateOrder(t *testing.T, s Store) {
+	ctx := t.Context()
+	pen := createProduct(t, s, "Ручка", 15000)
+	pad := createProduct(t, s, "Блокнот", 30000)
+	wh := NewWarehouse()
+	svc := newService(s, wh)
+
+	// Позиции нарочно не по порядку id: сервис их сортирует.
+	created := createOrder(t, svc, 7,
+		orders.ItemRequest{ProductID: pad.ID, Quantity: 2},
+		orders.ItemRequest{ProductID: pen.ID, Quantity: 3},
+	)
+	wantTime := Now.Truncate(time.Microsecond)
+	items := []orders.Item{
+		{ProductID: pen.ID, Quantity: 3, PriceCents: 15000},
+		{ProductID: pad.ID, Quantity: 2, PriceCents: 30000},
+	}
+	if pen.ID > pad.ID {
+		items[0], items[1] = items[1], items[0]
+	}
+	want := orders.Order{
+		ID: created.ID, CustomerID: 7, Status: orders.StatusReserved, Items: items,
+		TotalCents: 3*15000 + 2*30000, CreatedAt: wantTime, UpdatedAt: wantTime,
 	}
 	assertOrder(t, "CreateOrder", created, want)
-
 	got, err := s.Order(ctx, created.ID)
 	if err != nil {
 		t.Fatalf("Order: %v", err)
 	}
 	assertOrder(t, "Order", got, want)
 
-	if n := available(t, s, pen.ID); n != 7 {
-		t.Errorf("pen available = %d, want 7", n)
-	}
-	if n := available(t, s, pad.ID); n != 3 {
-		t.Errorf("pad available = %d, want 3", n)
+	if r := wh.Reserved(created.ID); len(r) != 2 {
+		t.Errorf("warehouse reserve for order %d = %v", created.ID, r)
 	}
 
-	events := pendingEvents(t, s)
+	events := PendingEvents(t, s)
 	if len(events) != 1 {
-		t.Fatalf("outbox has %d events, want 1", len(events))
+		t.Fatalf("pending events = %d, want 1", len(events))
 	}
 	ev := events[0]
-	if ev.Type != orders.EventOrderCreated || ev.OrderID != created.ID || !ev.CreatedAt.Equal(wantTime) {
-		t.Errorf("event = {Type:%q OrderID:%d CreatedAt:%v}, want {%q %d %v}",
-			ev.Type, ev.OrderID, ev.CreatedAt, orders.EventOrderCreated, created.ID, wantTime)
+	if ev.Type != orders.EventOrderCreated || ev.OrderID != created.ID || ev.EventID == "" || !ev.CreatedAt.Equal(wantTime) {
+		t.Errorf("event = %+v", ev)
 	}
-	var payload struct {
-		OrderID    int64 `json:"order_id"`
-		TotalCents int64 `json:"total_cents"`
-		Items      []struct {
-			ProductID int64 `json:"product_id"`
-			Quantity  int   `json:"quantity"`
-		} `json:"items"`
+	var payload eventsv1.OrderEvent
+	if err := proto.Unmarshal(ev.Payload, &payload); err != nil {
+		t.Fatalf("payload: %v", err)
 	}
-	if err := json.Unmarshal(ev.Payload, &payload); err != nil {
-		t.Fatalf("event payload %s: %v", ev.Payload, err)
-	}
-	if payload.OrderID != created.ID || payload.TotalCents != want.TotalCents || len(payload.Items) != 2 {
-		t.Errorf("event payload = %s, want order %d, total %d, 2 items", ev.Payload, created.ID, want.TotalCents)
+	oc := payload.GetOrderCreated()
+	if payload.GetEventId() != ev.EventID || payload.GetOrderId() != created.ID || oc.GetCustomerId() != 7 ||
+		oc.GetTotalCents() != want.TotalCents || len(oc.GetItems()) != 2 {
+		t.Errorf("payload = %v", &payload)
 	}
 }
 
-func testCreateOrderOutOfStockIsAtomic(t *testing.T, s orders.Store) {
-	ctx := t.Context()
-	// Первая позиция (меньший id) резервируется успешно, вторая — нет.
-	// Транзакция обязана откатить и первую.
-	plenty := createProduct(t, s, "Много", 100, 10)
-	scarce := createProduct(t, s, "Мало", 100, 1)
-
-	_, err := newService(s).CreateOrder(ctx, orders.CreateOrderRequest{
-		CustomerID: 1,
-		Items: []orders.ItemRequest{
-			{ProductID: plenty.ID, Quantity: 5},
-			{ProductID: scarce.ID, Quantity: 2},
-		},
-	})
-	if !errors.Is(err, orders.ErrOutOfStock) {
-		t.Fatalf("CreateOrder error = %v, want ErrOutOfStock", err)
-	}
-	if n := available(t, s, plenty.ID); n != 10 {
-		t.Errorf("first item available = %d, want 10 (reservation rolled back)", n)
-	}
-	if n := available(t, s, scarce.ID); n != 1 {
-		t.Errorf("second item available = %d, want 1", n)
-	}
-	if events := pendingEvents(t, s); len(events) != 0 {
-		t.Errorf("outbox has %d events after failed order, want 0", len(events))
-	}
-}
-
-func testCreateOrderUnknownProduct(t *testing.T, s orders.Store) {
-	p := createProduct(t, s, "Есть", 100, 10)
-	_, err := newService(s).CreateOrder(t.Context(), orders.CreateOrderRequest{
-		CustomerID: 1,
-		Items: []orders.ItemRequest{
-			{ProductID: p.ID, Quantity: 1},
-			{ProductID: 999_999, Quantity: 1},
-		},
-	})
-	var ve *orders.ValidationError
-	if !errors.As(err, &ve) {
-		t.Fatalf("CreateOrder error = %v, want ValidationError", err)
-	}
-	if ve.Field != "items[1].product_id" {
-		t.Errorf("ValidationError.Field = %q, want items[1].product_id", ve.Field)
-	}
-	if n := available(t, s, p.ID); n != 10 {
-		t.Errorf("available = %d, want 10", n)
-	}
-}
-
-func testOrderNotFound(t *testing.T, s orders.Store) {
-	_, err := s.Order(t.Context(), 999_999)
-	if !errors.Is(err, orders.ErrNotFound) {
+func testOrderNotFound(t *testing.T, s Store) {
+	if _, err := s.Order(t.Context(), 999_999); !errors.Is(err, orders.ErrNotFound) {
 		t.Fatalf("Order(missing) error = %v, want ErrNotFound", err)
 	}
 }
 
-func testCancelOrder(t *testing.T, s orders.Store) {
-	ctx := t.Context()
-	p := createProduct(t, s, "Товар", 500, 10)
-	svc := newService(s)
-	created, err := svc.CreateOrder(ctx, orders.CreateOrderRequest{
-		CustomerID: 1,
-		Items:      []orders.ItemRequest{{ProductID: p.ID, Quantity: 4}},
-	})
-	if err != nil {
-		t.Fatalf("CreateOrder: %v", err)
+func testListOrdersPages(t *testing.T, s Store) {
+	p := createProduct(t, s, "Ручка", 100)
+	svc := newService(s, NewWarehouse())
+	var mine []int64
+	for i := range 5 {
+		mine = append(mine, createOrder(t, svc, 7, orders.ItemRequest{ProductID: p.ID, Quantity: i + 1}).ID)
+		createOrder(t, svc, 8, orders.ItemRequest{ProductID: p.ID, Quantity: 1})
 	}
+	slices.Reverse(mine) // новые первыми
 
-	cancelled, err := svc.CancelOrder(ctx, created.ID)
+	var got []int64
+	var before int64
+	for page := 0; ; page++ {
+		list, more, err := svc.ListOrders(t.Context(), 7, before, 2)
+		if err != nil {
+			t.Fatalf("ListOrders: %v", err)
+		}
+		for _, o := range list {
+			if o.CustomerID != 7 || len(o.Items) != 1 {
+				t.Errorf("order %+v: wrong customer or items", o)
+			}
+			got = append(got, o.ID)
+		}
+		if !more {
+			break
+		}
+		if page > 5 {
+			t.Fatal("pagination does not terminate")
+		}
+		before = list[len(list)-1].ID
+	}
+	if !slices.Equal(got, mine) {
+		t.Errorf("pages = %v, want %v", got, mine)
+	}
+	if list, more, err := svc.ListOrders(t.Context(), 9, 0, 10); err != nil || len(list) != 0 || more {
+		t.Errorf("unknown customer: %v, %v, %v", list, more, err)
+	}
+}
+
+func testCancelOrder(t *testing.T, s Store) {
+	p := createProduct(t, s, "Ручка", 100)
+	wh := NewWarehouse()
+	svc := newService(s, wh)
+	o := createOrder(t, svc, 7, orders.ItemRequest{ProductID: p.ID, Quantity: 1})
+
+	cancelled, err := svc.CancelOrder(t.Context(), o.ID)
 	if err != nil {
 		t.Fatalf("CancelOrder: %v", err)
 	}
 	if cancelled.Status != orders.StatusCancelled {
-		t.Errorf("CancelOrder status = %q, want %q", cancelled.Status, orders.StatusCancelled)
+		t.Errorf("status = %q", cancelled.Status)
 	}
-	got, err := s.Order(ctx, created.ID)
-	if err != nil {
-		t.Fatalf("Order: %v", err)
-	}
+	got, _ := s.Order(t.Context(), o.ID)
 	if got.Status != orders.StatusCancelled {
-		t.Errorf("stored status = %q, want %q", got.Status, orders.StatusCancelled)
+		t.Errorf("stored status = %q", got.Status)
 	}
-	if n := available(t, s, p.ID); n != 10 {
-		t.Errorf("available after cancel = %d, want 10", n)
+	if wh.Releases(o.ID) != 1 {
+		t.Errorf("releases = %d, want 1", wh.Releases(o.ID))
 	}
-	events := pendingEvents(t, s)
-	if len(events) != 2 || events[0].Type != orders.EventOrderCreated || events[1].Type != orders.EventOrderCancelled {
-		t.Errorf("outbox = %v, want [order.created order.cancelled]", eventTypes(events))
+	events := PendingEvents(t, s)
+	if len(events) != 2 || events[1].Type != orders.EventOrderCancelled {
+		t.Fatalf("events = %+v, want created then cancelled", events)
 	}
 }
 
-func testCancelOrderTwice(t *testing.T, s orders.Store) {
-	ctx := t.Context()
-	p := createProduct(t, s, "Товар", 500, 10)
-	svc := newService(s)
-	created, err := svc.CreateOrder(ctx, orders.CreateOrderRequest{
-		CustomerID: 1,
-		Items:      []orders.ItemRequest{{ProductID: p.ID, Quantity: 4}},
-	})
+func testCancelOrderTwice(t *testing.T, s Store) {
+	p := createProduct(t, s, "Ручка", 100)
+	wh := NewWarehouse()
+	svc := newService(s, wh)
+	o := createOrder(t, svc, 7, orders.ItemRequest{ProductID: p.ID, Quantity: 1})
+	first, err := svc.CancelOrder(t.Context(), o.ID)
 	if err != nil {
-		t.Fatalf("CreateOrder: %v", err)
+		t.Fatal(err)
 	}
-	for i := range 2 {
-		o, err := svc.CancelOrder(ctx, created.ID)
-		if err != nil {
-			t.Fatalf("CancelOrder #%d: %v", i+1, err)
-		}
-		if o.Status != orders.StatusCancelled {
-			t.Fatalf("CancelOrder #%d status = %q", i+1, o.Status)
-		}
+	second, err := svc.CancelOrder(t.Context(), o.ID)
+	if err != nil {
+		t.Fatalf("second CancelOrder: %v", err)
 	}
-	// Остаток вернулся ровно один раз.
-	if n := available(t, s, p.ID); n != 10 {
-		t.Errorf("available after double cancel = %d, want 10", n)
+	assertOrder(t, "second cancel", second, first)
+	// Событие об отмене — одно, а Release повторяется (идемпотентен на складе).
+	if n := len(PendingEvents(t, s)); n != 2 {
+		t.Errorf("events = %d, want 2", n)
 	}
-	if events := pendingEvents(t, s); len(events) != 2 {
-		t.Errorf("outbox = %v, want exactly one order.cancelled", eventTypes(events))
+	if wh.Releases(o.ID) != 2 {
+		t.Errorf("releases = %d, want 2", wh.Releases(o.ID))
 	}
 }
 
-func testCancelOrderNotFound(t *testing.T, s orders.Store) {
-	_, err := newService(s).CancelOrder(t.Context(), 999_999)
+func testCancelOrderNotFound(t *testing.T, s Store) {
+	wh := NewWarehouse()
+	_, err := newService(s, wh).CancelOrder(t.Context(), 999_999)
 	if !errors.Is(err, orders.ErrNotFound) {
-		t.Fatalf("CancelOrder(missing) error = %v, want ErrNotFound", err)
+		t.Fatalf("error = %v, want ErrNotFound", err)
+	}
+	if wh.Releases(999_999) != 0 {
+		t.Error("Release called for a missing order")
 	}
 }
 
-func testRollbackDiscardsChanges(t *testing.T, s orders.Store) {
+func testRollbackDiscardsChanges(t *testing.T, s Store) {
 	ctx := t.Context()
-	p := createProduct(t, s, "Товар", 500, 10)
-
+	p := createProduct(t, s, "Ручка", 100)
+	id, err := s.NextOrderID(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
 	tx, err := s.Begin(ctx)
 	if err != nil {
-		t.Fatalf("Begin: %v", err)
+		t.Fatal(err)
 	}
-	if err := tx.ReserveStock(ctx, p.ID, 3); err != nil {
-		t.Fatalf("ReserveStock: %v", err)
+	o := orders.Order{ID: id, CustomerID: 1, Status: orders.StatusReserved, TotalCents: 100,
+		Items: []orders.Item{{ProductID: p.ID, Quantity: 1, PriceCents: 100}}, CreatedAt: Now, UpdatedAt: Now}
+	if err := tx.CreateOrder(ctx, o); err != nil {
+		t.Fatal(err)
 	}
-	if err := tx.AddEvent(ctx, orders.Event{Type: "test", OrderID: 1, Payload: []byte(`{}`), CreatedAt: now}); err != nil {
-		t.Fatalf("AddEvent: %v", err)
+	if err := tx.AddEvent(ctx, orders.Event{EventID: "e1", Type: orders.EventOrderCreated, OrderID: id, Payload: []byte{1}, CreatedAt: Now}); err != nil {
+		t.Fatal(err)
 	}
 	if err := tx.Rollback(ctx); err != nil {
-		t.Fatalf("Rollback: %v", err)
+		t.Fatal(err)
 	}
-
-	if n := available(t, s, p.ID); n != 10 {
-		t.Errorf("available after rollback = %d, want 10", n)
+	if _, err := s.Order(ctx, id); !errors.Is(err, orders.ErrNotFound) {
+		t.Errorf("order after rollback: %v, want ErrNotFound", err)
 	}
-	if events := pendingEvents(t, s); len(events) != 0 {
-		t.Errorf("outbox after rollback = %v, want empty", eventTypes(events))
-	}
-}
-
-func testReserveStockInsufficient(t *testing.T, s orders.Store) {
-	ctx := t.Context()
-	p := createProduct(t, s, "Товар", 500, 2)
-
-	tx, err := s.Begin(ctx)
-	if err != nil {
-		t.Fatalf("Begin: %v", err)
-	}
-	defer tx.Rollback(ctx)
-	if err := tx.ReserveStock(ctx, p.ID, 3); !errors.Is(err, orders.ErrOutOfStock) {
-		t.Fatalf("ReserveStock(3 of 2) error = %v, want ErrOutOfStock", err)
-	}
-	// Ровно весь остаток — можно.
-	if err := tx.ReserveStock(ctx, p.ID, 2); err != nil {
-		t.Fatalf("ReserveStock(2 of 2): %v", err)
-	}
-	if err := tx.ReserveStock(ctx, 999_999, 1); !errors.Is(err, orders.ErrOutOfStock) {
-		t.Fatalf("ReserveStock(missing product) error = %v, want ErrOutOfStock", err)
-	}
-	if err := tx.Commit(ctx); err != nil {
-		t.Fatalf("Commit: %v", err)
-	}
-	if n := available(t, s, p.ID); n != 0 {
-		t.Errorf("available = %d, want 0", n)
+	if n := len(PendingEvents(t, s)); n != 0 {
+		t.Errorf("events after rollback = %d", n)
 	}
 }
 
-func testUpdateOrderStatusConflict(t *testing.T, s orders.Store) {
+func testUpdateOrderStatusConflict(t *testing.T, s Store) {
 	ctx := t.Context()
-	p := createProduct(t, s, "Товар", 500, 10)
-	created, err := newService(s).CreateOrder(ctx, orders.CreateOrderRequest{
-		CustomerID: 1,
-		Items:      []orders.ItemRequest{{ProductID: p.ID, Quantity: 1}},
-	})
-	if err != nil {
-		t.Fatalf("CreateOrder: %v", err)
-	}
-
+	p := createProduct(t, s, "Ручка", 100)
+	o := createOrder(t, newService(s, NewWarehouse()), 7, orders.ItemRequest{ProductID: p.ID, Quantity: 1})
 	tx, err := s.Begin(ctx)
 	if err != nil {
-		t.Fatalf("Begin: %v", err)
+		t.Fatal(err)
 	}
 	defer tx.Rollback(ctx)
-	// Заказ в статусе reserved, а мы утверждаем, что он new.
-	err = tx.UpdateOrderStatus(ctx, created.ID, orders.StatusNew, orders.StatusCancelled, now)
+	err = tx.UpdateOrderStatus(ctx, o.ID, orders.StatusCancelled, orders.StatusReserved, Now)
 	if !errors.Is(err, orders.ErrConflict) {
-		t.Fatalf("UpdateOrderStatus(wrong from) error = %v, want ErrConflict", err)
+		t.Errorf("error = %v, want ErrConflict", err)
 	}
 }
 
-// testConcurrentReservation: много покупателей одновременно заказывают
-// товар, которого на всех не хватит. Проверяем инварианты, а не время:
-// продано ровно столько, сколько было, каждый успешный заказ учтён, каждый
-// неуспешный получил ErrOutOfStock. Позиции в половине заказов перечислены
-// в обратном порядке — без сортировки в сервисе PostgreSQL и MySQL
-// ловили бы взаимоблокировки.
-func testConcurrentReservation(t *testing.T, s orders.Store) {
-	const (
-		buyers = 24
-		stock  = 7
-	)
-	ctx := t.Context()
-	scarce := createProduct(t, s, "Дефицит", 1000, stock)
-	plenty := createProduct(t, s, "В достатке", 10, 1000)
-	svc := newService(s)
-
-	type result struct {
-		order orders.Order
-		err   error
-	}
-	results := make([]result, buyers)
-	start := make(chan struct{})
+func testConcurrentCancel(t *testing.T, s Store) {
+	p := createProduct(t, s, "Ручка", 100)
+	svc := newService(s, NewWarehouse())
+	o := createOrder(t, svc, 7, orders.ItemRequest{ProductID: p.ID, Quantity: 1})
 	var wg sync.WaitGroup
-	for i := range buyers {
-		items := []orders.ItemRequest{{ProductID: scarce.ID, Quantity: 1}, {ProductID: plenty.ID, Quantity: 1}}
-		if i%2 == 1 {
-			items[0], items[1] = items[1], items[0]
-		}
+	for range 8 {
 		wg.Go(func() {
-			<-start // все горутины стартуют разом — максимум конкуренции
-			o, err := svc.CreateOrder(ctx, orders.CreateOrderRequest{CustomerID: int64(i + 1), Items: items})
-			results[i] = result{o, err}
-		})
-	}
-	close(start)
-	wg.Wait()
-
-	var ok []orders.Order
-	for i, r := range results {
-		switch {
-		case r.err == nil:
-			ok = append(ok, r.order)
-		case errors.Is(r.err, orders.ErrOutOfStock):
-		default:
-			t.Errorf("buyer %d: unexpected error: %v", i, r.err)
-		}
-	}
-	if len(ok) != stock {
-		t.Errorf("successful orders = %d, want %d (stock)", len(ok), stock)
-	}
-	if n := available(t, s, scarce.ID); n != 0 {
-		t.Errorf("scarce available = %d, want 0", n)
-	}
-	if n := available(t, s, plenty.ID); n != 1000-len(ok) {
-		t.Errorf("plenty available = %d, want %d", n, 1000-len(ok))
-	}
-	// Каждый успешный заказ действительно в базе, и в outbox по событию на заказ.
-	reserved := 0
-	for _, o := range ok {
-		got, err := s.Order(ctx, o.ID)
-		if err != nil {
-			t.Fatalf("Order(%d): %v", o.ID, err)
-		}
-		for _, it := range got.Items {
-			if it.ProductID == scarce.ID {
-				reserved += it.Quantity
+			if _, err := svc.CancelOrder(t.Context(), o.ID); err != nil {
+				t.Errorf("CancelOrder: %v", err)
 			}
-		}
-	}
-	if reserved != stock {
-		t.Errorf("reserved in stored orders = %d, want %d", reserved, stock)
-	}
-	if events := pendingEvents(t, s); len(events) != len(ok) {
-		t.Errorf("outbox has %d events, want %d", len(events), len(ok))
-	}
-}
-
-// testConcurrentCancel: один заказ отменяют параллельно. Остаток должен
-// вернуться ровно один раз, событие отмены — одно, а все вызовы — успешны
-// (повторная отмена идемпотентна, блокировка строки упорядочивает их).
-func testConcurrentCancel(t *testing.T, s orders.Store) {
-	const cancels = 12
-	ctx := t.Context()
-	p := createProduct(t, s, "Товар", 500, 10)
-	svc := newService(s)
-	created, err := svc.CreateOrder(ctx, orders.CreateOrderRequest{
-		CustomerID: 1,
-		Items:      []orders.ItemRequest{{ProductID: p.ID, Quantity: 6}},
-	})
-	if err != nil {
-		t.Fatalf("CreateOrder: %v", err)
-	}
-
-	errs := make([]error, cancels)
-	start := make(chan struct{})
-	var wg sync.WaitGroup
-	for i := range cancels {
-		wg.Go(func() {
-			<-start
-			_, errs[i] = svc.CancelOrder(ctx, created.ID)
 		})
 	}
-	close(start)
 	wg.Wait()
-
-	for i, err := range errs {
-		if err != nil {
-			t.Errorf("cancel %d: %v", i, err)
-		}
-	}
-	if n := available(t, s, p.ID); n != 10 {
-		t.Errorf("available after concurrent cancels = %d, want 10", n)
-	}
-	events := pendingEvents(t, s)
 	cancelled := 0
-	for _, ev := range events {
+	for _, ev := range PendingEvents(t, s) {
 		if ev.Type == orders.EventOrderCancelled {
 			cancelled++
 		}
 	}
 	if cancelled != 1 {
-		t.Errorf("order.cancelled events = %d, want 1", cancelled)
+		t.Errorf("cancelled events = %d, want exactly 1", cancelled)
+	}
+}
+
+func addEvents(t *testing.T, s Store, n int) []string {
+	t.Helper()
+	ctx := t.Context()
+	tx, err := s.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctx)
+	var ids []string
+	for i := range n {
+		id := "event-" + string(rune('a'+i))
+		ids = append(ids, id)
+		err := tx.AddEvent(ctx, orders.Event{
+			EventID: id, Type: orders.EventOrderCreated, OrderID: int64(i + 1),
+			Payload:      []byte{byte(i)},
+			TraceContext: map[string]string{"traceparent": "00-0102030405060708090a0b0c0d0e0f10-0102030405060708-01"},
+			CreatedAt:    Now.Add(time.Duration(i) * time.Second).Truncate(time.Microsecond),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	return ids
+}
+
+func testPublishPending(t *testing.T, s Store) {
+	ctx := t.Context()
+	want := addEvents(t, s, 3)
+
+	pending, oldest, err := s.PendingStats(ctx)
+	if err != nil || pending != 3 || !oldest.Equal(Now.Truncate(time.Microsecond)) {
+		t.Fatalf("PendingStats = %d, %v, %v; want 3, %v", pending, oldest, err, Now)
+	}
+
+	// Пачками по 2: порядок — порядок записи.
+	var got []string
+	for range 2 {
+		_, err := s.PublishPending(ctx, 2, func(_ context.Context, evs []orders.Event) error {
+			for _, ev := range evs {
+				got = append(got, ev.EventID)
+				if !maps.Equal(ev.TraceContext, map[string]string{"traceparent": "00-0102030405060708090a0b0c0d0e0f10-0102030405060708-01"}) {
+					t.Errorf("trace context = %v", ev.TraceContext)
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("PublishPending: %v", err)
+		}
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("published %v, want %v", got, want)
+	}
+	n, err := s.PublishPending(ctx, 10, func(context.Context, []orders.Event) error {
+		t.Error("publish called with nothing pending")
+		return nil
+	})
+	if err != nil || n != 0 {
+		t.Errorf("PublishPending on empty outbox = %d, %v", n, err)
+	}
+	if pending, oldest, err := s.PendingStats(ctx); err != nil || pending != 0 || !oldest.IsZero() {
+		t.Errorf("PendingStats after publish = %d, %v, %v", pending, oldest, err)
+	}
+}
+
+func testPublishFailureKeepsEvents(t *testing.T, s Store) {
+	ctx := t.Context()
+	addEvents(t, s, 2)
+	errBroker := errors.New("broker down")
+	n, err := s.PublishPending(ctx, 10, func(context.Context, []orders.Event) error { return errBroker })
+	if !errors.Is(err, errBroker) || n != 0 {
+		t.Fatalf("PublishPending = %d, %v; want 0, broker error", n, err)
+	}
+	// Ничего не отмечено: следующий такт отправит те же события.
+	n, err = s.PublishPending(ctx, 10, func(context.Context, []orders.Event) error { return nil })
+	if err != nil || n != 2 {
+		t.Fatalf("retry PublishPending = %d, %v; want 2", n, err)
 	}
 }
 
 func assertOrder(t *testing.T, what string, got, want orders.Order) {
 	t.Helper()
-	// time.Time сравниваем через Equal: у значений из базы может отличаться
-	// внутреннее представление зоны.
 	if got.ID != want.ID || got.CustomerID != want.CustomerID || got.Status != want.Status ||
-		got.TotalCents != want.TotalCents || !got.CreatedAt.Equal(want.CreatedAt) || !got.UpdatedAt.Equal(want.UpdatedAt) ||
+		got.TotalCents != want.TotalCents || !got.CreatedAt.Equal(want.CreatedAt) ||
 		!slices.Equal(got.Items, want.Items) {
-		t.Errorf("%s =\n\t%+v\nwant\n\t%+v", what, got, want)
+		t.Errorf("%s = %+v, want %+v", what, got, want)
 	}
-}
-
-func eventTypes(events []orders.Event) []string {
-	types := make([]string, len(events))
-	for i, ev := range events {
-		types[i] = ev.Type
-	}
-	return types
 }
 
 // CleanupContext — контекст для удаления тестовой базы в t.Cleanup:

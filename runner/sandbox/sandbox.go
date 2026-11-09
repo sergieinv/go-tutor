@@ -51,6 +51,9 @@ type Config struct {
 	VulnDB string
 	// Labs — DSN администраторов баз профиля labs: LabPostgres, LabMySQL.
 	Labs map[string]string
+	// Buf — путь к buf; плагины protoc-gen-* лежат рядом с ним. Пусто —
+	// примеры с .proto не собираются, /api/buf недоступен.
+	Buf string
 }
 
 // DefaultConfig — лимиты из плана: 10 с CPU, 256 МБ, вывод до 64 КБ.
@@ -139,7 +142,7 @@ var depsGoMod string
 //go:embed deps.sum
 var depsGoSum string
 
-var fileName = regexp.MustCompile(`^[A-Za-z0-9_-][A-Za-z0-9_.-]*\.(go|mod|sum|proto|txt|json|sql|yaml)$`)
+var fileName = regexp.MustCompile(`^[A-Za-z0-9_-][A-Za-z0-9_.-]*\.(go|mod|sum|proto|txt|json|sql|yaml|lock)$`)
 
 const (
 	maxFiles     = 32
@@ -184,7 +187,9 @@ type workspace struct {
 // defaultFileLimit — предел размера файла, который может записать программа.
 const defaultFileLimit = 16 << 20
 
-func (e *Executor) newWorkspace(uid int, files Files) (*workspace, error) {
+// newWorkspace создаёт рабочий каталог и, если в файлах есть .proto,
+// генерирует по ним Go-код (*GenerateError — ошибка сборки для ученика).
+func (e *Executor) newWorkspace(ctx context.Context, uid int, files Files) (*workspace, error) {
 	if err := files.Validate(); err != nil {
 		return nil, &InputError{err}
 	}
@@ -213,6 +218,10 @@ func (e *Executor) newWorkspace(uid int, files Files) (*workspace, error) {
 		}
 	}
 	if err := os.Chmod(dir, 0o755); err != nil {
+		ws.remove()
+		return nil, err
+	}
+	if err := e.generate(ctx, ws, files); err != nil {
 		ws.remove()
 		return nil, err
 	}
@@ -281,7 +290,11 @@ func (e *Executor) RunCollect(ctx context.Context, files Files, flags Flags, col
 		return nil, nil, err
 	}
 	defer e.release(uid)
-	ws, err := e.newWorkspace(uid, files)
+	ws, err := e.newWorkspace(ctx, uid, files)
+	var genErr *GenerateError
+	if errors.As(err, &genErr) {
+		return &RunResult{BuildFailed: true, BuildOutput: genErr.Output}, nil, nil
+	}
 	if err != nil {
 		return nil, nil, err
 	}
@@ -338,7 +351,11 @@ func (e *Executor) Build(ctx context.Context, files Files, flags Flags) (ok bool
 		return false, "", err
 	}
 	defer e.release(uid)
-	ws, err := e.newWorkspace(uid, files)
+	ws, err := e.newWorkspace(ctx, uid, files)
+	var genErr *GenerateError
+	if errors.As(err, &genErr) {
+		return false, genErr.Output, nil
+	}
 	if err != nil {
 		return false, "", err
 	}

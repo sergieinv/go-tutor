@@ -13,8 +13,10 @@
 //	RUNNER_UID_BASE первый uid слотов, по умолчанию 20000
 //	RUNNER_GOVULNCHECK путь к govulncheck; пусто — ищется в PATH, нет — /api/vulncheck выключен
 //	RUNNER_VULNDB   база уязвимостей для govulncheck -db, например file:///opt/vulndb
+//	RUNNER_BUF      путь к buf (плагины protoc-gen-* рядом); пусто — ищется в PATH, нет — примеры с .proto не собираются
 //	RUNNER_LAB_POSTGRES DSN администратора PostgreSQL профиля labs (runner.labs: [postgres])
 //	RUNNER_LAB_MYSQL    DSN администратора MySQL профиля labs (runner.labs: [mysql])
+//	RUNNER_LAB_KAFKA    брокеры Kafka профиля labs через запятую (runner.labs: [kafka])
 package main
 
 import (
@@ -82,8 +84,12 @@ func serve(log *slog.Logger) error {
 		cfg.Govulncheck, _ = osexec.LookPath("govulncheck")
 	}
 	cfg.VulnDB = os.Getenv("RUNNER_VULNDB")
+	cfg.Buf = os.Getenv("RUNNER_BUF")
+	if cfg.Buf == "" {
+		cfg.Buf, _ = osexec.LookPath("buf")
+	}
 	cfg.Labs = map[string]string{}
-	for name, key := range map[string]string{sandbox.LabPostgres: "RUNNER_LAB_POSTGRES", sandbox.LabMySQL: "RUNNER_LAB_MYSQL"} {
+	for name, key := range map[string]string{sandbox.LabPostgres: "RUNNER_LAB_POSTGRES", sandbox.LabMySQL: "RUNNER_LAB_MYSQL", sandbox.LabKafka: "RUNNER_LAB_KAFKA"} {
 		if dsn := os.Getenv(key); dsn != "" {
 			cfg.Labs[name] = dsn
 		}

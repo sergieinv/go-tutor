@@ -1,0 +1,10 @@
+сервис lesson, версия dev
+старт:                 startupz=503 (starting)  livez=200  readyz=503 (starting)
+готов:                 startupz=200  livez=200  readyz=200
+база недоступна:       startupz=200  livez=200  readyz=503 (not ready: db)
+база вернулась:        startupz=200  livez=200  readyz=200
+получен SIGTERM
+draining:              startupz=200  livez=200  readyz=503 (draining)
+активный запрос: created
+Shutdown: <nil>
+зависимости закрыты, выход с кодом 0

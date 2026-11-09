@@ -1,0 +1,13 @@
+# Генерация Go-кода для примеров: сообщения, gRPC и grpc-gateway рядом
+# с .proto. Пакет Go задаёт сам .proto: option go_package = "lesson/proto;main".
+version: v2
+plugins:
+  - local: protoc-gen-go
+    out: .
+    opt: paths=source_relative
+  - local: protoc-gen-go-grpc
+    out: .
+    opt: paths=source_relative
+  - local: protoc-gen-grpc-gateway
+    out: .
+    opt: paths=source_relative

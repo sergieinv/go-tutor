@@ -1,0 +1,95 @@
+questions:
+  - id: int64-json
+    kind: output
+    prompt: "Что выведет программа? `json.Compact` убирает пробелы, которые protojson расставляет случайно."
+    code: |
+      package main
+
+      import (
+      	"bytes"
+      	"encoding/json"
+      	"fmt"
+
+      	"google.golang.org/protobuf/encoding/protojson"
+      	"google.golang.org/protobuf/proto"
+      	"google.golang.org/protobuf/types/known/wrapperspb"
+      )
+
+      func main() {
+      	for _, m := range []proto.Message{wrapperspb.Int64(1500), wrapperspb.Int32(7), wrapperspb.UInt64(9)} {
+      		b, _ := protojson.Marshal(m)
+      		var out bytes.Buffer
+      		json.Compact(&out, b)
+      		fmt.Print(out.String(), " ")
+      	}
+      	fmt.Println()
+      }
+    options:
+      - text: '"1500" 7 "9" '
+        correct: true
+        explain: "По правилам proto3 JSON 64-битные целые (`int64`, `uint64`, `fixed64`…) пишутся строкой: в JavaScript числа — `double`, и целые больше 2^53 теряют точность. 32-битные — обычные числа. На входе gateway принимает и строку, и число."
+      - text: "1500 7 9 "
+        explain: "Так вывел бы `encoding/json` для `int64`. protojson следует спецификации proto3 JSON: 64-битные целые — строки."
+      - text: '"1500" "7" "9" '
+        explain: "Строкой пишутся только 64-битные типы, `int32` остаётся числом."
+      - text: '{"value":"1500"} {"value":7} {"value":"9"} '
+        explain: "Обёртки (`wrappers`) — well-known types с особым JSON-видом: значение без объекта вокруг."
+
+  - id: http-codes
+    kind: output
+    prompt: "Что выведет программа?"
+    code: |
+      package main
+
+      import (
+      	"fmt"
+
+      	"github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
+      	"google.golang.org/grpc/codes"
+      )
+
+      func main() {
+      	for _, c := range []codes.Code{codes.FailedPrecondition, codes.Canceled, codes.Unimplemented, codes.Aborted} {
+      		fmt.Print(runtime.HTTPStatusFromCode(c), " ")
+      	}
+      	fmt.Println()
+      }
+    options:
+      - text: "400 499 501 409 "
+        correct: true
+        explain: "`FailedPrecondition` — намеренно 400, а не 412. `Canceled` — нестандартный 499 (клиент закрыл запрос, как у nginx). `Unimplemented` — 501, `Aborted` — 409 Conflict."
+      - text: "412 499 501 409 "
+        explain: "В исходниках gateway есть комментарий: `FailedPrecondition` намеренно не переводится в похожий по названию 412 Precondition Failed. Это 400."
+      - text: "400 408 405 409 "
+        explain: "Отмена клиентом — 499, не 408 Request Timeout. `Unimplemented` — 501 Not Implemented. Даже «не тот HTTP-метод» стандартный обработчик gateway отдаёт как 501."
+      - text: "400 500 501 500 "
+        explain: "У каждого кода gRPC своё соответствие, 500 — только у `Unknown`, `Internal` и `DataLoss`."
+
+  - id: handler-server
+    kind: single
+    prompt: "Gateway зарегистрирован через `RegisterOrderServiceHandlerServer(ctx, mux, srv)`, а auth и recovery — interceptors gRPC-сервера. Что происходит с REST-запросами?"
+    options:
+      - text: "Они идут мимо interceptors: gateway вызывает методы `srv` напрямую, без gRPC-сервера"
+        correct: true
+        explain: "`…HandlerServer` — вызов Go-методов в том же процессе: ни транспорта, ни цепочки interceptors. Auth и recovery придётся повторить HTTP-middleware или использовать `…HandlerFromEndpoint`, тогда gateway ходит в gRPC как обычный клиент. Стримовые методы `…HandlerServer` к тому же не поддерживает."
+      - text: "Interceptors срабатывают как обычно: gateway регистрирует себя в цепочке"
+        explain: "Цепочку выполняет `grpc.Server` при обработке настоящего вызова. В режиме `…HandlerServer` сервер не участвует."
+      - text: "Gateway вернёт ошибку при регистрации, если у сервера есть interceptors"
+        explain: "Gateway ничего не знает об interceptors: он получает только реализацию интерфейса сервиса."
+      - text: "Срабатывают только stream-interceptors"
+        explain: "Никакие: в этом режиме нет ни unary-, ни stream-цепочки."
+
+  - id: bindings
+    kind: multiple
+    prompt: "В контракте: `get: \"/v1/orders\"` и `additional_bindings {get: \"/v1/customers/{customer_id}/orders\"}` для `ListOrders(ListOrdersRequest)`, где есть поля `customer_id` и `status`. Что верно?"
+    options:
+      - text: "`GET /v1/customers/c1/orders?status=ORDER_STATUS_PAID` заполнит оба поля: `customer_id` из пути, `status` из query"
+        correct: true
+        explain: "Поля, которых нет в шаблоне пути и в `body`, gateway берёт из query. Enum в query можно передать по имени."
+      - text: "`GET /v1/orders?customer_id=c1` даст обработчику тот же запрос, что и `/v1/customers/c1/orders`"
+        correct: true
+        explain: "Оба маршрута заполняют одно и то же поле сообщения. Обработчик не знает, какой маршрут сработал."
+      - text: "Для второго маршрута нужен отдельный gRPC-метод"
+        explain: "`additional_bindings` и нужны, чтобы повесить несколько HTTP-маршрутов на один метод."
+      - text: "У GET-маршрута можно указать `body: \"*\"`, чтобы фильтры шли в теле"
+        explain: "Для GET тело запрещено: `protoc-gen-grpc-gateway` откажется генерировать такой маршрут. Тело бывает у POST, PUT и PATCH (и у DELETE с опцией `allow_delete_body`)."

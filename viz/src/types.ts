@@ -78,7 +78,7 @@ export interface LiveSpec {
    * select — операторы select по трассе; goroutines — стадии и передачи между
    * горутинами, утечки (pipeline, fan-in/out); race — отчёт детектора гонок.
    */
-  builder: "select" | "goroutines" | "race";
+  builder: "select" | "goroutines" | "race" | "spans";
   /** Программа относительно папки урока; её проверяет lessonlint. */
   file: string;
   /** Варианты GOMAXPROCS в интерфейсе; пусто — без выбора. */

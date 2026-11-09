@@ -1,0 +1,33 @@
+syntax = "proto3";
+
+// Два сервиса цепочки gateway → orders → warehouse. Gateway — HTTP,
+// поэтому в контракте только orders и warehouse.
+package chain.v1;
+
+option go_package = "lesson/proto;main";
+
+service OrderService {
+  rpc CreateOrder(CreateOrderRequest) returns (CreateOrderResponse);
+}
+
+service WarehouseService {
+  rpc Reserve(ReserveRequest) returns (ReserveResponse);
+}
+
+message CreateOrderRequest {
+  string sku = 1;
+  int32 quantity = 2;
+}
+
+message CreateOrderResponse {
+  string order_id = 1;
+}
+
+message ReserveRequest {
+  string sku = 1;
+  int32 quantity = 2;
+}
+
+message ReserveResponse {
+  string reservation_id = 1;
+}

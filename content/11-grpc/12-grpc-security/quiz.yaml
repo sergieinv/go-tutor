@@ -1,0 +1,104 @@
+questions:
+  - id: require-transport-security
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"context"
+      	"fmt"
+
+      	"google.golang.org/grpc"
+      	"google.golang.org/grpc/credentials/insecure"
+      )
+
+      type token struct {
+      	value  string
+      	secure bool
+      }
+
+      func (t token) GetRequestMetadata(context.Context, ...string) (map[string]string, error) {
+      	return map[string]string{"authorization": "Bearer " + t.value}, nil
+      }
+
+      func (t token) RequireTransportSecurity() bool { return t.secure }
+
+      func main() {
+      	for _, secure := range []bool{true, false} {
+      		conn, err := grpc.NewClient("127.0.0.1:50051",
+      			grpc.WithTransportCredentials(insecure.NewCredentials()),
+      			grpc.WithPerRPCCredentials(token{value: "s3cr3t", secure: secure}))
+      		fmt.Println(secure, err != nil)
+      		if conn != nil {
+      			conn.Close()
+      		}
+      	}
+      }
+    options:
+      - text: "true true\nfalse false"
+        correct: true
+        explain: "`NewClient` сверяет настройки сразу: учётные данные с `RequireTransportSecurity() == true` и `insecure`-канал несовместимы — ошибка «the credentials require transport level security». Если честно вернуть `false`, клиент соберётся и будет слать токен открытым текстом: поэтому у своих `PerRPCCredentials` этот метод возвращает `true`."
+      - text: "true false\nfalse false"
+        explain: "Подключение ленивое, но проверку учётных данных `NewClient` делает сразу, до первого вызова."
+      - text: "false false\ntrue false"
+        explain: "Первая строка печатается для `secure = true` — порядок задан срезом `[]bool{true, false}`."
+      - text: "true true\nfalse true"
+        explain: "С `RequireTransportSecurity() == false` grpc-go не возражает против `insecure`: токен уйдёт по каналу без шифрования."
+
+  - id: duplicate-metadata
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+
+      	"google.golang.org/grpc/metadata"
+      )
+
+      func main() {
+      	md := metadata.Pairs("Authorization", "Bearer forged")
+      	md.Append("authorization", "Bearer real")
+      	v := md.Get("AUTHORIZATION")
+      	fmt.Println(len(v), v[0])
+      }
+    options:
+      - text: "2 Bearer forged"
+        correct: true
+        explain: "Ключи metadata приводятся к нижнему регистру, и у одного ключа может быть несколько значений — как у HTTP/2-заголовка. Interceptor, который берёт `v[0]` или ищет «хоть одно подходящее», можно обмануть вторым значением. Надёжнее требовать ровно одно."
+      - text: "1 Bearer real"
+        explain: "`Append` не заменяет значение, а добавляет ещё одно."
+      - text: "1 Bearer forged"
+        explain: "`Authorization` и `authorization` — один ключ: `Pairs` и `Append` приводят его к нижнему регистру, значений становится два."
+      - text: "0, затем паника на v[0]"
+        explain: "`Get` тоже приводит ключ к нижнему регистру, поэтому `AUTHORIZATION` находит оба значения."
+
+  - id: require-any
+    kind: single
+    prompt: "Сервер настроен с `ClientAuth: tls.RequireAnyClientCert`, а interceptor берёт имя сервиса из `TLSInfo.State.PeerCertificates[0].Subject.CommonName`. Что это значит?"
+    options:
+      - text: "Любой клиент может выпустить себе сертификат с CN `billing` и выдать себя за billing"
+        correct: true
+        explain: "`RequireAnyClientCert` требует сертификат, но не проверяет цепочку: подойдёт самоподписанный. `PeerCertificates` — то, что клиент заявил, `VerifiedChains` — то, что подтвердил ваш CA. Нужны `RequireAndVerifyClientCert` с `ClientCAs` и имя из `VerifiedChains[0][0]`."
+      - text: "Всё в порядке: без сертификата клиент не подключится"
+        explain: "Без сертификата — не подключится, но с любым самодельным — подключится."
+      - text: "Рукопожатие сорвётся у всех клиентов, потому что не задан `ClientCAs`"
+        explain: "Для `RequireAnyClientCert` `ClientCAs` не нужен — в этом и проблема: проверять не по чему."
+      - text: "grpc-go сам проверит сертификат клиента по системным корням"
+        explain: "Проверкой клиентских сертификатов управляет только `tls.Config.ClientAuth`; grpc-go поверх ничего не проверяет."
+
+  - id: unauth-vs-denied
+    kind: single
+    prompt: "Клиент прошёл mTLS, его токен действителен, но роли `admin`, нужной для `CancelOrder`, у токена нет. Какой код вернуть?"
+    options:
+      - text: "`codes.PermissionDenied` — мы знаем, кто это, но ему нельзя"
+        correct: true
+        explain: "`Unauthenticated` — «не знаю, кто вы» (нет или неверны учётные данные, gateway переведёт в HTTP 401), `PermissionDenied` — «знаю, но нельзя» (403). Клиент по коду понимает, что делать: обновить токен или запросить права."
+      - text: "`codes.Unauthenticated` — так атакующий узнает меньше"
+        explain: "Подмена кодов мешает своим клиентам и мониторингу. Скрывают детали в тексте ошибки, а не смысл кода."
+      - text: "`codes.NotFound` — чтобы не раскрывать, что метод существует"
+        explain: "Так иногда скрывают существование ресурса (чужой заказ), но метод сервиса и так известен из контракта."
+      - text: "`codes.FailedPrecondition`"
+        explain: "Этот код — про состояние системы (заказ уже отменён), а не про права вызывающего."

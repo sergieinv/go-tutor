@@ -1,0 +1,103 @@
+questions:
+  - id: plain-error
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"errors"
+      	"fmt"
+
+      	"google.golang.org/grpc/status"
+      )
+
+      func main() {
+      	boom := errors.New("pq: connection refused at 10.0.3.7")
+      	fmt.Println(status.Code(nil))
+      	fmt.Println(status.Code(boom))
+      	fmt.Println(status.Convert(boom).Message())
+      }
+    options:
+      - text: "OK\nUnknown\npq: connection refused at 10.0.3.7"
+        correct: true
+        explain: "`nil` — это успех, код `OK`. Обычная ошибка без статуса превращается в `Unknown` с текстом ошибки в сообщении — ровно так её увидит клиент, если обработчик вернёт её как есть. Отсюда правило: наружу — только статусы, собранные вами, а сырой текст — в лог."
+      - text: "OK\nInternal\ninternal error"
+        explain: "gRPC не прячет текст за вас: для ошибки без статуса используется `Unknown`, а сообщение — `err.Error()` целиком, с адресом базы."
+      - text: "Unknown\nUnknown\npq: connection refused at 10.0.3.7"
+        explain: "`status.Code(nil)` — `OK`: отсутствие ошибки и есть успешный статус."
+      - text: "OK\nUnknown\n"
+        explain: "Сообщение не пустое: `status.Convert` кладёт в него текст исходной ошибки."
+
+  - id: with-details-returns-new
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+
+      	"google.golang.org/genproto/googleapis/rpc/errdetails"
+      	"google.golang.org/grpc/codes"
+      	"google.golang.org/grpc/status"
+      )
+
+      func main() {
+      	st := status.New(codes.NotFound, "order not found")
+      	st.WithDetails(&errdetails.ErrorInfo{Reason: "ORDER_NOT_FOUND"})
+      	fmt.Println(len(st.Details()))
+      }
+    options:
+      - text: "0"
+        correct: true
+        explain: "`WithDetails` не меняет статус, а возвращает новый — и ошибку. Результат здесь выброшен, поэтому у `st` деталей нет. Правильно: `st, err = st.WithDetails(...)`, а при ошибке отдать статус без деталей."
+      - text: "1"
+        explain: "Было бы так, если бы `WithDetails` менял получатель. Он работает как `append`: результат нужно присвоить."
+      - text: Не скомпилируется — результат WithDetails не использован
+        explain: "Go не требует использовать результаты вызова (кроме выражений без вызова). Это ловит линтер (`errcheck`), а не компилятор."
+      - text: "Паника: детали нельзя добавить к NotFound"
+        explain: "Детали можно добавить к любому коду, кроме `OK` — тогда `WithDetails` вернёт ошибку, а не панику."
+
+  - id: wrapped-status
+    kind: output
+    prompt: Ошибку вызова обернули с контекстом. Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+
+      	"google.golang.org/grpc/codes"
+      	"google.golang.org/grpc/status"
+      )
+
+      func main() {
+      	err := fmt.Errorf("get order: %w", status.Error(codes.NotFound, "no order"))
+      	fmt.Println(status.Code(err))
+      	fmt.Println(status.Convert(err).Message())
+      }
+    options:
+      - text: "NotFound\nget order: rpc error: code = NotFound desc = no order"
+        correct: true
+        explain: "`status.FromError` (а через него `Code` и `Convert`) ищет статус по цепочке `Unwrap`, поэтому код сохраняется. Но сообщение — текст всей обёрнутой ошибки: обёртка видна. Если такую ошибку вернуть из обработчика, клиент получит и ваш префикс."
+      - text: "Unknown\nget order: rpc error: code = NotFound desc = no order"
+        explain: "Так было в старых версиях grpc-go. Сейчас `FromError` разворачивает обёртки `%w`."
+      - text: "NotFound\nno order"
+        explain: "Код находится в обёрнутой ошибке, а сообщение берётся из внешней — с префиксом `get order:`."
+      - text: "Internal\nget order: rpc error: code = NotFound desc = no order"
+        explain: "`Internal` gRPC сам не подставляет; для ошибки без статуса он использует `Unknown`, а здесь статус найден."
+
+  - id: pick-code
+    kind: single
+    prompt: "Клиент оплачивает заказ, который уже отменён. Запрос корректен, заказ существует. Какой код вернуть?"
+    options:
+      - text: FailedPrecondition
+        correct: true
+        explain: "Состояние системы не позволяет операцию, и повтор без изменения состояния ничего не даст. Деталь `PreconditionFailure` подскажет, какое условие нарушено. Через grpc-gateway это HTTP 400."
+      - text: InvalidArgument
+        explain: "`InvalidArgument` — запрос плох сам по себе, независимо от состояния (пустое поле, отрицательное количество). Здесь тот же запрос прошёл бы для неотменённого заказа."
+      - text: Aborted
+        explain: "`Aborted` — конфликт конкурентных операций (оптимистичная блокировка, конфликт транзакций): перечитайте и повторите. Отменённый заказ от повтора оплачиваемым не станет."
+      - text: NotFound
+        explain: "Заказ существует. `NotFound` заставил бы клиента думать, что id неверный."

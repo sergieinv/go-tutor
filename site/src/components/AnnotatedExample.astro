@@ -10,10 +10,12 @@ interface Props {
   output: string;
   tests?: Record<string, string>;
   mod?: string;
+  /** Контракты .proto — сначала они, затем код, который их реализует. */
+  protos?: Record<string, string>;
 }
-const { source, output, tests = {}, mod } = Astro.props;
+const { source, output, tests = {}, mod, protos = {} } = Astro.props;
 const testMode = Object.keys(tests).length > 0;
-const all: Record<string, string> = { "main.go": source, ...tests, ...(mod ? { "go.mod": mod } : {}) };
+const all: Record<string, string> = { ...protos, "main.go": source, ...tests, ...(mod ? { "go.mod": mod } : {}) };
 const multi = Object.keys(all).length > 1;
 const files = await Promise.all(
   Object.entries(all).map(async ([name, src]) => ({
@@ -21,7 +23,7 @@ const files = await Promise.all(
     rows: await Promise.all(
       segments(src).map(async (s) => ({
         doc: s.doc.map(inlineMarkdown),
-        code: s.code ? await highlight(s.code, "go") : "",
+        code: s.code ? await highlight(s.code, name.endsWith(".proto") ? "proto" : "go") : "",
       })),
     ),
   })),

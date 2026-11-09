@@ -1,0 +1,124 @@
+questions:
+  - id: lazy-client
+    kind: output
+    prompt: "Что выведет программа? На порту 1 никто не слушает."
+    code: |
+      package main
+
+      import (
+      	"fmt"
+
+      	"google.golang.org/grpc"
+      	"google.golang.org/grpc/credentials/insecure"
+      )
+
+      func main() {
+      	conn, err := grpc.NewClient("127.0.0.1:1",
+      		grpc.WithTransportCredentials(insecure.NewCredentials()))
+      	fmt.Println(err, conn.GetState())
+      	conn.Close()
+      	fmt.Println(conn.GetState())
+      }
+    options:
+      - text: "<nil> IDLE\nSHUTDOWN"
+        correct: true
+        explain: "`NewClient` только разбирает адрес и настройки — сеть не трогает. Канал остаётся `IDLE` до первого вызова или `Connect()`, а ошибка подключения проявится в вызове как `Unavailable`. Это отличие от устаревшего `grpc.Dial(..., grpc.WithBlock())`, который ждал соединения."
+      - text: "connection refused TRANSIENT_FAILURE\nSHUTDOWN"
+        explain: "Так было бы, если бы `NewClient` подключался сразу. Он ленивый."
+      - text: "<nil> CONNECTING\nSHUTDOWN"
+        explain: "В `CONNECTING` канал переходит только после `Connect()` или первого вызова."
+      - text: "<nil> IDLE\nIDLE"
+        explain: "`Close` переводит канал в `SHUTDOWN` навсегда: закрытый `ClientConn` заново не открыть."
+
+  - id: max-attempts-cap
+    kind: output
+    prompt: Сколько попыток увидит сервер?
+    code: |
+      package main
+
+      import (
+      	"context"
+      	"fmt"
+      	"net"
+      	"sync/atomic"
+
+      	"google.golang.org/grpc"
+      	"google.golang.org/grpc/codes"
+      	"google.golang.org/grpc/credentials/insecure"
+      	healthpb "google.golang.org/grpc/health/grpc_health_v1"
+      	"google.golang.org/grpc/status"
+      )
+
+      type down struct {
+      	healthpb.UnimplementedHealthServer
+      	n atomic.Int32
+      }
+
+      func (d *down) Check(context.Context, *healthpb.HealthCheckRequest) (*healthpb.HealthCheckResponse, error) {
+      	d.n.Add(1)
+      	return nil, status.Error(codes.Unavailable, "down")
+      }
+
+      const cfg = `{"methodConfig": [{
+        "name": [{"service": "grpc.health.v1.Health"}],
+        "retryPolicy": {"maxAttempts": 10, "initialBackoff": "0.001s",
+          "maxBackoff": "0.01s", "backoffMultiplier": 2,
+          "retryableStatusCodes": ["UNAVAILABLE"]}}]}`
+
+      func main() {
+      	lis, _ := net.Listen("tcp", "127.0.0.1:0")
+      	srv := grpc.NewServer()
+      	d := &down{}
+      	healthpb.RegisterHealthServer(srv, d)
+      	go srv.Serve(lis)
+      	defer srv.Stop()
+
+      	conn, _ := grpc.NewClient(lis.Addr().String(),
+      		grpc.WithTransportCredentials(insecure.NewCredentials()),
+      		grpc.WithDefaultServiceConfig(cfg))
+      	defer conn.Close()
+      	_, err := healthpb.NewHealthClient(conn).Check(context.Background(), &healthpb.HealthCheckRequest{})
+      	fmt.Println(status.Code(err), d.n.Load())
+      }
+    options:
+      - text: "Unavailable 5"
+        correct: true
+        explain: "grpc-go режет `maxAttempts` до 5 (меняется опцией клиента `grpc.WithMaxCallAttempts`): service config может прийти из DNS, и клиент не должен верить ему на слово. После пятой неудачи вызов возвращает последнюю ошибку."
+      - text: "Unavailable 10"
+        explain: "Значение из service config — запрос, а не закон: верхнюю границу задаёт клиент, по умолчанию 5."
+      - text: "Unavailable 1"
+        explain: "Политика повторов применяется: имя сервиса в `name` совпадает, код `UNAVAILABLE` в списке."
+      - text: "OK 10"
+        explain: "Сервер всегда отвечает `Unavailable`, успешной попытки не будет."
+
+  - id: k8s-clusterip
+    kind: single
+    prompt: "Клиент подключается к `orders:50051` — обычному Service типа ClusterIP в Kubernetes, за которым 3 пода. Как распределится нагрузка?"
+    options:
+      - text: "Почти вся пойдёт в один под: одно HTTP/2-соединение к виртуальному IP, kube-proxy балансирует соединения, а не запросы"
+        correct: true
+        explain: "Балансировщик по умолчанию — `pick_first`, адрес у Service один. Все вызовы мультиплексируются в одно долгоживущее соединение к одному поду. Лечится headless Service (`clusterIP: None`) + `dns:///orders:50051` + `round_robin`, либо L7-прокси (Envoy, service mesh)."
+      - text: "Поровну: kube-proxy раскидывает каждый запрос по подам"
+        explain: "kube-proxy работает на L4 и выбирает под при установке TCP-соединения. gRPC-запросы внутри одного соединения он не видит."
+      - text: "Поровну: grpc-go по умолчанию использует round_robin"
+        explain: "По умолчанию — `pick_first`; `round_robin` включают в service config."
+      - text: "Клиент не подключится: gRPC не работает через ClusterIP"
+        explain: "Работает, просто без балансировки по запросам."
+
+  - id: retry-limits
+    kind: multiple
+    prompt: "В `retryableStatusCodes` есть `UNAVAILABLE`, попытки не исчерпаны. В каких случаях встроенные повторы grpc-go всё равно не повторят вызов?"
+    options:
+      - text: "Сервер уже отправил заголовки ответа или первое сообщение, а потом вернул `Unavailable`"
+        correct: true
+        explain: "После того как ответ начался, вызов «зафиксирован» (committed): повтор мог бы выдать приложению второй поток ответа. Повторяются только ответы без тела — когда сервер сразу вернул статус в трейлерах."
+      - text: "Запрос клиентского стрима уже передал больше 256 КиБ"
+        correct: true
+        explain: "Для повтора канал хранит отправленные сообщения в буфере (по умолчанию 256 КиБ на вызов, `grpc.MaxRetryRPCBufferSize`). Переполнился — вызов фиксируется, повторы для него выключаются."
+      - text: "Метод не идемпотентен"
+        explain: "grpc-go об идемпотентности ничего не знает — это ваша ответственность: не включайте повторы для методов, которые нельзя выполнить дважды, или делайте их идемпотентными (ключ идемпотентности)."
+      - text: "Клиент создан с `grpc.WithDisableRetry()`"
+        correct: true
+        explain: "Опция выключает повторы по service config целиком. Её ставят, например, когда повторяет свой interceptor — иначе число попыток перемножится."
+      - text: "У вызова есть дедлайн"
+        explain: "Дедлайн не запрещает повторы, он ограничивает их общее время: все попытки укладываются в один дедлайн вызова."

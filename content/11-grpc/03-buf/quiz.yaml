@@ -1,0 +1,90 @@
+questions:
+  - id: enum-value-scope
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+
+      	"google.golang.org/protobuf/types/known/structpb"
+      )
+
+      func main() {
+      	e := structpb.NullValue_NULL_VALUE.Descriptor()
+      	fmt.Println(e.FullName(), e.Values().Get(0).FullName())
+      }
+    options:
+      - text: google.protobuf.NullValue google.protobuf.NULL_VALUE
+        correct: true
+        explain: "Значения enum в protobuf живут не внутри enum, а рядом с ним — в той же области видимости (как в C++). Поэтому два enum одного пакета не могут оба иметь значение `UNKNOWN`, и buf требует префикс с именем типа (`ENUM_VALUE_PREFIX`)."
+      - text: google.protobuf.NullValue google.protobuf.NullValue.NULL_VALUE
+        explain: "Так выглядело бы имя в C#, где значения вложены в enum. В protobuf значение — сосед enum, его полное имя не содержит имени типа."
+      - text: NullValue NULL_VALUE
+        explain: "`FullName()` возвращает полное имя с пакетом; короткое — у `Name()`."
+
+  - id: health-names
+    kind: output
+    prompt: "Что выведет программа? (стандартный сервис health checking из grpc-go)"
+    code: |
+      package main
+
+      import (
+      	"fmt"
+
+      	healthpb "google.golang.org/grpc/health/grpc_health_v1"
+      )
+
+      func main() {
+      	m := healthpb.File_grpc_health_v1_health_proto.Services().Get(0).Methods().ByName("Check")
+      	fmt.Println(healthpb.Health_Check_FullMethodName, m.Input().Name())
+      }
+    options:
+      - text: /grpc.health.v1.Health/Check HealthCheckRequest
+        correct: true
+        explain: "Полное имя метода — `/<пакет>.<сервис>/<метод>`, его gRPC передаёт в `:path`. Запрос называется `HealthCheckRequest` = сервис + метод + `Request`: buf допускает и такую форму `RPC_REQUEST_STANDARD_NAME`, и `CheckRequest`."
+      - text: grpc.health.v1.Health.Check CheckRequest
+        explain: "Это полное имя дескриптора метода (`FullName()`), а константа `..._FullMethodName` — путь для gRPC: со слешами. И запрос в этом контракте называется `HealthCheckRequest`."
+      - text: /Health/Check HealthCheckRequest
+        explain: "Путь включает пакет proto: два сервиса `Health` из разных пакетов не должны конфликтовать."
+
+  - id: wire-vs-file
+    kind: multiple
+    prompt: "Какие изменения `buf breaking` отвергнет в категории FILE, но пропустит в категории WIRE? (несколько вариантов)"
+    options:
+      - text: Переименовать поле, номер и тип оставить
+        correct: true
+        explain: "По проводу идёт номер, поэтому WIRE переименование пропускает. FILE отвергает (`FIELD_SAME_NAME`): сгенерированный код клиентов перестанет собираться, а в JSON поменяется имя."
+      - text: "Сменить тип поля с `int64` на `int32`"
+        correct: true
+        explain: "Оба — varint, WIRE считает их совместимыми (большие значения усекутся — это уже ваша ответственность). FILE требует тот же тип (`FIELD_SAME_TYPE`)."
+      - text: "Удалить поле, зарезервировав номер и имя"
+        correct: true
+        explain: "Для провода это безопасно, и WIRE пропускает. FILE отвергает любое удаление поля (`FIELD_NO_DELETE`): код, обращавшийся к полю, не соберётся. Поэтому поле сначала помечают `deprecated`."
+      - text: "Сменить тип поля с `int64` на `string`"
+        explain: "Это ломает и провод: varint против «длина + байты». Отвергнут все категории, включая WIRE (`FIELD_WIRE_COMPATIBLE_TYPE`)."
+
+  - id: sandbox-buf-gen
+    kind: single
+    prompt: "Почему в песочнице свой `buf.gen.yaml` примера игнорируется, а `buf.yaml` — нет?"
+    options:
+      - text: "Плагины из `buf.gen.yaml` — программы, которые buf запускает от имени runner; свой список плагинов означал бы выполнение произвольной программы вне песочницы Go"
+        correct: true
+        explain: "`buf.yaml` с правилами lint и breaking ничего не запускает, поэтому его разрешено менять (но только `version`, `deps`, `lint`, `breaking`). А генерация вызывает внешние программы — их набор фиксирует runner. К тому же без сети доступны только зависимости из кеша образа."
+      - text: "`buf.gen.yaml` устарел в buf v2, вместо него плагины перечисляют в `buf.yaml`"
+        explain: "В v2 `buf.gen.yaml` никуда не делся. Плагины проверок (не генерации) действительно можно указать в `buf.yaml` — и как раз поэтому песочница пропускает в нём только правила lint и breaking."
+      - text: Генерация в песочнице выполняется protoc, а не buf
+        explain: "Генерацию выполняет `buf generate`, как и в обычном проекте; конфигурацию для неё runner кладёт свою."
+
+  - id: shared-request
+    kind: single
+    prompt: "Методы `GetOrder` и `CancelOrder` оба принимают `OrderRef { int64 id = 1; }`. Почему STANDARD против?"
+    options:
+      - text: "Запросы методов будут меняться по-разному: поле, нужное одному методу, появится во всех, а разделить сообщения потом — ломающее изменение"
+        correct: true
+        explain: "Отдельные `GetOrderRequest` и `CancelOrderRequest` ничего не стоят сегодня и позволяют развивать методы независимо. buf ловит общий тип правилами `RPC_REQUEST_STANDARD_NAME` и `RPC_REQUEST_RESPONSE_UNIQUE`."
+      - text: "gRPC не позволяет двум методам принимать один тип сообщения"
+        explain: "Позволяет: тип запроса — просто сообщение. Это правило стиля ради эволюции, а не ограничение протокола."
+      - text: "Сгенерированный Go-код с общим типом не скомпилируется"
+        explain: "Скомпилируется: в интерфейсе сервера оба метода просто примут `*OrderRef`."

@@ -1,0 +1,71 @@
+// Контракт задачи: правила валидации каталога товаров.
+syntax = "proto3";
+
+package shop.task.v1;
+
+import "buf/validate/validate.proto";
+
+option go_package = "lesson/proto;task";
+
+// CatalogService — каталог товаров.
+service CatalogService {
+  // AddProduct добавляет товар.
+  rpc AddProduct(AddProductRequest) returns (AddProductResponse);
+  // Rename переименовывает товар.
+  rpc Rename(RenameRequest) returns (RenameResponse);
+  // Audit — метод с ошибкой в правиле: CEL ссылается на несуществующее поле.
+  rpc Audit(AuditRequest) returns (AuditResponse);
+}
+
+// AddProductRequest — новый товар.
+message AddProductRequest {
+  option (buf.validate.message).cel = {
+    id: "product.sale_below_price"
+    message: "sale price must be below price"
+    expression: "this.sale_price_cents == 0 || this.sale_price_cents < this.price_cents"
+  };
+
+  string sku = 1 [(buf.validate.field).string.pattern = "^[A-Z0-9-]{3,20}$"];
+  string title = 2 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 100
+  }];
+  int64 price_cents = 3 [(buf.validate.field).int64.gt = 0];
+  int64 sale_price_cents = 4 [(buf.validate.field).int64.gte = 0];
+  repeated string tags = 5 [(buf.validate.field).repeated = {
+    max_items: 5
+    items: {
+      string: {min_len: 1}
+    }
+  }];
+}
+
+// AddProductResponse — созданный товар.
+message AddProductResponse {
+  string sku = 1;
+}
+
+// RenameRequest — новое название товара.
+message RenameRequest {
+  string sku = 1 [(buf.validate.field).string.pattern = "^[A-Z0-9-]{3,20}$"];
+  string title = 2 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 100
+  }];
+}
+
+// RenameResponse — пустой ответ.
+message RenameResponse {}
+
+// AuditRequest — запрос с испорченным правилом.
+message AuditRequest {
+  option (buf.validate.message).cel = {
+    id: "audit.broken"
+    message: "broken rule"
+    expression: "this.no_such_field > 0"
+  };
+  string sku = 1;
+}
+
+// AuditResponse — пустой ответ.
+message AuditResponse {}

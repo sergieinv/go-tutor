@@ -1,0 +1,35 @@
+syntax = "proto3";
+
+package orders.v1;
+
+option go_package = "lesson/proto;task";
+
+// Лента событий заказов: издатели присылают события потоком,
+// подписчики получают историю и новые события в порядке seq.
+service OrderFeedService {
+  rpc Publish(stream PublishRequest) returns (PublishResponse);
+  rpc Subscribe(SubscribeRequest) returns (stream SubscribeResponse);
+}
+
+message PublishRequest {
+  string order_id = 1;
+  string status = 2;
+}
+
+message PublishResponse {
+  // Сколько событий этого вызова принято.
+  int64 accepted = 1;
+  // seq последнего принятого события этого вызова, 0 — если ни одного.
+  int64 last_seq = 2;
+}
+
+message SubscribeRequest {
+  // С какого seq начать; 0 и меньше — с первого.
+  int64 from_seq = 1;
+}
+
+message SubscribeResponse {
+  int64 seq = 1;
+  string order_id = 2;
+  string status = 3;
+}

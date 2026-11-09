@@ -1,0 +1,32 @@
+syntax = "proto3";
+
+package orders.v1;
+
+option go_package = "lesson/proto;main";
+
+// OrderService — два метода с разными правами: читать заказ может
+// роль reader, отменять — только admin.
+service OrderService {
+  rpc GetOrder(GetOrderRequest) returns (GetOrderResponse);
+  rpc CancelOrder(CancelOrderRequest) returns (CancelOrderResponse);
+}
+
+message GetOrderRequest {
+  string id = 1;
+}
+
+message GetOrderResponse {
+  string id = 1;
+  string status = 2;
+  // Какой сервис прочитал заказ — сервер берёт его из сертификата клиента.
+  string caller = 3;
+}
+
+message CancelOrderRequest {
+  string id = 1;
+}
+
+message CancelOrderResponse {
+  string id = 1;
+  string status = 2;
+}

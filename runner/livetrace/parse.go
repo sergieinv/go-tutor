@@ -20,7 +20,41 @@ type Trace struct {
 	Total int `json:"total"`
 	// DurationUs — от старта main до последнего события.
 	DurationUs int64 `json:"durationUs"`
+	// Spans — пользовательские задачи и регионы runtime/trace (trace.NewTask,
+	// trace.StartRegion / WithRegion), Logs — trace.Log: из них построитель
+	// spans рисует запросы, их участки и заметки вроде «осталось 180 мс».
+	Spans []Span    `json:"spans"`
+	Logs  []UserLog `json:"logs"`
 }
+
+// Span — задача (kind task) или регион (kind region) на шкале времени.
+type Span struct {
+	// ID — у задачи её id в трассе, у региона — порядковый номер региона.
+	ID   int64  `json:"id"`
+	Kind string `json:"kind"`
+	Name string `json:"name"`
+	// Task — у задачи родительская задача (0 — нет), у региона — задача,
+	// в которой он открыт.
+	Task int64 `json:"task"`
+	G    int64 `json:"g"`
+	// Start, End — микросекунды от старта main; End -1 — не закрыт к концу.
+	Start int64 `json:"start"`
+	End   int64 `json:"end"`
+	// Depth — вложенность региона в горутине (0 — внешний).
+	Depth int `json:"depth"`
+}
+
+// UserLog — запись trace.Log(ctx, category, message).
+type UserLog struct {
+	T        int64  `json:"t"`
+	G        int64  `json:"g"`
+	Task     int64  `json:"task"`
+	Category string `json:"category"`
+	Message  string `json:"message"`
+}
+
+// MaxSpans — сколько задач, регионов и логов отдаём клиенту (каждого вида).
+const MaxSpans = 400
 
 // Goroutine — горутина из кода ученика (main или go-вызов).
 type Goroutine struct {
@@ -73,10 +107,12 @@ func Parse(r io.Reader, selects []Select) (t *Trace, err error) {
 		return nil, fmt.Errorf("%w: %v", ErrNoTrace, err)
 	}
 	p := traceParser{
-		t:     &Trace{Selects: selects, Events: []Event{}, Goroutines: []Goroutine{}},
-		user:  map[trace.GoID]bool{},
-		byID:  map[int]*Select{},
-		start: -1,
+		t:       &Trace{Selects: selects, Events: []Event{}, Goroutines: []Goroutine{}, Spans: []Span{}, Logs: []UserLog{}},
+		user:    map[trace.GoID]bool{},
+		byID:    map[int]*Select{},
+		start:   -1,
+		tasks:   map[trace.TaskID]int{},
+		regions: map[trace.GoID][]int{},
 	}
 	for i := range p.t.Selects {
 		p.byID[p.t.Selects[i].ID] = &p.t.Selects[i]
@@ -107,6 +143,10 @@ type traceParser struct {
 	byID  map[int]*Select
 	start trace.Time // время лога gotutor.main; до него — служебный старт трассы
 	last  trace.Time
+	// tasks — индекс задачи в Spans, regions — стек открытых регионов горутины.
+	tasks   map[trace.TaskID]int
+	regions map[trace.GoID][]int
+	regionN int64
 }
 
 func (p *traceParser) event(ev trace.Event) {
@@ -117,6 +157,53 @@ func (p *traceParser) event(ev trace.Event) {
 		if p.start >= 0 {
 			p.transition(ev)
 		}
+	case trace.EventTaskBegin, trace.EventTaskEnd, trace.EventRegionBegin, trace.EventRegionEnd:
+		if p.start >= 0 {
+			p.span(ev)
+		}
+	}
+}
+
+// span отмечает начало и конец пользовательских задач и регионов.
+func (p *traceParser) span(ev trace.Event) {
+	t := max(ev.Time().Sub(p.start).Microseconds(), 0)
+	g := ev.Goroutine()
+	switch ev.Kind() {
+	case trace.EventTaskBegin:
+		task := ev.Task()
+		if len(p.t.Spans) >= 2*MaxSpans {
+			return
+		}
+		parent := int64(task.Parent)
+		if task.Parent == trace.NoTask {
+			parent = 0
+		}
+		p.tasks[task.ID] = len(p.t.Spans)
+		p.t.Spans = append(p.t.Spans, Span{ID: int64(task.ID), Kind: "task", Name: task.Type, Task: parent, G: int64(g), Start: t, End: -1})
+	case trace.EventTaskEnd:
+		if i, ok := p.tasks[ev.Task().ID]; ok {
+			p.t.Spans[i].End = t
+		}
+	case trace.EventRegionBegin:
+		r := ev.Region()
+		if len(p.t.Spans) >= 2*MaxSpans {
+			return
+		}
+		stack := p.regions[g]
+		p.regions[g] = append(stack, len(p.t.Spans))
+		p.regionN++
+		p.t.Spans = append(p.t.Spans, Span{ID: p.regionN, Kind: "region", Name: r.Type, Task: int64(r.Task), G: int64(g), Start: t, End: -1, Depth: len(stack)})
+	case trace.EventRegionEnd:
+		stack := p.regions[g]
+		if len(stack) == 0 {
+			return
+		}
+		p.t.Spans[stack[len(stack)-1]].End = t
+		p.regions[g] = stack[:len(stack)-1]
+	}
+	if ev.Time() > p.last {
+		p.last = ev.Time()
+		p.t.DurationUs = p.last.Sub(p.start).Microseconds()
 	}
 }
 
@@ -147,6 +234,15 @@ func (p *traceParser) log(ev trace.Event) {
 		}
 		s.Counts[c]++
 		p.add(ev, Event{G: int64(g), Kind: "case", Select: id, Case: c, File: s.File, Line: s.Cases[c].Line})
+	default:
+		if p.start < 0 || len(p.t.Logs) >= MaxSpans || strings.HasPrefix(l.Category, "gotutor.") {
+			return
+		}
+		p.t.Logs = append(p.t.Logs, UserLog{T: max(ev.Time().Sub(p.start).Microseconds(), 0), G: int64(g), Task: int64(l.Task), Category: l.Category, Message: l.Message})
+		if ev.Time() > p.last {
+			p.last = ev.Time()
+			p.t.DurationUs = p.last.Sub(p.start).Microseconds()
+		}
 	}
 }
 

@@ -2,8 +2,12 @@
 // modernc.org/sqlite (чистый Go, без cgo) и код, сгенерированный sqlc
 // (пакет sqlcgen, запросы — query.sql).
 //
-// Отличия от PostgreSQL и MySQL, которые видны здесь и в query.sql:
+// Основная база «Заказов» — PostgreSQL; SQLite остаётся для тестов
+// (контрактный набор, сквозной тест саги) и запуска без Docker.
+//
+// Отличия от PostgreSQL, которые видны здесь и в query.sql:
 //   - RETURNING есть (с SQLite 3.35), как в PostgreSQL;
+//   - нет SEQUENCE: номера заказов выдаёт таблица order_ids с AUTOINCREMENT;
 //   - нет параметров-массивов: sqlc.slice разворачивается в IN (?, ?, …);
 //   - нет SELECT … FOR UPDATE и блокировок строк: писать в базу в каждый
 //     момент может только одна транзакция. Транзакции начинаются с
@@ -22,6 +26,7 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -37,7 +42,7 @@ import (
 	"gotutor/labs/orders/migrations"
 )
 
-// Store реализует orders.Store.
+// Store реализует orders.Store и outbox.Store.
 type Store struct {
 	db *sql.DB
 	q  *sqlcgen.Queries
@@ -105,6 +110,15 @@ func (s *Store) Begin(ctx context.Context) (orders.Tx, error) {
 	return &Tx{tx: tx, q: s.q.WithTx(tx)}, nil
 }
 
+// NextOrderID выдаёт номер заказа: вставка в order_ids с AUTOINCREMENT.
+func (s *Store) NextOrderID(ctx context.Context) (int64, error) {
+	id, err := s.q.NextOrderID(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("next order id: %w", err)
+	}
+	return id, nil
+}
+
 // Order читает заказ и его позиции.
 func (s *Store) Order(ctx context.Context, id int64) (orders.Order, error) {
 	row, err := s.q.GetOrder(ctx, id)
@@ -114,58 +128,121 @@ func (s *Store) Order(ctx context.Context, id int64) (orders.Order, error) {
 	return withItems(ctx, s.q, row)
 }
 
-// Product читает товар с остатком.
-func (s *Store) Product(ctx context.Context, id int64) (orders.Product, error) {
-	row, err := s.q.GetProduct(ctx, id)
+// ListOrders читает страницу заказов и позиции всех её заказов двумя
+// запросами (позиции — WHERE order_id IN (?, ?, …)).
+func (s *Store) ListOrders(ctx context.Context, customerID, beforeID int64, limit int) ([]orders.Order, error) {
+	rows, err := s.q.ListCustomerOrders(ctx, sqlcgen.ListCustomerOrdersParams{
+		CustomerID: customerID,
+		BeforeID:   beforeID,
+		RowLimit:   int64(limit),
+	})
 	if err != nil {
-		return orders.Product{}, notFound(err, "product", id)
+		return nil, fmt.Errorf("list orders: %w", err)
 	}
-	return orders.Product{ID: row.ID, Name: row.Name, PriceCents: row.PriceCents, Available: int(row.Available)}, nil
+	if len(rows) == 0 {
+		return nil, nil
+	}
+	ids := make([]int64, len(rows))
+	for i, r := range rows {
+		ids[i] = r.ID
+	}
+	items, err := s.q.ListItemsByOrderIDs(ctx, ids)
+	if err != nil {
+		return nil, fmt.Errorf("list order items: %w", err)
+	}
+	byOrder := make(map[int64][]orders.Item, len(rows))
+	for _, it := range items {
+		byOrder[it.OrderID] = append(byOrder[it.OrderID], orders.Item{
+			ProductID: it.ProductID, Quantity: int(it.Quantity), PriceCents: it.PriceCents,
+		})
+	}
+	list := make([]orders.Order, len(rows))
+	for i, r := range rows {
+		list[i] = toOrder(r, byOrder[r.ID])
+	}
+	return list, nil
 }
 
-// CreateProduct добавляет товар и остаток в одной транзакции.
+// ProductsByIDs читает товары одним запросом WHERE id IN (?, ?, …).
+func (s *Store) ProductsByIDs(ctx context.Context, ids []int64) ([]orders.Product, error) {
+	rows, err := s.q.ListProductsByIDs(ctx, ids)
+	if err != nil {
+		return nil, fmt.Errorf("list products: %w", err)
+	}
+	products := make([]orders.Product, len(rows))
+	for i, r := range rows {
+		products[i] = orders.Product{ID: r.ID, Name: r.Name, PriceCents: r.PriceCents}
+	}
+	return products, nil
+}
+
+// CreateProduct добавляет товар в каталог (RETURNING id — как в PostgreSQL).
 func (s *Store) CreateProduct(ctx context.Context, p orders.NewProduct) (orders.Product, error) {
-	if p.Available < 0 {
-		return orders.Product{}, &orders.ValidationError{Field: "available", Message: "out of range"}
-	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	id, err := s.q.CreateProduct(ctx, sqlcgen.CreateProductParams{Name: p.Name, PriceCents: p.PriceCents})
 	if err != nil {
-		return orders.Product{}, fmt.Errorf("begin: %w", err)
+		return orders.Product{}, fmt.Errorf("create product: %w", err)
 	}
-	defer tx.Rollback()
-
-	q := s.q.WithTx(tx)
-	// RETURNING id — как в PostgreSQL.
-	id, err := q.CreateProduct(ctx, sqlcgen.CreateProductParams{Name: p.Name, PriceCents: p.PriceCents})
-	if err != nil {
-		return orders.Product{}, fmt.Errorf("insert product: %w", err)
-	}
-	if err := q.CreateStock(ctx, sqlcgen.CreateStockParams{ProductID: id, Available: int64(p.Available)}); err != nil {
-		return orders.Product{}, fmt.Errorf("insert stock: %w", err)
-	}
-	if err := tx.Commit(); err != nil {
-		return orders.Product{}, fmt.Errorf("commit: %w", err)
-	}
-	return orders.Product{ID: id, Name: p.Name, PriceCents: p.PriceCents, Available: p.Available}, nil
+	return orders.Product{ID: id, Name: p.Name, PriceCents: p.PriceCents}, nil
 }
 
-// PendingEvents возвращает неопубликованные события outbox.
-func (s *Store) PendingEvents(ctx context.Context, limit int) ([]orders.Event, error) {
+// PublishPending — один такт relay (см. postgres.Store.PublishPending).
+//
+// В отличие от PostgreSQL — без транзакции на время отправки: транзакция
+// SQLite держит блокировку на запись всей базы (BEGIN IMMEDIATE), и пока
+// идёт отправка в Kafka, ни один заказ не смог бы записаться. Advisory-
+// блокировка тоже не нужна: SQLite — это один процесс, один relay.
+// Гарантия та же: отметка — только после подтверждения брокера.
+func (s *Store) PublishPending(ctx context.Context, limit int, publish func(context.Context, []orders.Event) error) (int, error) {
 	rows, err := s.q.ListPendingEvents(ctx, int64(limit))
 	if err != nil {
-		return nil, fmt.Errorf("list pending events: %w", err)
+		return 0, fmt.Errorf("list pending events: %w", err)
+	}
+	if len(rows) == 0 {
+		return 0, nil
 	}
 	events := make([]orders.Event, len(rows))
+	ids := make([]int64, len(rows))
 	for i, r := range rows {
-		events[i] = orders.Event{
-			ID:        r.ID,
-			Type:      r.EventType,
-			OrderID:   r.AggregateID,
-			Payload:   []byte(r.Payload), // JSON в SQLite — TEXT
-			CreatedAt: r.CreatedAt.UTC(),
+		var tc map[string]string
+		if err := json.Unmarshal([]byte(r.TraceContext), &tc); err != nil {
+			return 0, fmt.Errorf("event %d trace context: %w", r.ID, err)
 		}
+		events[i] = orders.Event{
+			ID: r.ID, EventID: r.EventID, Type: r.EventType, OrderID: r.AggregateID,
+			Payload: r.Payload, TraceContext: tc, CreatedAt: r.CreatedAt.UTC(),
+		}
+		ids[i] = r.ID
 	}
-	return events, nil
+	if err := publish(ctx, events); err != nil {
+		return 0, err
+	}
+	err = s.q.MarkEventsPublished(ctx, sqlcgen.MarkEventsPublishedParams{
+		PublishedAt: sql.NullTime{Time: time.Now().UTC(), Valid: true},
+		Ids:         ids,
+	})
+	if err != nil {
+		return 0, fmt.Errorf("mark events published: %w", err)
+	}
+	return len(events), nil
+}
+
+// PendingStats — отставание outbox (см. postgres.Store.PendingStats).
+func (s *Store) PendingStats(ctx context.Context) (int64, time.Time, error) {
+	n, err := s.q.CountPendingEvents(ctx)
+	if err != nil {
+		return 0, time.Time{}, fmt.Errorf("count pending events: %w", err)
+	}
+	if n == 0 {
+		return 0, time.Time{}, nil
+	}
+	oldest, err := s.q.OldestPendingEvent(ctx)
+	if err != nil {
+		return 0, time.Time{}, fmt.Errorf("oldest pending event: %w", err)
+	}
+	if len(oldest) == 0 { // успели опубликовать между запросами
+		return 0, time.Time{}, nil
+	}
+	return n, oldest[0].UTC(), nil
 }
 
 // Tx реализует orders.Tx поверх *sql.Tx.
@@ -180,68 +257,30 @@ func (t *Tx) Commit(context.Context) error { return t.tx.Commit() }
 // Rollback откатывает транзакцию; после Commit возвращает sql.ErrTxDone.
 func (t *Tx) Rollback(context.Context) error { return t.tx.Rollback() }
 
-// ProductsByIDs читает товары одним запросом WHERE id IN (?, ?, …).
-func (t *Tx) ProductsByIDs(ctx context.Context, ids []int64) ([]orders.Product, error) {
-	rows, err := t.q.ListProductsByIDs(ctx, ids)
-	if err != nil {
-		return nil, fmt.Errorf("list products: %w", err)
-	}
-	products := make([]orders.Product, len(rows))
-	for i, r := range rows {
-		products[i] = orders.Product{ID: r.ID, Name: r.Name, PriceCents: r.PriceCents, Available: int(r.Available)}
-	}
-	return products, nil
-}
-
-// ReserveStock списывает остаток атомарным UPDATE … WHERE available >= ?.
-// Именованный параметр quantity встречается в запросе дважды, но SQLite,
-// в отличие от MySQL, принимает его один раз.
-func (t *Tx) ReserveStock(ctx context.Context, productID int64, qty int) error {
-	n, err := t.q.ReserveStock(ctx, sqlcgen.ReserveStockParams{Quantity: int64(qty), ProductID: productID})
-	if err != nil {
-		return fmt.Errorf("reserve stock: %w", err)
-	}
-	if n == 0 {
-		return orders.ErrOutOfStock
-	}
-	return nil
-}
-
-// ReleaseStock возвращает товар на склад.
-func (t *Tx) ReleaseStock(ctx context.Context, productID int64, qty int) error {
-	n, err := t.q.ReleaseStock(ctx, sqlcgen.ReleaseStockParams{Quantity: int64(qty), ProductID: productID})
-	if err != nil {
-		return fmt.Errorf("release stock: %w", err)
-	}
-	if n == 0 {
-		return fmt.Errorf("stock of product %d: %w", productID, orders.ErrNotFound)
-	}
-	return nil
-}
-
-// CreateOrder вставляет заказ (id — из RETURNING) и его позиции.
-func (t *Tx) CreateOrder(ctx context.Context, o orders.Order) (int64, error) {
-	id, err := t.q.CreateOrder(ctx, sqlcgen.CreateOrderParams{
+// CreateOrder вставляет заказ с выданным заранее id и его позиции.
+func (t *Tx) CreateOrder(ctx context.Context, o orders.Order) error {
+	err := t.q.CreateOrder(ctx, sqlcgen.CreateOrderParams{
+		ID:         o.ID,
 		CustomerID: o.CustomerID,
 		Status:     string(o.Status),
 		TotalCents: o.TotalCents,
 		CreatedAt:  o.CreatedAt,
 	})
 	if err != nil {
-		return 0, fmt.Errorf("insert order: %w", err)
+		return fmt.Errorf("insert order: %w", err)
 	}
 	for _, it := range o.Items {
 		err := t.q.CreateOrderItem(ctx, sqlcgen.CreateOrderItemParams{
-			OrderID:    id,
+			OrderID:    o.ID,
 			ProductID:  it.ProductID,
 			Quantity:   int64(it.Quantity),
 			PriceCents: it.PriceCents,
 		})
 		if err != nil {
-			return 0, fmt.Errorf("insert order item: %w", err)
+			return fmt.Errorf("insert order item: %w", err)
 		}
 	}
-	return id, nil
+	return nil
 }
 
 // LockOrder читает заказ. FOR UPDATE в SQLite нет и не нужно: транзакция
@@ -272,13 +311,23 @@ func (t *Tx) UpdateOrderStatus(ctx context.Context, id int64, from, to orders.St
 	return nil
 }
 
-// AddEvent пишет событие в outbox.
+// AddEvent пишет событие в outbox. Контекст трассы — JSON в TEXT.
 func (t *Tx) AddEvent(ctx context.Context, e orders.Event) error {
-	err := t.q.CreateOutboxEvent(ctx, sqlcgen.CreateOutboxEventParams{
-		EventType:   e.Type,
-		AggregateID: e.OrderID,
-		Payload:     string(e.Payload),
-		CreatedAt:   e.CreatedAt,
+	tc := e.TraceContext
+	if tc == nil {
+		tc = map[string]string{}
+	}
+	tcJSON, err := json.Marshal(tc)
+	if err != nil {
+		return fmt.Errorf("marshal trace context: %w", err)
+	}
+	err = t.q.CreateOutboxEvent(ctx, sqlcgen.CreateOutboxEventParams{
+		EventID:      e.EventID,
+		EventType:    e.Type,
+		AggregateID:  e.OrderID,
+		Payload:      e.Payload,
+		TraceContext: string(tcJSON),
+		CreatedAt:    e.CreatedAt,
 	})
 	if err != nil {
 		return fmt.Errorf("insert outbox event: %w", err)
@@ -292,19 +341,23 @@ func withItems(ctx context.Context, q *sqlcgen.Queries, row sqlcgen.Order) (orde
 	if err != nil {
 		return orders.Order{}, fmt.Errorf("list order items: %w", err)
 	}
-	o := orders.Order{
+	items := make([]orders.Item, len(rows))
+	for i, r := range rows {
+		items[i] = orders.Item{ProductID: r.ProductID, Quantity: int(r.Quantity), PriceCents: r.PriceCents}
+	}
+	return toOrder(row, items), nil
+}
+
+func toOrder(row sqlcgen.Order, items []orders.Item) orders.Order {
+	return orders.Order{
 		ID:         row.ID,
 		CustomerID: row.CustomerID,
 		Status:     orders.Status(row.Status),
-		Items:      make([]orders.Item, len(rows)),
+		Items:      items,
 		TotalCents: row.TotalCents,
 		CreatedAt:  row.CreatedAt.UTC(),
 		UpdatedAt:  row.UpdatedAt.UTC(),
 	}
-	for i, r := range rows {
-		o.Items[i] = orders.Item{ProductID: r.ProductID, Quantity: int(r.Quantity), PriceCents: r.PriceCents}
-	}
-	return o, nil
 }
 
 // notFound переводит sql.ErrNoRows в доменную ErrNotFound.

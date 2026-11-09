@@ -1,0 +1,8 @@
+создан: ord-1 700
+найден: alice <nil>
+нет такого: NotFound order "ord-9" not found
+CancelOrder: Unimplemented
+2 МБ: ResourceExhausted
+GracefulStop ждёт активный вызов
+долгий вызов: OK
+сервер остановлен, Serve вернул: <nil>

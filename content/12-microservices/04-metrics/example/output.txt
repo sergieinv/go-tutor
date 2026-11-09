@@ -1,0 +1,29 @@
+# TYPE http_request_duration_seconds histogram
+http_request_duration_seconds_bucket{route="GET /orders/{id}",le="0.025"} 1
+http_request_duration_seconds_bucket{route="GET /orders/{id}",le="0.1"} 1
+http_request_duration_seconds_bucket{route="GET /orders/{id}",le="0.5"} 2
+http_request_duration_seconds_bucket{route="GET /orders/{id}",le="+Inf"} 2
+http_request_duration_seconds_sum{route="GET /orders/{id}"} 0.20500000000000002
+http_request_duration_seconds_count{route="GET /orders/{id}"} 2
+http_request_duration_seconds_bucket{route="POST /orders",le="0.025"} 1
+http_request_duration_seconds_bucket{route="POST /orders",le="0.1"} 2
+http_request_duration_seconds_bucket{route="POST /orders",le="0.5"} 2
+http_request_duration_seconds_bucket{route="POST /orders",le="+Inf"} 2
+http_request_duration_seconds_sum{route="POST /orders"} 0.05
+http_request_duration_seconds_count{route="POST /orders"} 2
+http_request_duration_seconds_bucket{route="unmatched",le="0.025"} 1
+http_request_duration_seconds_bucket{route="unmatched",le="0.1"} 1
+http_request_duration_seconds_bucket{route="unmatched",le="0.5"} 1
+http_request_duration_seconds_bucket{route="unmatched",le="+Inf"} 1
+http_request_duration_seconds_sum{route="unmatched"} 0.001
+http_request_duration_seconds_count{route="unmatched"} 1
+# TYPE http_requests_in_flight gauge
+http_requests_in_flight 0
+# TYPE http_requests_total counter
+http_requests_total{code="200",route="GET /orders/{id}"} 1
+http_requests_total{code="201",route="POST /orders"} 1
+http_requests_total{code="400",route="POST /orders"} 1
+http_requests_total{code="404",route="GET /orders/{id}"} 1
+http_requests_total{code="404",route="unmatched"} 1
+# TYPE orders_created_total counter
+orders_created_total 1

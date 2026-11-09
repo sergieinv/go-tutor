@@ -1,0 +1,24 @@
+// Контракт «Склада» — единственное, что «Заказы» знают о нём.
+// В labs/ такие контракты лежат в общем buf-модуле labs/api.
+syntax = "proto3";
+
+package warehouse.v1;
+
+option go_package = "lesson/proto;main";
+
+service WarehouseService {
+  // Reserve резервирует товар под заказ: всё или ничего.
+  rpc Reserve(ReserveRequest) returns (ReserveResponse);
+}
+
+message ReserveRequest {
+  string order_id = 1;
+  repeated Line lines = 2;
+}
+
+message Line {
+  string sku = 1;
+  int32 qty = 2;
+}
+
+message ReserveResponse {}

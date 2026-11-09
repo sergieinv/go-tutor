@@ -1,0 +1,52 @@
+syntax = "proto3";
+
+// Контракт сервиса заказов: из него buf генерирует orders.pb.go
+// (сообщения) и orders_grpc.pb.go (клиент и интерфейс сервера).
+package orders.v1;
+
+option go_package = "lesson/proto;main";
+
+service OrderService {
+  rpc CreateOrder(CreateOrderRequest) returns (CreateOrderResponse);
+  rpc GetOrder(GetOrderRequest) returns (GetOrderResponse);
+  // Добавлен в контракт, но сервер его ещё не реализовал.
+  rpc CancelOrder(CancelOrderRequest) returns (CancelOrderResponse);
+}
+
+message Item {
+  string sku = 1;
+  int32 quantity = 2;
+  int64 price_cents = 3;
+}
+
+message Order {
+  string id = 1;
+  string customer = 2;
+  repeated Item items = 3;
+  int64 total_cents = 4;
+}
+
+message CreateOrderRequest {
+  string customer = 1;
+  repeated Item items = 2;
+}
+
+message CreateOrderResponse {
+  Order order = 1;
+}
+
+message GetOrderRequest {
+  string id = 1;
+}
+
+message GetOrderResponse {
+  Order order = 1;
+}
+
+message CancelOrderRequest {
+  string id = 1;
+}
+
+message CancelOrderResponse {
+  Order order = 1;
+}

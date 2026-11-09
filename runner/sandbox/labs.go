@@ -17,17 +17,19 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// Базы данных профиля labs (docker compose --profile labs up). Урок просит
+// Сервисы профиля labs (docker compose --profile labs up). Урок просит
 // их флагом runner.labs, и на каждый запуск runner создаёт отдельную пустую
-// базу со своим пользователем, а после запуска удаляет: запуски не видят
-// данных друг друга, и упавшая программа не оставляет мусора.
+// базу со своим пользователем (у Kafka — свой префикс топиков и групп), а
+// после запуска удаляет: запуски не видят данных друг друга, и упавшая
+// программа не оставляет мусора.
 const (
 	LabPostgres = "postgres"
 	LabMySQL    = "mysql"
+	LabKafka    = "kafka"
 )
 
 // LabNames — допустимые значения runner.labs.
-var LabNames = []string{LabPostgres, LabMySQL}
+var LabNames = []string{LabPostgres, LabMySQL, LabKafka}
 
 // labEnv — переменная окружения, в которой программа получает DSN своей базы.
 var labEnv = map[string]string{
@@ -81,16 +83,20 @@ func (l *labs) prepare(ctx context.Context, names []string) (env []string, note 
 	for _, name := range names {
 		admin, ok := l.admin[name]
 		if !ok {
-			notes = append(notes, fmt.Sprintf("labs: %s в этом runner не настроен — запустите учебник через docker compose --profile labs up", name))
+			hint := "запустите учебник через docker compose --profile labs up"
+			if name == LabKafka {
+				hint = "в песочнице Kafka выключена по умолчанию (см. docker-compose.yml), а kfake работает без неё"
+			}
+			notes = append(notes, fmt.Sprintf("labs: %s в этом runner не настроен — %s", name, hint))
 			continue
 		}
 		l.cleanOnce(name, admin)
-		dsn, drop, err := l.create(ctx, name, admin)
+		vars, drop, err := l.create(ctx, name, admin)
 		if err != nil {
 			notes = append(notes, fmt.Sprintf("labs: %s недоступен — запустите docker compose --profile labs up (%v)", name, err))
 			continue
 		}
-		env = append(env, labEnv[name]+"="+dsn)
+		env = append(env, vars...)
 		drops = append(drops, drop)
 	}
 	if len(notes) > 0 {
@@ -103,21 +109,28 @@ func (l *labs) prepare(ctx context.Context, names []string) (env []string, note 
 	}
 }
 
-func (l *labs) create(ctx context.Context, name, admin string) (dsn string, drop func(), err error) {
+// create готовит ресурс запуска и возвращает переменные окружения программы.
+func (l *labs) create(ctx context.Context, name, admin string) (env []string, drop func(), err error) {
 	ctx, cancel := context.WithTimeout(ctx, labTimeout)
 	defer cancel()
 	id := fmt.Sprintf("%s%08x%s", labPrefix, uint32(time.Now().Unix()), randomHex(4))
 	password := randomHex(16)
+	var dsn string
 	switch name {
 	case LabPostgres:
 		dsn, err = createPostgres(ctx, admin, id, password)
 	case LabMySQL:
 		dsn, err = createMySQL(ctx, admin, id, password)
+	case LabKafka:
+		env, err = createKafka(ctx, admin, id)
 	}
 	if err != nil {
-		return "", nil, err
+		return nil, nil, err
 	}
-	return dsn, func() {
+	if dsn != "" {
+		env = []string{labEnv[name] + "=" + dsn}
+	}
+	return env, func() {
 		// Контекст запроса к этому моменту может быть отменён, а база
 		// должна быть удалена всё равно.
 		ctx, cancel := context.WithTimeout(context.Background(), labTimeout)
@@ -127,6 +140,8 @@ func (l *labs) create(ctx context.Context, name, admin string) (dsn string, drop
 			dropPostgres(ctx, admin, []string{id})
 		case LabMySQL:
 			dropMySQL(ctx, admin, []string{id})
+		case LabKafka:
+			dropKafka(ctx, admin, func(owner string) bool { return owner == id })
 		}
 	}, nil
 }
@@ -170,6 +185,8 @@ func (l *labs) dropStale(name, admin string) error {
 		}
 		rows.Close()
 		dropMySQL(ctx, admin, staleIDs(ids))
+	case LabKafka:
+		return dropKafka(ctx, admin, func(owner string) bool { return len(staleIDs([]string{owner})) == 1 })
 	}
 	return nil
 }

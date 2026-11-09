@@ -1,0 +1,48 @@
+// Контракт с намеренными ошибками стиля: нажмите «buf lint».
+// Каждое замечание называет правило — найдите его в buf.yaml
+// и в документации, исправьте контракт и проверьте снова.
+syntax = "proto3";
+
+package shop.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "lesson/proto;main";
+
+// OrderService — сервис заказов.
+service OrderService {
+  // GetOrder возвращает заказ по номеру.
+  rpc GetOrder(OrderRef) returns (Order);
+  // CreateOrder создаёт заказ.
+  rpc CreateOrder(CreateOrderRequest) returns (CreateOrderResponse);
+}
+
+// OrderRef — ссылка на заказ.
+message OrderRef {
+  int64 id = 1;
+}
+
+// Order — заказ.
+message Order {
+  int64 id = 1;
+  string customerEmail = 2;
+  OrderStatus status = 3;
+  google.protobuf.Timestamp created_at = 4;
+}
+
+// OrderStatus — статус заказа.
+enum OrderStatus {
+  ORDER_STATUS_UNKNOWN = 0;
+  ORDER_STATUS_NEW = 1;
+  PAID = 2;
+}
+
+// CreateOrderRequest — запрос на создание.
+message CreateOrderRequest {
+  string customer_email = 1;
+}
+
+// CreateOrderResponse — созданный заказ.
+message CreateOrderResponse {
+  Order order = 1;
+}

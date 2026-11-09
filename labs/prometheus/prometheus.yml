@@ -1,0 +1,16 @@
+# Prometheus профиля labs: собирает метрики трёх сервисов с их служебных
+# портов (:8081, /metrics) по именам docker-сети. UI — http://127.0.0.1:9091.
+global:
+  scrape_interval: 5s      # учебный стенд: графики оживают быстро
+  evaluation_interval: 5s
+
+scrape_configs:
+  - job_name: orders
+    static_configs:
+      - targets: ["orders:8081"]
+  - job_name: warehouse
+    static_configs:
+      - targets: ["warehouse:8081"]
+  - job_name: notifications
+    static_configs:
+      - targets: ["notifications:8081"]

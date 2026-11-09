@@ -1,0 +1,37 @@
+байты: 08 96 01 12 05 61 40 62 2e 63
+  поле 1 varint 150
+  поле 2 bytes "a@b.c"
+размер пустого: 0 с comment="": 2 comment задан: true
+оплата картой *4242
+бинарный размер: 91
+{
+  "id": "9007199254740993",
+  "customerEmail": "ann@example.com",
+  "status": "ORDER_STATUS_PAID",
+  "items": [
+    {
+      "sku": "MUG-1",
+      "quantity": 2,
+      "priceCents": "450"
+    }
+  ],
+  "labels": {
+    "gift": "yes",
+    "source": "app"
+  },
+  "card": {
+    "last4": "4242"
+  },
+  "createdAt": "2026-03-01T09:30:00Z",
+  "reserveFor": "900s"
+}
+{
+  "id": "7",
+  "customerEmail": "",
+  "status": "ORDER_STATUS_UNSPECIFIED",
+  "items": [],
+  "labels": {},
+  "createdAt": null,
+  "reserveFor": null
+}
+proto.Equal: true ==: false

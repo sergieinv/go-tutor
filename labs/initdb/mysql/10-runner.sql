@@ -13,3 +13,7 @@ GRANT SELECT ON performance_schema.data_lock_waits TO 'runner'@'%' WITH GRANT OP
 -- root из сети песочницы (подсеть задана в docker-compose.yml) попадает
 -- на эту запись — более точный хост, чем '%', — а она заблокирована.
 CREATE USER 'root'@'172.29.99.%' IDENTIFIED BY RANDOM PASSWORD ACCOUNT LOCK;
+-- CREATE USER у runner позволяет DROP/ALTER USER над любой учётной записью
+-- без SYSTEM_USER: программа ученика удалила бы блокировку и вошла как root.
+-- Записи с SYSTEM_USER может менять только пользователь с SYSTEM_USER.
+GRANT SYSTEM_USER ON *.* TO 'root'@'172.29.99.%';

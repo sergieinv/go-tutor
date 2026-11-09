@@ -1,0 +1,38 @@
+POST /v1/orders {"customer_id":"c1","total_cents":1500}
+  grpc: CreateOrder rid=[r-1]
+  → 200 {"order":{"id":"1","customer_id":"c1","total_cents":"1500","status":"ORDER_STATUS_NEW"}}
+
+POST /v1/orders {"customer_id":"c2","total_cents":"700"}
+  grpc: CreateOrder rid=[r-1]
+  → 200 {"order":{"id":"2","customer_id":"c2","total_cents":"700","status":"ORDER_STATUS_NEW"}}
+
+GET /v1/orders/1
+  grpc: GetOrder rid=[r-1]
+  → 200 {"order":{"id":"1","customer_id":"c1","total_cents":"1500","status":"ORDER_STATUS_NEW"}}
+
+GET /v1/customers/c2/orders
+  grpc: ListOrders rid=[r-1]
+  → 200 {"orders":[{"id":"2","customer_id":"c2","total_cents":"700","status":"ORDER_STATUS_NEW"}]}
+
+GET /v1/orders?status=ORDER_STATUS_NEW&customer_id=c1
+  grpc: ListOrders rid=[r-1]
+  → 200 {"orders":[{"id":"1","customer_id":"c1","total_cents":"1500","status":"ORDER_STATUS_NEW"}]}
+
+GET /v1/orders/42
+  grpc: GetOrder rid=[r-1]
+  gateway: /v1/orders/42 → NotFound
+  → 404 {"code":5,"message":"order 42 not found","details":[]}
+
+POST /v1/orders {"customer_id":"c3"}
+  grpc: CreateOrder rid=[r-1]
+  gateway: /v1/orders → InvalidArgument
+  → 400 {"code":3,"message":"customer_id and positive total_cents required","details":[]}
+
+POST /v1/orders {"customer":"c3"}
+  gateway: /v1/orders → InvalidArgument
+  → 400 {"code":3,"message":"proto: (line 1:2): unknown field \"customer\"","details":[]}
+
+DELETE /v1/orders/1
+  gateway: /v1/orders/1 → Unimplemented
+  → 501 {"code":12,"message":"Method Not Allowed","details":[]}
+

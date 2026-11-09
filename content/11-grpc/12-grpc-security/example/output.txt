@@ -1,0 +1,7 @@
+billing: GetOrder                  → OK billing
+billing: CancelOrder               → PermissionDenied
+ops-admin: CancelOrder             → OK cancelled
+billing + токен ops-admin          → Unauthenticated
+без клиентского сертификата        → Unavailable
+сертификат чужого CA               → Unavailable
+insecure + токен: grpc: the credentials require transport level security (use grpc.WithTransportCredentials() to set)

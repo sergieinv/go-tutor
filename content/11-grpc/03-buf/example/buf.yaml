@@ -1,0 +1,19 @@
+# Конфигурация модуля buf. В песочнице допустимы только version, deps,
+# lint и breaking; buf.gen.yaml и buf.lock задаёт runner.
+version: v2
+deps:
+  - buf.build/googleapis/googleapis
+  - buf.build/bufbuild/protovalidate
+lint:
+  use:
+    - STANDARD
+  except:
+    # Файлы примера лежат в одном каталоге, а не в shop/v1/.
+    - PACKAGE_DIRECTORY_MATCH
+    # По Google AIP-131 метод Get возвращает сам ресурс (Order),
+    # а не GetOrderResponse: команды, живущие по AIP, отключают эти два.
+    - RPC_RESPONSE_STANDARD_NAME
+    - RPC_REQUEST_RESPONSE_UNIQUE
+breaking:
+  use:
+    - FILE

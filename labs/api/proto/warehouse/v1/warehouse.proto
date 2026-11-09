@@ -1,0 +1,124 @@
+syntax = "proto3";
+
+// Контракт сервиса «Склад»: остатки и резервы товара. Внутренний API —
+// его вызывает «Заказы» по gRPC. Наружу через grpc-gateway выставлен только
+// GetStock: у Reserve и Release нет аннотаций google.api.http, поэтому
+// REST-маршрутов для них просто не существует.
+package warehouse.v1;
+
+import "buf/validate/validate.proto";
+import "google/api/annotations.proto";
+
+option go_package = "gotutor/labs/api/gen/warehouse/v1;warehousev1";
+
+// WarehouseService — остатки и резервы.
+//
+// Reserve и Release идемпотентны по order_id: повтор того же вызова (после
+// таймаута, обрыва связи, повторной попытки клиента) не меняет остатки
+// второй раз. Поэтому клиент может безопасно повторять их при UNAVAILABLE.
+service WarehouseService {
+  // Reserve резервирует все позиции заказа или ни одной.
+  //
+  // Повтор с тем же order_id и теми же позициями возвращает существующий
+  // резерв. Ошибки (у каждой — google.rpc.ErrorInfo с reason из ErrorReason):
+  // FAILED_PRECONDITION + OUT_OF_STOCK — не хватает товара (детали —
+  // google.rpc.PreconditionFailure по каждой позиции); ABORTED +
+  // RESERVATION_RELEASED — резерв для заказа уже отменён (Release пришёл
+  // раньше Reserve); ALREADY_EXISTS + RESERVATION_MISMATCH — order_id уже
+  // занят резервом с другими позициями.
+  rpc Reserve(ReserveRequest) returns (ReserveResponse);
+
+  // Release возвращает зарезервированный товар на склад. Повторный Release
+  // и Release без резерва — не ошибка. Release без резерва оставляет
+  // «надгробие»: опоздавший Reserve с этим order_id будет отклонён, а не
+  // зарезервирует товар навсегда.
+  rpc Release(ReleaseRequest) returns (ReleaseResponse);
+
+  // GetStock возвращает остаток товара. Товар, которого склад не знает, —
+  // нулевой остаток, а не NOT_FOUND: каталогом склад не владеет.
+  rpc GetStock(GetStockRequest) returns (GetStockResponse) {
+    option (google.api.http) = {get: "/v1/stock/{product_id}"};
+  }
+}
+
+// ErrorReason — значения google.rpc.ErrorInfo.reason (имя значения
+// enum'а строкой, например "OUT_OF_STOCK" без префикса). Клиент принимает
+// решение по reason, а не по тексту сообщения.
+enum ErrorReason {
+  ERROR_REASON_UNSPECIFIED = 0;
+  ERROR_REASON_OUT_OF_STOCK = 1;
+  ERROR_REASON_RESERVATION_RELEASED = 2;
+  ERROR_REASON_RESERVATION_MISMATCH = 3;
+}
+
+// ReservationStatus — состояние резерва.
+enum ReservationStatus {
+  RESERVATION_STATUS_UNSPECIFIED = 0;
+  // Товар списан из доступного остатка и числится за заказом.
+  RESERVATION_STATUS_RESERVED = 1;
+  // Резерв отменён, товар вернулся в доступный остаток.
+  RESERVATION_STATUS_RELEASED = 2;
+}
+
+message ReserveRequest {
+  // Ключ идемпотентности — номер заказа из сервиса «Заказы».
+  int64 order_id = 1 [(buf.validate.field).int64.gt = 0];
+  repeated ReserveItem items = 2 [
+    (buf.validate.field).repeated = {
+      min_items: 1
+      max_items: 100
+    },
+    (buf.validate.field).cel = {
+      id: "items.unique_product"
+      message: "each product must appear at most once"
+      expression: "this.map(item, item.product_id).unique()"
+    }
+  ];
+}
+
+// ReserveItem — позиция резерва.
+message ReserveItem {
+  int64 product_id = 1 [(buf.validate.field).int64.gt = 0];
+  int32 quantity = 2 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 1000
+  }];
+}
+
+// Reservation — резерв заказа.
+message Reservation {
+  int64 order_id = 1;
+  ReservationStatus status = 2;
+  // Позиции упорядочены по product_id. У «надгробия» (Release без
+  // Reserve) позиций нет.
+  repeated ReserveItem items = 3;
+}
+
+message ReserveResponse {
+  Reservation reservation = 1;
+}
+
+message ReleaseRequest {
+  int64 order_id = 1 [(buf.validate.field).int64.gt = 0];
+}
+
+message ReleaseResponse {
+  Reservation reservation = 1;
+}
+
+message GetStockRequest {
+  int64 product_id = 1 [(buf.validate.field).int64.gt = 0];
+}
+
+// Stock — остаток товара.
+message Stock {
+  int64 product_id = 1;
+  // Можно зарезервировать.
+  int32 available = 2;
+  // Числится за действующими резервами.
+  int32 reserved = 3;
+}
+
+message GetStockResponse {
+  Stock stock = 1;
+}

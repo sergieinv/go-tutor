@@ -1,0 +1,109 @@
+questions:
+  - id: counter-down
+    kind: output
+    prompt: "Что выведет программа?"
+    code: |
+      package main
+
+      import (
+      	"fmt"
+
+      	"github.com/prometheus/client_golang/prometheus"
+      	"github.com/prometheus/client_golang/prometheus/testutil"
+      )
+
+      func main() {
+      	c := prometheus.NewCounter(prometheus.CounterOpts{Name: "orders_created_total", Help: "Созданные заказы."})
+      	c.Inc()
+      	c.Add(2.5)
+      	func() {
+      		defer func() { fmt.Println("panic:", recover() != nil) }()
+      		c.Add(-1) // заказ отменили — «вычтем»
+      	}()
+      	fmt.Println(testutil.ToFloat64(c))
+      }
+    options:
+      - text: |
+          panic: true
+          3.5
+        correct: true
+        explain: "Counter только растёт: `Add` с отрицательным значением паникует, и значение не меняется. На монотонности держится `rate()`: падение счётчика Prometheus считает перезапуском процесса. Отмены считают отдельным счётчиком `orders_cancelled_total`, а «сколько сейчас» — gauge."
+      - text: |
+          panic: false
+          2.5
+        explain: "Отрицательный `Add` у counter не применяется: client_golang паникует «counter cannot decrease in value»."
+      - text: |
+          panic: false
+          3.5
+        explain: "Паника есть — `recover` её перехватил и вернул не-nil."
+      - text: |
+          panic: true
+          0
+        explain: "`Inc` и `Add(2.5)` выполнились до паники; паника значения не обнуляет."
+
+  - id: buckets-cumulative
+    kind: output
+    prompt: "Что выведет программа?"
+    code: |
+      package main
+
+      import (
+      	"fmt"
+
+      	"github.com/prometheus/client_golang/prometheus"
+      )
+
+      func main() {
+      	reg := prometheus.NewRegistry()
+      	h := prometheus.NewHistogram(prometheus.HistogramOpts{
+      		Name: "reserve_seconds", Help: "Длительность резерва.", Buckets: []float64{0.1, 1},
+      	})
+      	reg.MustRegister(h)
+      	for _, v := range []float64{0.05, 0.2, 0.5, 3} {
+      		h.Observe(v)
+      	}
+      	mfs, _ := reg.Gather()
+      	hist := mfs[0].GetMetric()[0].GetHistogram()
+      	for _, b := range hist.GetBucket() {
+      		fmt.Printf("le=%g:%d ", b.GetUpperBound(), b.GetCumulativeCount())
+      	}
+      	fmt.Println("count:", hist.GetSampleCount())
+      }
+    options:
+      - text: "le=0.1:1 le=1:3 count: 4"
+        correct: true
+        explain: "Бакеты накопительные: в `le=1` попадает всё, что не больше секунды, включая наблюдения из `le=0.1`. Значение 3 больше последней границы и видно только в `count` (и в бакете `+Inf`, который в выводе экспозиции равен `_count`)."
+      - text: "le=0.1:1 le=1:2 count: 4"
+        explain: "Так выглядели бы непересекающиеся корзины. В Prometheus бакет `le` считает все наблюдения не больше границы — накопительно."
+      - text: "le=0.1:1 le=1:3 count: 3"
+        explain: "`count` учитывает все наблюдения, в том числе те, что больше последней границы."
+      - text: "le=0.1:1 le=1:4 count: 4"
+        explain: "3 секунды больше границы 1, в этот бакет они не попадают."
+
+  - id: cardinality
+    kind: single
+    prompt: "Коллега хочет считать заказы так: `orders_total{customer_id=\"...\", status=\"...\"}`. Что не так?"
+    options:
+      - text: "Каждое значение метки — отдельная серия: с id покупателя серий станет столько, сколько покупателей, и Prometheus будет хранить их все"
+        correct: true
+        explain: "Кардинальность метрики — произведение числа значений всех меток. Метки — это небольшие закрытые множества: маршрут-шаблон, код, статус, имя метода. Данные о конкретном покупателе — в логи и трассы."
+      - text: "Ничего: Prometheus сжимает одинаковые значения"
+        explain: "Сжатие помогает хранить точки одной серии, но каждая серия — отдельный индекс и память в Prometheus и в процессе сервиса."
+      - text: "Метки нельзя добавлять к counter, только к gauge"
+        explain: "Метки есть у любого типа: `NewCounterVec`, `NewGaugeVec`, `NewHistogramVec`."
+      - text: "`status` нельзя делать меткой — у заказа он меняется"
+        explain: "Статус — маленькое закрытое множество, отличная метка. Проблема — `customer_id`."
+
+  - id: own-registry
+    kind: single
+    prompt: "Зачем в сервисе и тестах создавать `prometheus.NewRegistry()`, а не регистрировать метрики через `prometheus.MustRegister` в глобальный реестр?"
+    options:
+      - text: "Повторная регистрация той же метрики в одном реестре — ошибка (`MustRegister` паникует), а у каждого теста и каждого экземпляра сервиса должен быть свой набор счётчиков"
+        correct: true
+        explain: "С глобальным реестром второй вызов конструктора в тестах падает с `AlreadyRegisteredError`, а значения счётчиков перетекают из теста в тест. Свой реестр передают в конструктор (`prometheus.Registerer`) и отдают в `promhttp.HandlerFor`."
+      - text: "Глобальный реестр не умеет отдавать метрики по HTTP"
+        explain: "Умеет: `promhttp.Handler()` отдаёт именно его. Проблема в общем состоянии, а не в HTTP."
+      - text: "Свой реестр быстрее считает гистограммы"
+        explain: "Скорость наблюдений от реестра не зависит: он только собирает значения при скрейпе."
+      - text: "Глобальный реестр запрещён в Go 1.25"
+        explain: "Ничего такого нет; это вопрос тестируемости и явных зависимостей."

@@ -1,0 +1,13 @@
+заголовки o-1: traceparent=00-<32 hex>-<16 hex>-01
+трасса 1:
+  POST /orders [orders, server]
+    warehouse.v1.WarehouseService/Reserve [orders, client]
+      warehouse.v1.WarehouseService/Reserve [warehouse, server]
+        UPDATE stock [warehouse, client]
+    publish orders.events [orders, producer]
+      process orders.events [notifications, consumer]
+трасса 2:
+  POST /orders [orders, server] ERROR "reserve failed" +exception
+    warehouse.v1.WarehouseService/Reserve [orders, client] ERROR "not enough tea"
+      warehouse.v1.WarehouseService/Reserve [warehouse, server]
+        UPDATE stock [warehouse, client] +not enough stock

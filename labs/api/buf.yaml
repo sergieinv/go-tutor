@@ -1,0 +1,22 @@
+# buf-модуль контрактов итогового проекта: «Заказы», «Склад» и события Kafka.
+# Один модуль на все сервисы — контракт живёт отдельно от реализаций, и
+# buf breaking проверяет совместимость всех API разом.
+#
+#   buf lint                                  — стиль (STANDARD)
+#   buf breaking --against '<baseline>'      — совместимость (см. README)
+#   buf generate                              — Go-код в gen/ (buf.gen.yaml)
+version: v2
+modules:
+  - path: proto
+# Коммиты зависимостей — в buf.lock (те же, что у песочницы учебника).
+deps:
+  - buf.build/googleapis/googleapis
+  - buf.build/bufbuild/protovalidate
+lint:
+  use:
+    - STANDARD
+breaking:
+  # FILE — самый строгий набор: ловит и то, что ломает сгенерированный код
+  # (переименование сообщения, перенос между файлами), а не только провод.
+  use:
+    - FILE

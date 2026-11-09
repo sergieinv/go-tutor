@@ -8,31 +8,32 @@ package sqlcgen
 import (
 	"context"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const createOrder = `-- name: CreateOrder :one
-INSERT INTO orders (customer_id, status, total_cents, created_at, updated_at)
-VALUES ($1, $2, $3, $4, $4)
-RETURNING id
+const createOrder = `-- name: CreateOrder :exec
+INSERT INTO orders (id, customer_id, status, total_cents, created_at, updated_at)
+VALUES ($1, $2, $3, $4, $5, $5)
 `
 
 type CreateOrderParams struct {
+	ID         int64
 	CustomerID int64
 	Status     string
 	TotalCents int64
 	CreatedAt  time.Time
 }
 
-func (q *Queries) CreateOrder(ctx context.Context, arg CreateOrderParams) (int64, error) {
-	row := q.db.QueryRow(ctx, createOrder,
+func (q *Queries) CreateOrder(ctx context.Context, arg CreateOrderParams) error {
+	_, err := q.db.Exec(ctx, createOrder,
+		arg.ID,
 		arg.CustomerID,
 		arg.Status,
 		arg.TotalCents,
 		arg.CreatedAt,
 	)
-	var id int64
-	err := row.Scan(&id)
-	return id, err
+	return err
 }
 
 const createOrderItem = `-- name: CreateOrderItem :exec
@@ -58,22 +59,26 @@ func (q *Queries) CreateOrderItem(ctx context.Context, arg CreateOrderItemParams
 }
 
 const createOutboxEvent = `-- name: CreateOutboxEvent :exec
-INSERT INTO outbox (event_type, aggregate_id, payload, created_at)
-VALUES ($1, $2, $3, $4)
+INSERT INTO outbox (event_id, event_type, aggregate_id, payload, trace_context, created_at)
+VALUES ($1, $2, $3, $4, $5, $6)
 `
 
 type CreateOutboxEventParams struct {
-	EventType   string
-	AggregateID int64
-	Payload     []byte
-	CreatedAt   time.Time
+	EventID      string
+	EventType    string
+	AggregateID  int64
+	Payload      []byte
+	TraceContext []byte
+	CreatedAt    time.Time
 }
 
 func (q *Queries) CreateOutboxEvent(ctx context.Context, arg CreateOutboxEventParams) error {
 	_, err := q.db.Exec(ctx, createOutboxEvent,
+		arg.EventID,
 		arg.EventType,
 		arg.AggregateID,
 		arg.Payload,
+		arg.TraceContext,
 		arg.CreatedAt,
 	)
 	return err
@@ -95,21 +100,6 @@ func (q *Queries) CreateProduct(ctx context.Context, arg CreateProductParams) (i
 	var id int64
 	err := row.Scan(&id)
 	return id, err
-}
-
-const createStock = `-- name: CreateStock :exec
-INSERT INTO stock (product_id, available)
-VALUES ($1, $2)
-`
-
-type CreateStockParams struct {
-	ProductID int64
-	Available int32
-}
-
-func (q *Queries) CreateStock(ctx context.Context, arg CreateStockParams) error {
-	_, err := q.db.Exec(ctx, createStock, arg.ProductID, arg.Available)
-	return err
 }
 
 const getOrder = `-- name: GetOrder :one
@@ -155,30 +145,81 @@ func (q *Queries) GetOrderForUpdate(ctx context.Context, id int64) (Order, error
 	return i, err
 }
 
-const getProduct = `-- name: GetProduct :one
-SELECT p.id, p.name, p.price_cents, s.available
-FROM products p
-JOIN stock s ON s.product_id = p.id
-WHERE p.id = $1
+const listCustomerOrders = `-- name: ListCustomerOrders :many
+SELECT id, customer_id, status, total_cents, created_at, updated_at
+FROM orders
+WHERE customer_id = $1
+  AND ($2::bigint = 0 OR id < $2::bigint)
+ORDER BY id DESC
+LIMIT $3
 `
 
-type GetProductRow struct {
-	ID         int64
-	Name       string
-	PriceCents int64
-	Available  int32
+type ListCustomerOrdersParams struct {
+	CustomerID int64
+	BeforeID   int64
+	RowLimit   int32
 }
 
-func (q *Queries) GetProduct(ctx context.Context, id int64) (GetProductRow, error) {
-	row := q.db.QueryRow(ctx, getProduct, id)
-	var i GetProductRow
-	err := row.Scan(
-		&i.ID,
-		&i.Name,
-		&i.PriceCents,
-		&i.Available,
-	)
-	return i, err
+// Страница истории покупателя по ключу: id < before_id, новые первыми.
+// before_id = 0 — первая страница.
+func (q *Queries) ListCustomerOrders(ctx context.Context, arg ListCustomerOrdersParams) ([]Order, error) {
+	rows, err := q.db.Query(ctx, listCustomerOrders, arg.CustomerID, arg.BeforeID, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Order
+	for rows.Next() {
+		var i Order
+		if err := rows.Scan(
+			&i.ID,
+			&i.CustomerID,
+			&i.Status,
+			&i.TotalCents,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listItemsByOrderIDs = `-- name: ListItemsByOrderIDs :many
+SELECT order_id, product_id, quantity, price_cents
+FROM order_items
+WHERE order_id = ANY($1::bigint[])
+ORDER BY order_id, product_id
+`
+
+// Позиции страницы заказов одним запросом (без N+1).
+func (q *Queries) ListItemsByOrderIDs(ctx context.Context, orderIds []int64) ([]OrderItem, error) {
+	rows, err := q.db.Query(ctx, listItemsByOrderIDs, orderIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []OrderItem
+	for rows.Next() {
+		var i OrderItem
+		if err := rows.Scan(
+			&i.OrderID,
+			&i.ProductID,
+			&i.Quantity,
+			&i.PriceCents,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listOrderItems = `-- name: ListOrderItems :many
@@ -215,7 +256,7 @@ func (q *Queries) ListOrderItems(ctx context.Context, orderID int64) ([]ListOrde
 }
 
 const listPendingEvents = `-- name: ListPendingEvents :many
-SELECT id, event_type, aggregate_id, payload, created_at
+SELECT id, event_id, event_type, aggregate_id, payload, trace_context, created_at
 FROM outbox
 WHERE published_at IS NULL
 ORDER BY id
@@ -223,11 +264,13 @@ LIMIT $1
 `
 
 type ListPendingEventsRow struct {
-	ID          int64
-	EventType   string
-	AggregateID int64
-	Payload     []byte
-	CreatedAt   time.Time
+	ID           int64
+	EventID      string
+	EventType    string
+	AggregateID  int64
+	Payload      []byte
+	TraceContext []byte
+	CreatedAt    time.Time
 }
 
 func (q *Queries) ListPendingEvents(ctx context.Context, limit int32) ([]ListPendingEventsRow, error) {
@@ -241,9 +284,11 @@ func (q *Queries) ListPendingEvents(ctx context.Context, limit int32) ([]ListPen
 		var i ListPendingEventsRow
 		if err := rows.Scan(
 			&i.ID,
+			&i.EventID,
 			&i.EventType,
 			&i.AggregateID,
 			&i.Payload,
+			&i.TraceContext,
 			&i.CreatedAt,
 		); err != nil {
 			return nil, err
@@ -257,37 +302,24 @@ func (q *Queries) ListPendingEvents(ctx context.Context, limit int32) ([]ListPen
 }
 
 const listProductsByIDs = `-- name: ListProductsByIDs :many
-SELECT p.id, p.name, p.price_cents, s.available
-FROM products p
-JOIN stock s ON s.product_id = p.id
-WHERE p.id = ANY($1::bigint[])
-ORDER BY p.id
+SELECT id, name, price_cents
+FROM products
+WHERE id = ANY($1::bigint[])
+ORDER BY id
 `
-
-type ListProductsByIDsRow struct {
-	ID         int64
-	Name       string
-	PriceCents int64
-	Available  int32
-}
 
 // Все товары заказа одним запросом: массив целиком передаётся одним
 // параметром ($1::bigint[]), а не списком плейсхолдеров.
-func (q *Queries) ListProductsByIDs(ctx context.Context, ids []int64) ([]ListProductsByIDsRow, error) {
+func (q *Queries) ListProductsByIDs(ctx context.Context, ids []int64) ([]Product, error) {
 	rows, err := q.db.Query(ctx, listProductsByIDs, ids)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ListProductsByIDsRow
+	var items []Product
 	for rows.Next() {
-		var i ListProductsByIDsRow
-		if err := rows.Scan(
-			&i.ID,
-			&i.Name,
-			&i.PriceCents,
-			&i.Available,
-		); err != nil {
+		var i Product
+		if err := rows.Scan(&i.ID, &i.Name, &i.PriceCents); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -298,44 +330,68 @@ func (q *Queries) ListProductsByIDs(ctx context.Context, ids []int64) ([]ListPro
 	return items, nil
 }
 
-const releaseStock = `-- name: ReleaseStock :execrows
-UPDATE stock
-SET available = available + $1
-WHERE product_id = $2
+const markEventsPublished = `-- name: MarkEventsPublished :exec
+UPDATE outbox
+SET published_at = $1
+WHERE id = ANY($2::bigint[])
 `
 
-type ReleaseStockParams struct {
-	Quantity  int32
-	ProductID int64
+type MarkEventsPublishedParams struct {
+	PublishedAt pgtype.Timestamptz
+	Ids         []int64
 }
 
-func (q *Queries) ReleaseStock(ctx context.Context, arg ReleaseStockParams) (int64, error) {
-	result, err := q.db.Exec(ctx, releaseStock, arg.Quantity, arg.ProductID)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
+func (q *Queries) MarkEventsPublished(ctx context.Context, arg MarkEventsPublishedParams) error {
+	_, err := q.db.Exec(ctx, markEventsPublished, arg.PublishedAt, arg.Ids)
+	return err
 }
 
-const reserveStock = `-- name: ReserveStock :execrows
-UPDATE stock
-SET available = available - $1
-WHERE product_id = $2 AND available >= $1
+const nextOrderID = `-- name: NextOrderID :one
+SELECT nextval(pg_get_serial_sequence('orders', 'id'))::bigint
 `
 
-type ReserveStockParams struct {
-	Quantity  int32
-	ProductID int64
+// Номер заказа — из последовательности identity-колонки до вставки.
+// nextval не откатывается вместе с транзакцией: номера уникальны всегда,
+// пропуски — норма.
+func (q *Queries) NextOrderID(ctx context.Context) (int64, error) {
+	row := q.db.QueryRow(ctx, nextOrderID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
-// Атомарное резервирование: проверка и списание — одна инструкция.
-// 0 затронутых строк — остатка не хватило.
-func (q *Queries) ReserveStock(ctx context.Context, arg ReserveStockParams) (int64, error) {
-	result, err := q.db.Exec(ctx, reserveStock, arg.Quantity, arg.ProductID)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
+const outboxStats = `-- name: OutboxStats :one
+SELECT count(*)::bigint AS pending,
+       COALESCE(min(created_at), now())::timestamptz AS oldest
+FROM outbox
+WHERE published_at IS NULL
+`
+
+type OutboxStatsRow struct {
+	Pending int64
+	Oldest  time.Time
+}
+
+// Отставание outbox: сколько событий ждут и когда создано самое старое.
+func (q *Queries) OutboxStats(ctx context.Context) (OutboxStatsRow, error) {
+	row := q.db.QueryRow(ctx, outboxStats)
+	var i OutboxStatsRow
+	err := row.Scan(&i.Pending, &i.Oldest)
+	return i, err
+}
+
+const tryLockOutbox = `-- name: TryLockOutbox :one
+SELECT pg_try_advisory_xact_lock($1::bigint)
+`
+
+// Advisory-блокировка на время транзакции relay: публикует одна реплика,
+// иначе две реплики отправляли бы события вперемешку и ломали порядок
+// по ключу. Не взяли — публикует другая, пропускаем такт.
+func (q *Queries) TryLockOutbox(ctx context.Context, lockKey int64) (bool, error) {
+	row := q.db.QueryRow(ctx, tryLockOutbox, lockKey)
+	var pg_try_advisory_xact_lock bool
+	err := row.Scan(&pg_try_advisory_xact_lock)
+	return pg_try_advisory_xact_lock, err
 }
 
 const updateOrderStatus = `-- name: UpdateOrderStatus :execrows

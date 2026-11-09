@@ -1,0 +1,117 @@
+questions:
+  - id: autocommit-last-poll
+    kind: output
+    prompt: "Автокоммит включён (по умолчанию). Первый участник группы прочитал все три записи одним опросом и закрылся. Сколько записей получит следующий участник той же группы?"
+    code: |
+      package main
+
+      import (
+      	"context"
+      	"fmt"
+      	"log"
+      	"time"
+
+      	"github.com/twmb/franz-go/pkg/kfake"
+      	"github.com/twmb/franz-go/pkg/kgo"
+      )
+
+      func main() {
+      	ctx := context.Background()
+      	c, err := kfake.NewCluster(kfake.NumBrokers(1), kfake.SeedTopics(1, "t"))
+      	if err != nil {
+      		log.Fatal(err)
+      	}
+      	defer c.Close()
+      	p, err := kgo.NewClient(kgo.SeedBrokers(c.ListenAddrs()...))
+      	if err != nil {
+      		log.Fatal(err)
+      	}
+      	defer p.Close()
+      	err = p.ProduceSync(ctx, &kgo.Record{Topic: "t", Value: []byte("a")},
+      		&kgo.Record{Topic: "t", Value: []byte("b")}, &kgo.Record{Topic: "t", Value: []byte("c")}).FirstErr()
+      	if err != nil {
+      		log.Fatal(err)
+      	}
+
+      	read := func() int {
+      		cl, err := kgo.NewClient(kgo.SeedBrokers(c.ListenAddrs()...),
+      			kgo.ConsumerGroup("g"), kgo.ConsumeTopics("t"), kgo.FetchMaxWait(200*time.Millisecond))
+      		if err != nil {
+      			log.Fatal(err)
+      		}
+      		defer cl.Close()
+      		ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+      		defer cancel()
+      		n := 0
+      		for n < 3 {
+      			f := cl.PollFetches(ctx)
+      			if f.Err0() != nil {
+      				break
+      			}
+      			n += f.NumRecords()
+      		}
+      		return n
+      	}
+      	read()
+      	fmt.Println(read())
+      }
+    options:
+      - text: "3"
+        correct: true
+        explain: "Автокоммит kgo коммитит записи предыдущих опросов: прочитанное последним `PollFetches` считается обработанным, только когда вы опросили снова. Последний опрос перед `Close` не коммитится — после перезапуска эта пачка придёт снова. Закоммитить её явно — `cl.CommitUncommittedOffsets(ctx)` перед `Close`."
+      - text: "0"
+        explain: "Так было бы, если бы автокоммит считал обработанным всё, что вернул опрос. kgo осторожнее: запись могла быть ещё не обработана, когда клиент закрыли, поэтому последняя пачка остаётся незакоммиченной."
+      - text: "1"
+        explain: "Коммит — один офсет на партицию, а не по записи: либо закоммичены все три записи, либо ни одной."
+
+  - id: idle-members
+    kind: single
+    prompt: "В топике 3 партиции, в группе запущено 5 участников. Что происходит?"
+    options:
+      - text: "Трое получают по партиции, двое простаивают в резерве"
+        correct: true
+        explain: "Партицию в группе читает ровно один участник, поэтому число партиций — потолок параллельности. Лишние участники подхватят партиции при выходе других."
+      - text: "Каждую партицию читают по очереди, записи делятся между всеми пятью"
+        explain: "Так работает очередь, а не группа Kafka: здесь партиция закреплена за одним участником до ребалансировки."
+      - text: "Брокер отклонит лишних участников"
+        explain: "Участники входят в группу, но без партиций — ждут ребалансировки."
+
+  - id: commit-offset
+    kind: single
+    prompt: "Участник обработал запись партиции 2 с офсетом 41 и вызвал `cl.CommitRecords(ctx, r)`. Какой офсет закоммичен и с какой записи продолжит новый владелец партиции?"
+    options:
+      - text: "42 — продолжит с записи 42"
+        correct: true
+        explain: "Закоммиченный офсет — «следующую читать отсюда»: `CommitRecords` коммитит офсет записи плюс один."
+      - text: "41 — продолжит с записи 41, повторив её"
+        explain: "Тогда после каждого перезапуска последняя обработанная запись повторялась бы. `CommitRecords` сам прибавляет единицу."
+      - text: "41 — продолжит с записи 42"
+        explain: "Брокер ничего не прибавляет: потребитель начинает ровно с закоммиченного офсета. Единицу прибавляет `CommitRecords` на стороне клиента."
+
+  - id: rebalance-triggers
+    kind: multiple
+    prompt: "Что вызывает ребалансировку группы?"
+    options:
+      - text: "В группу вошёл новый участник"
+        correct: true
+        explain: "Координатор перераспределяет партиции с учётом нового участника; с cooperative-sticky переезжает только часть партиций."
+      - text: "Участник вызвал `cl.Close()`"
+        correct: true
+        explain: "`Close` отправляет LeaveGroup — партиции сразу уходят другим участникам."
+      - text: "Участник перестал слать heartbeat дольше `SessionTimeout`"
+        correct: true
+        explain: "Координатор считает его мёртвым и отдаёт партиции другим (по умолчанию через 45 с)."
+      - text: "Участник долго обрабатывает пачку между опросами"
+        explain: "В Java-клиенте и librdkafka — да (`max.poll.interval.ms`). В kgo heartbeat идёт в фоне, и долгая обработка ребалансировку не вызывает."
+
+  - id: parallel-by-partition
+    kind: single
+    prompt: "Обработка медленная, хочется параллельности, но события одного заказа должны обрабатываться по порядку. Как правильно?"
+    options:
+      - text: "Горутина на партицию: записи партиции — последовательно, партиции — параллельно; коммит после того, как все закончили"
+        correct: true
+        explain: "Порядок нужен внутри партиции (там события одного ключа), а партиции независимы. Коммит после обработки всей пачки сохраняет at-least-once."
+      - text: "Пул из N воркеров, записи раздаются по кругу"
+        explain: "События одного заказа уйдут разным воркерам и обработаются в любом порядке, а коммит офсета станет неоднозначным: офсет 7 обработан, 5 — ещё нет."
+      - text: "Включить автокоммит и обрабатывать каждую запись в своей горутине"
+        explain: "Следующий опрос «закоммитит» записи, которые горутины ещё не обработали, — сбой их потеряет. И порядок пропадает."

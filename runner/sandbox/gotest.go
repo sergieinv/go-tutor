@@ -42,7 +42,11 @@ func (e *Executor) Test(ctx context.Context, files Files, flags Flags) (*TestRes
 		return nil, err
 	}
 	defer e.release(uid)
-	ws, err := e.newWorkspace(uid, files)
+	ws, err := e.newWorkspace(ctx, uid, files)
+	var genErr *GenerateError
+	if errors.As(err, &genErr) {
+		return &TestResult{BuildFailed: true, BuildOutput: genErr.Output, Tests: []TestCase{}}, nil
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -236,7 +240,11 @@ func (e *Executor) GoTest(ctx context.Context, files Files, flags Flags, opts Te
 		return nil, err
 	}
 	defer e.release(uid)
-	ws, err := e.newWorkspace(uid, files)
+	ws, err := e.newWorkspace(ctx, uid, files)
+	var genErr *GenerateError
+	if errors.As(err, &genErr) {
+		return &GoTestResult{RunResult: RunResult{BuildFailed: true, BuildOutput: genErr.Output}}, nil
+	}
 	if err != nil {
 		return nil, err
 	}

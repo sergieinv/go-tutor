@@ -1,0 +1,55 @@
+syntax = "proto3";
+
+// События сервиса «Заказы» в Kafka (топик orders.events).
+//
+// Запись Kafka: ключ — order_id десятичной строкой (все события заказа
+// попадают в одну партицию и читаются по порядку), значение — OrderEvent в
+// бинарном protobuf. Заголовки: event-id, event-type (полное имя сообщения
+// из oneof, например "events.v1.OrderCreated"), content-type
+// "application/x-protobuf" и контекст трассировки W3C (traceparent,
+// tracestate).
+package events.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "gotutor/labs/api/gen/events/v1;eventsv1";
+
+// OrderEvent — конверт: все события заказа — одно сообщение с oneof. Так в
+// одном топике (а значит, в одной партиции и в одном порядке) живут события
+// разных типов, а потребитель разбирает значение одним типом.
+// Потребитель обязан пропускать (не считать ошибкой) незнакомые варианты
+// oneof: их добавят новые версии контракта.
+message OrderEvent {
+  // Уникальный id события. Доставка — at-least-once, поэтому потребитель
+  // дедуплицирует по нему.
+  string event_id = 1;
+  // Когда событие произошло (а не когда отправлено).
+  google.protobuf.Timestamp occur_time = 2;
+  int64 order_id = 3;
+
+  oneof event {
+    OrderCreated order_created = 10;
+    OrderCancelled order_cancelled = 11;
+  }
+}
+
+// OrderCreated — заказ создан, товар зарезервирован.
+message OrderCreated {
+  int64 customer_id = 1;
+  int64 total_cents = 2;
+  repeated OrderItem items = 3;
+}
+
+// OrderCancelled — заказ отменён, резерв возвращён на склад.
+message OrderCancelled {
+  int64 customer_id = 1;
+  int64 total_cents = 2;
+}
+
+// OrderItem — позиция заказа в событии. Отдельный тип, а не
+// orders.v1.OrderItem: события и API развиваются независимо.
+message OrderItem {
+  int64 product_id = 1;
+  int32 quantity = 2;
+  int64 price_cents = 3;
+}

@@ -1,0 +1,10 @@
+событие: 1 created
+событие: 2 paid
+событие: 3 shipped
+загружено: 2 1200 <nil>
+статус: ord-2 paid
+статус: ord-1 shipped
+статус: ord-7 unknown
+конец bidi: EOF
+клиент: Canceled
+сервер: context canceled

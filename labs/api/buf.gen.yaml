@@ -1,0 +1,22 @@
+# Генерация Go-кода: buf generate в каталоге labs/api.
+# Плагины — те же версии, что в образе runner (runner/Dockerfile):
+#   protoc-gen-go v1.36.12, protoc-gen-go-grpc v1.6.2,
+#   protoc-gen-grpc-gateway v2.30.0, protoc-gen-openapiv2 v2.30.0.
+# Пакет Go задаёт сам .proto (option go_package), paths=source_relative
+# раскладывает файлы по каталогам пакетов proto: gen/orders/v1/…
+version: v2
+clean: true
+plugins:
+  - local: protoc-gen-go
+    out: gen
+    opt: paths=source_relative
+  - local: protoc-gen-go-grpc
+    out: gen
+    opt: paths=source_relative
+  - local: protoc-gen-grpc-gateway
+    out: gen
+    opt: paths=source_relative
+  # OpenAPI-описание REST-части (только методы с google.api.http) — для
+  # документации и генерации клиентов на других языках.
+  - local: protoc-gen-openapiv2
+    out: gen/openapi

@@ -186,6 +186,7 @@ func TestWriteFixture(t *testing.T) {
 	for name, src := range map[string]string{
 		"select-trace.json":   "../../content/05-concurrency/07-select/live/main.go",
 		"pipeline-trace.json": "testdata/pipeline.go",
+		"spans-trace.json":    "testdata/spans.go",
 	} {
 		res, err := Run(context.Background(), e, read(src), sandbox.Flags{})
 		if err != nil || res.Trace == nil {
@@ -211,5 +212,39 @@ func TestRunWaitGroupGo(t *testing.T) {
 	g := res.Trace.Goroutines
 	if len(g) != 3 || g[1].Line != 8 || g[2].Line != 9 || !strings.Contains(g[1].Func, "WaitGroup") {
 		t.Fatalf("goroutines = %+v", g)
+	}
+}
+
+// Задачи, регионы и логи runtime/trace попадают в Spans и Logs.
+func TestRunSpans(t *testing.T) {
+	e := newExecutor(t)
+	src, err := os.ReadFile("testdata/spans.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := Run(context.Background(), e, sandbox.Files{"main.go": string(src)}, sandbox.Flags{})
+	if err != nil || res.Trace == nil {
+		t.Fatalf("err=%v res=%+v", err, res)
+	}
+	var tasks, regions []Span
+	for _, s := range res.Trace.Spans {
+		if s.Kind == "task" {
+			tasks = append(tasks, s)
+		} else {
+			regions = append(regions, s)
+		}
+	}
+	if len(tasks) != 3 || tasks[0].Name != "gateway" || tasks[1].Task != tasks[0].ID || tasks[2].Task != tasks[1].ID {
+		t.Fatalf("tasks = %+v", tasks)
+	}
+	if len(regions) != 3 || regions[2].Task != tasks[2].ID || regions[0].End <= regions[0].Start {
+		t.Fatalf("regions = %+v", regions)
+	}
+	var cats []string
+	for _, l := range res.Trace.Logs {
+		cats = append(cats, l.Category)
+	}
+	if strings.Join(cats, ",") != "deadline,deadline,deadline,error" || res.Trace.Logs[3].Task != tasks[2].ID {
+		t.Fatalf("logs = %+v", res.Trace.Logs)
 	}
 }

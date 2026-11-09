@@ -1,0 +1,13 @@
+checkout: x-request-id=req-42 trace-bin=cafe
+stock: x-request-id=[req-42] authorization=[] дедлайн=true
+клиент: res-ord-1 <nil>
+клиент: заголовок [req-42] трейлер [7]
+checkout: x-request-id=req-42 trace-bin=cafe
+checkout: меньше 100 мс — отказ без вызова Stock
+клиент: DeadlineExceeded
+checkout: x-request-id=req-42 trace-bin=cafe
+клиент: DeadlineExceeded
+stock прервал работу: true
+checkout: x-request-id=req-42 trace-bin=cafe
+клиент: Canceled
+stock увидел: context canceled

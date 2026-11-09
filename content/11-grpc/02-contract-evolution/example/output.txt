@@ -1,0 +1,8 @@
+сервер: ann@example.com 1200 CURRENT_STATUS_PAID
+  неизвестные байты: 22 06 53 50 52 49 4e 47
+клиент: статус 3 неизвестных байт: 14
+после прокси: [gift] 2026-03-01 CURRENT_STATUS_SHIPPED 1000
+JSON строго: true
+JSON с DiscardUnknown: err=<nil> email=""
+тип сменили: total_cents = 0 неизвестных байт: 6
+усечение: LEGACY_STATUS_PAID

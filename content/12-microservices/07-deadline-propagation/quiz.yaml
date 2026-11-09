@@ -1,0 +1,89 @@
+questions:
+  - id: timeout-cannot-extend
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"context"
+      	"fmt"
+      	"time"
+      )
+
+      func main() {
+      	parent, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+      	defer cancel()
+      	child, cancel2 := context.WithTimeout(parent, 5*time.Second)
+      	defer cancel2()
+
+      	pd, _ := parent.Deadline()
+      	cd, _ := child.Deadline()
+      	fmt.Println(cd.Equal(pd), time.Until(cd) < time.Second)
+      }
+    options:
+      - text: "true true"
+        correct: true
+        explain: "`WithTimeout` (как и `WithDeadline`) не продлевает дедлайн родителя: если родительский раньше, потомок получает его же. Поэтому «свой» таймаут 5 с при входящих 300 мс ничего не даёт — считайте таймаут от остатка."
+      - text: "false false"
+        explain: "Потомок не может жить дольше родителя: отмена родителя всё равно отменит его. Поэтому `context` сразу берёт ранний дедлайн."
+      - text: "false true"
+        explain: "Дедлайны совпадают в точности: при раннем родительском дедлайне `WithDeadline` возвращает обычный `WithCancel`-потомок, и `Deadline()` у него — родительский."
+
+  - id: without-cancel
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"context"
+      	"fmt"
+      	"time"
+      )
+
+      type key struct{}
+
+      func main() {
+      	ctx, cancel := context.WithTimeout(context.WithValue(context.Background(), key{}, "req-42"), time.Second)
+      	bg := context.WithoutCancel(ctx)
+      	cancel()
+
+      	_, hasDeadline := bg.Deadline()
+      	fmt.Println(ctx.Err(), bg.Err(), hasDeadline, bg.Value(key{}))
+      }
+    options:
+      - text: "context canceled <nil> false req-42"
+        correct: true
+        explain: "`WithoutCancel` отвязывает потомка от отмены и дедлайна родителя, но сохраняет значения. Так запускают фоновую работу после ответа: request id и трасса остаются, отмена запроса её не обрывает. Свой таймаут — отдельным `WithTimeout`."
+      - text: "context canceled context canceled true req-42"
+        explain: "Это поведение обычного потомка. `WithoutCancel` как раз не передаёт отмену и дедлайн."
+      - text: "context canceled <nil> false <nil>"
+        explain: "Значения контекста `WithoutCancel` сохраняет — в этом его отличие от `context.Background()`."
+
+  - id: early-refusal
+    kind: single
+    prompt: "Обработчику orders осталось 40 мс до дедлайна, а резерв на складе обычно занимает 100 мс. Что правильно?"
+    options:
+      - text: "Сразу вернуть `codes.DeadlineExceeded`, не вызывая склад"
+        correct: true
+        explain: "Ответ всё равно никто не дождётся, а вызов займёт соединение, горутины и, возможно, блокировки на складе. Отказ раньше начала экономит ресурсы всей цепочки."
+      - text: "Вызвать склад с `context.WithTimeout(ctx, 100*time.Millisecond)`, чтобы ему хватило"
+        explain: "Таймаут не продлит дедлайн родителя: склад всё равно увидит 40 мс. Работа будет начата и брошена."
+      - text: "Вызвать склад с `context.Background()`, чтобы резерв точно завершился"
+        explain: "Склад сделает работу, результат которой никто не получит, а отмена клиента до него не дойдёт. Это разрыв цепочки контекстов."
+
+  - id: what-propagates
+    kind: multiple
+    prompt: "Orders вызывает склад через grpc-go с контекстом обработчика `ctx`. Что склад получит без дополнительного кода?"
+    options:
+      - text: "Дедлайн — заголовком `grpc-timeout` с оставшимся временем"
+        correct: true
+        explain: "grpc-go сам пересчитывает дедлайн контекста в `grpc-timeout`, а сервер превращает его обратно в дедлайн контекста обработчика."
+      - text: "Отмену — когда клиент orders отменил свой вызов"
+        correct: true
+        explain: "Отмена входящего вызова отменяет `ctx` обработчика, а с ним исходящий вызов: склад получает `RST_STREAM`, и его контекст отменяется."
+      - text: "Значения `context.WithValue` — например, request id"
+        explain: "Значения контекста живут только в процессе. Через сеть их передают явно — metadata (`metadata.AppendToOutgoingContext`) или propagator OpenTelemetry."
+      - text: "Входящую metadata orders — все заголовки клиента"
+        explain: "Входящая metadata не становится исходящей сама: её копируют явно (и только нужные ключи), обычно в interceptor."

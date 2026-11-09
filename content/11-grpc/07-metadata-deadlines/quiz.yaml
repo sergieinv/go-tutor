@@ -1,0 +1,126 @@
+questions:
+  - id: keys-lowercase
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+
+      	"google.golang.org/grpc/metadata"
+      )
+
+      func main() {
+      	md := metadata.Pairs("X-Request-ID", "a", "x-request-id", "b")
+      	fmt.Println(md.Get("X-Request-Id"), len(md["X-Request-ID"]))
+      }
+    options:
+      - text: "[a b] 0"
+        correct: true
+        explain: "Ключи metadata — заголовки HTTP/2, а там имена только в нижнем регистре. `Pairs` приводит ключи к нижнему регистру, поэтому оба значения попали под `x-request-id`; `Get` тоже приводит ключ. А прямой доступ к map по `X-Request-ID` ничего не находит — такого ключа в ней нет."
+      - text: "[b] 1"
+        explain: "Значения не затираются: metadata — `map[string][]string`, повтор ключа добавляет значение в срез."
+      - text: "[a b] 2"
+        explain: "Нормализует ключи `Pairs`, а не `Get`: в самой map хранится `x-request-id`, и обращение `md[\"X-Request-ID\"]` в обход методов не находит ничего."
+      - text: "[] 1"
+        explain: "`Get` нечувствителен к регистру: он приводит ключ к нижнему регистру перед поиском."
+
+  - id: incoming-not-outgoing
+    kind: output
+    prompt: "Контекст обработчика содержит входящую metadata. Что выведет программа?"
+    code: |
+      package main
+
+      import (
+      	"context"
+      	"fmt"
+
+      	"google.golang.org/grpc/metadata"
+      )
+
+      func main() {
+      	// Так выглядит ctx в обработчике сервера.
+      	in := metadata.NewIncomingContext(context.Background(),
+      		metadata.Pairs("x-request-id", "r1"))
+
+      	_, ok := metadata.FromOutgoingContext(in)
+      	out := metadata.AppendToOutgoingContext(in, "x-trace", "t1")
+      	om, _ := metadata.FromOutgoingContext(out)
+      	fmt.Println(ok, om.Get("x-request-id"), om.Get("x-trace"))
+      }
+    options:
+      - text: "false [] [t1]"
+        correct: true
+        explain: "Входящая и исходящая metadata лежат в контексте под разными ключами. Исходящей у обработчика нет, а `AppendToOutgoingContext` создаёт её только из переданных пар. Поэтому сервер не пересылает дальше ни request id, ни `authorization` — пока вы не сделаете это явно."
+      - text: "true [r1] [t1]"
+        explain: "Автоматического проброса нет: так случайно утекали бы токены клиента в чужие сервисы. Нужные ключи копируют руками."
+      - text: "false [r1] [t1]"
+        explain: "`AppendToOutgoingContext` не смотрит во входящую metadata — только в исходящую, которой здесь нет."
+      - text: "true [] [t1]"
+        explain: "`FromOutgoingContext` у контекста без исходящей metadata возвращает `ok == false`."
+
+  - id: canceled-vs-deadline
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"context"
+      	"fmt"
+      	"net"
+      	"time"
+
+      	"google.golang.org/grpc"
+      	"google.golang.org/grpc/credentials/insecure"
+      	"google.golang.org/grpc/health"
+      	healthpb "google.golang.org/grpc/health/grpc_health_v1"
+      	"google.golang.org/grpc/status"
+      )
+
+      func main() {
+      	srv := grpc.NewServer()
+      	healthpb.RegisterHealthServer(srv, health.NewServer())
+      	lis, _ := net.Listen("tcp", "127.0.0.1:0")
+      	go srv.Serve(lis)
+      	defer srv.Stop()
+      	conn, _ := grpc.NewClient(lis.Addr().String(),
+      		grpc.WithTransportCredentials(insecure.NewCredentials()))
+      	defer conn.Close()
+      	client := healthpb.NewHealthClient(conn)
+
+      	ctx, cancel := context.WithTimeout(context.Background(), time.Hour)
+      	cancel()
+      	_, err := client.Check(ctx, &healthpb.HealthCheckRequest{})
+      	fmt.Println(status.Code(err))
+
+      	ctx2, cancel2 := context.WithTimeout(context.Background(), -time.Second)
+      	defer cancel2()
+      	_, err = client.Check(ctx2, &healthpb.HealthCheckRequest{})
+      	fmt.Println(status.Code(err))
+      }
+    options:
+      - text: "Canceled\nDeadlineExceeded"
+        correct: true
+        explain: "Код определяется причиной, по которой закончился контекст: `cancel()` даёт `context.Canceled` → `codes.Canceled`, истёкший срок — `context.DeadlineExceeded` → `codes.DeadlineExceeded`. Оба вызова даже не уходят на сервер. Различать их полезно: `Canceled` — клиент передумал, `DeadlineExceeded` — не уложились во время."
+      - text: "DeadlineExceeded\nDeadlineExceeded"
+        explain: "У первого контекста есть таймаут в час, но закончился он раньше — вызовом `cancel()`. Причина — отмена."
+      - text: "OK\nDeadlineExceeded"
+        explain: "Отменённый контекст gRPC проверяет до отправки: вызов не выполняется."
+      - text: "Canceled\nOK"
+        explain: "Отрицательный таймаут создаёт уже истёкший контекст — вызов сразу получает `DeadlineExceeded`."
+
+  - id: work-after-response
+    kind: single
+    prompt: "Обработчик `Checkout` после ответа клиенту должен отправить письмо в фоне (до 5 секунд). Какой контекст передать горутине?"
+    options:
+      - text: "`context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)`"
+        correct: true
+        explain: "`WithoutCancel` (Go 1.21) сохраняет значения контекста — request id, трассировку, — но не наследует отмену и дедлайн запроса, которые наступят сразу после ответа. Свой таймаут ограничивает фоновую работу, чтобы она не жила вечно."
+      - text: "`ctx` обработчика"
+        explain: "Контекст вызова отменяется, когда обработчик вернул ответ. Горутина с ним оборвётся почти сразу, письмо не уйдёт."
+      - text: "`context.Background()`"
+        explain: "Работать будет, но без request id и трассировки — фоновую работу не связать с запросом в логах. И без таймаута, если забыть его добавить."
+      - text: "`context.WithTimeout(ctx, 5*time.Second)`"
+        explain: "Дочерний контекст наследует отмену родителя: ответ отправлен — отменён и он, несмотря на свои 5 секунд. Таймаут может только сократить срок родителя, но не продлить."

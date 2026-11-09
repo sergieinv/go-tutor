@@ -18,14 +18,16 @@ interface Props {
 const { lesson, example, race, vulncheck, labs = [] } = Astro.props;
 const labInfo = { postgres: ["PostgreSQL", "POSTGRES_DSN"], mysql: ["MySQL", "MYSQL_DSN"] } as const;
 const editable: Record<string, string> = {
+  ...example.protos,
   "main.go": example.source,
   ...example.tests,
   ...(example.mod ? { "go.mod": example.mod } : {}),
 };
+const hasProto = Object.keys(example.protos).length > 0;
 const testMode = Object.keys(example.tests).length > 0;
 const multi = Object.keys(editable).length > 1;
 const fallbacks = await Promise.all(
-  Object.entries(editable).map(async ([name, src]) => ({ name, html: await highlight(src.trimEnd(), "go") })),
+  Object.entries(editable).map(async ([name, src]) => ({ name, html: await highlight(src.trimEnd(), name.endsWith(".proto") ? "proto" : "go") })),
 );
 const files = example.files;
 ---
@@ -37,6 +39,15 @@ const files = example.files;
     <kbd>Ctrl</kbd>/<kbd>⌘</kbd>+<kbd>Enter</kbd> — {testMode ? "тесты" : "запуск"}, <kbd>Tab</kbd> — отступ,
     <kbd>Esc</kbd> и затем <kbd>Tab</kbd> — выйти из редактора.
     {race && <> Код собирается с детектором гонок <code>-race</code>.</>}
+    {
+      hasProto && (
+        <>
+          {" "}
+          Контракт <code>.proto</code> тоже редактируется: при каждом запуске runner заново генерирует по нему Go-код
+          (<code>buf generate</code>). «buf breaking» сравнивает контракт с исходным из урока.
+        </>
+      )
+    }
   </p>
   {
     labs.length > 0 && (
@@ -113,6 +124,18 @@ const files = example.files;
         </button>
       )
     }
+    {
+      hasProto && (
+        <>
+          <button type="button" data-action="run" data-mode="buf-lint" disabled>
+            buf lint
+          </button>
+          <button type="button" data-action="run" data-mode="buf-breaking" disabled>
+            buf breaking
+          </button>
+        </>
+      )
+    }
     <button type="button" data-action="format" disabled>Формат</button>
     <button type="button" data-action="reset" disabled>Сбросить</button>
     <button type="button" data-action="share" disabled>Поделиться</button>
@@ -122,17 +145,20 @@ const files = example.files;
 </section>
 
 <script>
-  import { format, goTest, run, RunnerError, vulncheck, type GoTestMode } from "../lib/client/api.ts";
+  import { buf, format, goTest, run, RunnerError, vulncheck, type GoTestMode } from "../lib/client/api.ts";
   import { createEditor, getDoc, setDoc } from "../lib/client/editor.ts";
   import { loadDraft, saveDraft, storage } from "../lib/client/progress.ts";
-  import { showError, showGoTest, showPending, showRun, showVulncheck } from "../lib/client/render.ts";
+  import { showBuf, showError, showGoTest, showPending, showRun, showVulncheck } from "../lib/client/render.ts";
   import { fromHash, shareURL } from "../lib/client/share.ts";
   import type { EditorView } from "@codemirror/view";
 
   const kv = storage();
 
-  const pending: Record<GoTestMode | "vulncheck", string> = {
+  type Mode = GoTestMode | "vulncheck" | "buf-lint" | "buf-breaking";
+  const pending: Record<Mode, string> = {
     vulncheck: "govulncheck сверяет вызовы с базой уязвимостей…",
+    "buf-lint": "buf lint проверяет контракт…",
+    "buf-breaking": "buf breaking сравнивает контракт с исходным…",
     test: "Сборка и запуск тестов…",
     bench: "Бенчмарки идут несколько секунд…",
     fuzz: "Fuzzing идёт несколько секунд…",
@@ -186,14 +212,17 @@ const files = example.files;
     }
     const current = () => Object.fromEntries(names.map((n) => [n, getDoc(editors.get(n)!)]));
 
-    async function doRun(mode?: GoTestMode | "vulncheck", fuzz?: string) {
+    async function doRun(mode?: Mode, fuzz?: string) {
       if (busy) return;
       busy = true;
       for (const b of buttons("run")) b.disabled = true;
       showPending(result, mode ? pending[mode] : "Сборка и запуск…");
       try {
         const files = { ...extra, ...current() };
+        const protos = (f: Record<string, string>) => Object.fromEntries(Object.entries(f).filter(([n]) => n.endsWith(".proto") || n === "buf.yaml"));
         if (mode === "vulncheck") showVulncheck(result, await vulncheck(files, lesson));
+        else if (mode === "buf-lint") showBuf(result, await buf(protos(files), lesson), false);
+        else if (mode === "buf-breaking") showBuf(result, await buf(protos(files), lesson, protos({ ...extra, ...initial })), true);
         else if (mode) showGoTest(result, await goTest(files, mode, lesson, fuzz), mode);
         else showRun(result, await run(files, lesson));
       } catch (e) {
@@ -205,7 +234,7 @@ const files = example.files;
     }
 
     for (const b of buttons("run")) {
-      b.addEventListener("click", () => doRun(b.dataset.mode as GoTestMode | "vulncheck" | undefined, b.dataset.fuzz));
+      b.addEventListener("click", () => doRun(b.dataset.mode as Mode | undefined, b.dataset.fuzz));
     }
     buttons("format")[0].addEventListener("click", async () => {
       try {

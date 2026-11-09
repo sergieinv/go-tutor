@@ -1,0 +1,161 @@
+questions:
+  - id: chain-order
+    kind: output
+    prompt: "Что выведет программа? Health-сервис из grpc-go, вызов через bufconn."
+    code: |
+      package main
+
+      import (
+      	"context"
+      	"fmt"
+      	"net"
+
+      	"google.golang.org/grpc"
+      	"google.golang.org/grpc/credentials/insecure"
+      	"google.golang.org/grpc/health"
+      	healthpb "google.golang.org/grpc/health/grpc_health_v1"
+      	"google.golang.org/grpc/test/bufconn"
+      )
+
+      func named(name string) grpc.UnaryServerInterceptor {
+      	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, h grpc.UnaryHandler) (any, error) {
+      		fmt.Print(name, "> ")
+      		resp, err := h(ctx, req)
+      		fmt.Print("<", name, " ")
+      		return resp, err
+      	}
+      }
+
+      func main() {
+      	lis := bufconn.Listen(1 << 20)
+      	srv := grpc.NewServer(
+      		grpc.ChainUnaryInterceptor(named("a"), named("b")),
+      		grpc.UnaryInterceptor(named("c")),
+      	)
+      	healthpb.RegisterHealthServer(srv, health.NewServer())
+      	go srv.Serve(lis)
+      	defer srv.Stop()
+
+      	conn, _ := grpc.NewClient("passthrough:///bufnet",
+      		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) { return lis.DialContext(ctx) }),
+      		grpc.WithTransportCredentials(insecure.NewCredentials()))
+      	defer conn.Close()
+      	healthpb.NewHealthClient(conn).Check(context.Background(), &healthpb.HealthCheckRequest{})
+      	fmt.Println()
+      }
+    options:
+      - text: "c> a> b> <b <a <c "
+        correct: true
+        explain: "Звено из `UnaryInterceptor` всегда ставится перед цепочкой из `ChainUnaryInterceptor`, независимо от порядка опций. Внутри цепочки первое — внешнее. На выходе — обратный порядок, как у вложенных вызовов."
+      - text: "a> b> c> <c <b <a "
+        explain: "Порядок опций в `NewServer` не важен: grpc-go при старте склеивает `unaryInt` **перед** `chainUnaryInts`."
+      - text: "a> b> c> <a <b <c "
+        explain: "Interceptors — вложенные вызовы: внешнее звено возвращается последним, поэтому выход идёт в обратном порядке."
+      - text: Паника при старте сервера
+        explain: "Паника будет, только если вызвать `grpc.UnaryInterceptor` дважды. С `ChainUnaryInterceptor` он сочетается."
+
+  - id: stream-bypass
+    kind: output
+    prompt: "Auth подключён только как unary-interceptor. Что выведет программа?"
+    code: |
+      package main
+
+      import (
+      	"context"
+      	"fmt"
+      	"net"
+
+      	"google.golang.org/grpc"
+      	"google.golang.org/grpc/codes"
+      	"google.golang.org/grpc/credentials/insecure"
+      	"google.golang.org/grpc/health"
+      	healthpb "google.golang.org/grpc/health/grpc_health_v1"
+      	"google.golang.org/grpc/status"
+      	"google.golang.org/grpc/test/bufconn"
+      )
+
+      func denyAll(ctx context.Context, req any, info *grpc.UnaryServerInfo, h grpc.UnaryHandler) (any, error) {
+      	return nil, status.Error(codes.Unauthenticated, "no token")
+      }
+
+      func main() {
+      	lis := bufconn.Listen(1 << 20)
+      	srv := grpc.NewServer(grpc.ChainUnaryInterceptor(denyAll))
+      	healthpb.RegisterHealthServer(srv, health.NewServer())
+      	go srv.Serve(lis)
+      	defer srv.Stop()
+
+      	conn, _ := grpc.NewClient("passthrough:///bufnet",
+      		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) { return lis.DialContext(ctx) }),
+      		grpc.WithTransportCredentials(insecure.NewCredentials()))
+      	defer conn.Close()
+      	client := healthpb.NewHealthClient(conn)
+
+      	_, err := client.Check(context.Background(), &healthpb.HealthCheckRequest{})
+      	fmt.Println("Check:", status.Code(err))
+
+      	ctx, cancel := context.WithCancel(context.Background())
+      	defer cancel()
+      	stream, _ := client.Watch(ctx, &healthpb.HealthCheckRequest{})
+      	resp, err := stream.Recv()
+      	fmt.Println("Watch:", resp.GetStatus(), status.Code(err))
+      }
+    options:
+      - text: |-
+          Check: Unauthenticated
+          Watch: SERVING OK
+        correct: true
+        explain: "`Watch` — серверный стрим, а стримы идут только через `ChainStreamInterceptor`. Unary-цепочка его не видит, и проверка просто не выполняется. Auth нужно ставить в обе цепочки."
+      - text: |-
+          Check: Unauthenticated
+          Watch: UNKNOWN Unauthenticated
+        explain: "Так было бы, если бы `denyAll` стоял и в stream-цепочке. Unary-interceptors на стримы не действуют."
+      - text: |-
+          Check: SERVING
+          Watch: SERVING OK
+        explain: "`Check` — unary-вызов, он проходит через `denyAll` и получает `Unauthenticated`. Да и `status.Code(nil)` печатается как `OK`, а не как статус health."
+      - text: Программа не скомпилируется
+        explain: "Компилируется: у `nil`-ответа геттер `GetStatus()` безопасен, а `status.Code(nil)` возвращает `OK`."
+
+  - id: panic-without-recovery
+    kind: single
+    prompt: "В сервере на grpc-go нет recovery-interceptor, и обработчик паникует (запись в nil map). Что произойдёт?"
+    options:
+      - text: Упадёт весь процесс сервера вместе со всеми текущими вызовами
+        correct: true
+        explain: "Обработчик выполняется в горутине, которую запустил grpc-go, и встроенного `recover` там нет. Необработанная паника в любой горутине завершает программу. Поэтому recovery — обязательное звено цепочки."
+      - text: "Клиент получит `codes.Internal`, сервер продолжит работу"
+        explain: "Так ведёт себя сервер с recovery-interceptor. Сам grpc-go панику не перехватывает."
+      - text: "Клиент получит `codes.Unknown` с текстом паники, как в ASP.NET Core"
+        explain: "Это поведение Grpc.AspNetCore: исключение в обработчике превращается в `StatusCode.Unknown`. В Go паника — не исключение, и рантайм не ловит её за вас."
+      - text: "Упадёт только соединение этого клиента"
+        explain: "Паника не ограничена соединением: необработанная паника в любой горутине завершает процесс целиком."
+
+  - id: where-status
+    kind: single
+    prompt: "Обработчик успешно отправил сообщение ответа, и только потом стал известен итоговый статус вызова. Где этот статус передаётся по HTTP/2?"
+    options:
+      - text: "В трейлерах — кадре HEADERS после тела, в `grpc-status` и `grpc-message`"
+        correct: true
+        explain: "HTTP-статус ответа gRPC почти всегда 200, а настоящий статус вызова едет в трейлерах: так его можно отправить после стрима сообщений. Если сообщений нет, ответ — trailers-only: один HEADERS сразу со статусом."
+      - text: "В HTTP-статусе ответа: 404, 500 и т.д."
+        explain: "gRPC не кодирует статус в `:status` — это 200, если сервер вообще ответил по протоколу gRPC. Перевод кодов в HTTP-статусы делает grpc-gateway."
+      - text: "В первом кадре DATA перед сообщением"
+        explain: "DATA содержит только сообщения с 5-байтовым префиксом (флаг сжатия и длина). Статус в тело не пишется."
+      - text: "В заголовках ответа до сообщения"
+        explain: "К моменту отправки заголовков статус ещё неизвестен: обработчик может упасть позже, посреди стрима."
+
+  - id: wrap-stream
+    kind: multiple
+    prompt: "Stream-interceptor должен передать в обработчик контекст с пользователем. Что верно?"
+    options:
+      - text: "Нужна обёртка: структура, встраивающая `grpc.ServerStream`, с переопределённым методом `Context()`"
+        correct: true
+        explain: "У stream-interceptor нет параметра `ctx`: обработчик берёт контекст из `stream.Context()`. Чтобы подменить его, оборачивают стрим и возвращают новый контекст из `Context()`."
+      - text: "Остальные методы (`SendMsg`, `RecvMsg`, `SetHeader`…) переходят к обёртке через встраивание"
+        correct: true
+        explain: "Встроенное поле интерфейса продвигает все методы. Переопределяют только то, что нужно: `Context`, а для подсчёта сообщений — `SendMsg`/`RecvMsg`."
+      - text: "Достаточно вызвать `handler(srv, ss)` с `ctx = context.WithValue(ss.Context(), …)` до вызова"
+        explain: "Новый `ctx` никуда не передаётся: у `StreamHandler` нет параметра контекста, обработчик прочитает исходный `ss.Context()`."
+      - text: "Unary-interceptor с той же логикой автоматически сработает и для стримов"
+        explain: "Цепочки независимы: `ChainUnaryInterceptor` и `ChainStreamInterceptor`. Сквозную логику пишут в двух вариантах."

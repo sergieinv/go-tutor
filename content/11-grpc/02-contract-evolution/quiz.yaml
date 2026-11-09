@@ -1,0 +1,139 @@
+questions:
+  - id: unknown-roundtrip
+    kind: output
+    prompt: "`StringValue` знает только поле 1. Что выведет программа?"
+    code: |
+      package main
+
+      import (
+      	"bytes"
+      	"fmt"
+
+      	"google.golang.org/protobuf/encoding/protowire"
+      	"google.golang.org/protobuf/proto"
+      	"google.golang.org/protobuf/types/known/wrapperspb"
+      )
+
+      func main() {
+      	var in []byte
+      	in = protowire.AppendTag(in, 1, protowire.BytesType)
+      	in = protowire.AppendString(in, "x")
+      	in = protowire.AppendTag(in, 5, protowire.VarintType) // поле из «новой версии»
+      	in = protowire.AppendVarint(in, 7)
+
+      	var m wrapperspb.StringValue
+      	if err := proto.Unmarshal(in, &m); err != nil {
+      		panic(err)
+      	}
+      	out, err := proto.Marshal(&m)
+      	if err != nil {
+      		panic(err)
+      	}
+      	fmt.Println(m.GetValue(), len(m.ProtoReflect().GetUnknown()), bytes.Equal(in, out))
+      }
+    options:
+      - text: x 2 true
+        correct: true
+        explain: "Незнакомое поле 5 не ошибка: разбор сохраняет его байты (тег и значение — 2 байта) в неизвестных полях, а `Marshal` пишет их обратно. Поэтому узел на старом контракте пересылает новые поля без потерь."
+      - text: x 0 false
+        explain: "Go-реализация не выбрасывает неизвестные поля, а хранит их в сообщении: так требует спецификация proto3 начиная с protobuf 3.5."
+      - text: паника — unknown field 5
+        explain: "Строгость к незнакомым полям есть у `protojson`, а не у бинарного формата. Бинарный разбор пропускает незнакомые номера — на этом держится совместимость."
+
+  - id: wrong-wire-type
+    kind: output
+    prompt: "Поле 1 у `StringValue` — строка, а пришло varint (тип поля сменили на число). Что выведет программа?"
+    code: |
+      package main
+
+      import (
+      	"fmt"
+
+      	"google.golang.org/protobuf/encoding/protowire"
+      	"google.golang.org/protobuf/proto"
+      	"google.golang.org/protobuf/types/known/wrapperspb"
+      )
+
+      func main() {
+      	b := protowire.AppendTag(nil, 1, protowire.VarintType)
+      	b = protowire.AppendVarint(b, 42)
+      	var s wrapperspb.StringValue
+      	err := proto.Unmarshal(b, &s)
+      	fmt.Printf("%v %q %d\n", err, s.GetValue(), len(s.ProtoReflect().GetUnknown()))
+      }
+    options:
+      - text: <nil> "" 2
+        correct: true
+        explain: "Номер знакомый, wire type — нет. Go не возвращает ошибку, а кладёт поле в неизвестные; значение остаётся пустым. Смена типа поля не падает, а тихо теряет данные — поэтому её ловят до выкатки, `buf breaking`."
+      - text: <nil> "42" 0
+        explain: "Разбор не конвертирует число в строку: для него это поле с неожиданным wire type."
+      - text: 'proto: cannot parse invalid wire-format data "" 0'
+        explain: "Такую ошибку дают испорченные байты (обрезанное значение, номер 0). Здесь байты корректны, просто тип не совпал с ожиданием — поле уходит в неизвестные."
+
+  - id: truncate-varint
+    kind: output
+    prompt: "Отправитель считает поле 1 64-битным, получатель — 32-битным. Что выведет программа?"
+    code: |
+      package main
+
+      import (
+      	"fmt"
+
+      	"google.golang.org/protobuf/encoding/protowire"
+      	"google.golang.org/protobuf/proto"
+      	"google.golang.org/protobuf/types/known/wrapperspb"
+      )
+
+      func main() {
+      	big := protowire.AppendTag(nil, 1, protowire.VarintType)
+      	big = protowire.AppendVarint(big, 1<<32+5)
+      	neg := protowire.AppendTag(nil, 1, protowire.VarintType)
+      	neg = protowire.AppendVarint(neg, uint64(1<<64-1)) // int64(-1)
+
+      	var i32 wrapperspb.Int32Value
+      	var u32 wrapperspb.UInt32Value
+      	if err := proto.Unmarshal(big, &i32); err != nil {
+      		panic(err)
+      	}
+      	if err := proto.Unmarshal(neg, &u32); err != nil {
+      		panic(err)
+      	}
+      	fmt.Println(i32.GetValue(), u32.GetValue())
+      }
+    options:
+      - text: 5 4294967295
+        correct: true
+        explain: "`int64`, `int32`, `uint32` — все varint, по проводу совместимы, но 32-битный получатель молча отбрасывает старшие биты: 2^32+5 становится 5, −1 — максимальным `uint32`. Поэтому «совместимо по проводу» не значит «безопасно»: расширять тип можно, только если старые получатели не увидят больших значений."
+      - text: 4294967301 18446744073709551615
+        explain: "Значения не помещаются в 32-битные поля, и Go не расширяет `Int32Value` — он усекает число до младших 32 бит."
+      - text: паника — переполнение
+        explain: "Переполнение — ошибка только для varint длиннее 10 байт. Здесь байты корректны, разбор просто усекает значение."
+
+  - id: safe-change
+    kind: single
+    prompt: "Контракт `Order` уже используется мобильными клиентами и REST-клиентами через grpc-gateway. Какое изменение безопасно?"
+    options:
+      - text: "Добавить `optional string comment = 9;` с новым номером"
+        correct: true
+        explain: "Старые клиенты сохранят поле 9 как неизвестное, новый сервер у старых запросов увидит «не задано». Ни бинарный формат, ни JSON, ни сгенерированный код старых клиентов не ломаются."
+      - text: "Переименовать `customer` в `customer_email`, номер оставить"
+        explain: "Бинарные клиенты не заметят, а REST-клиенты — да: JSON-имя сменится с `customer` на `customerEmail`. Без `json_name = \"customer\"` это ломающее изменение."
+      - text: "Сменить `int32 quantity = 3` на `int64 quantity = 3`"
+        explain: "Бинарно новый сервер прочитает старые значения, но старые клиенты усекут большие ответы до 32 бит, а в JSON `int64` превращается из числа в строку — JSON-клиенты сломаются."
+      - text: "Удалить поле `promo_code = 4` и сразу добавить `uint32 discount = 4`"
+        explain: "Старые клиенты продолжат слать промокод в поле 4. Удаляя поле, номер и имя резервируют навсегда."
+
+  - id: remove-field
+    kind: multiple
+    prompt: "Поле `string promo_code = 4;` больше не нужно. Что нужно сделать в контракте? (несколько вариантов)"
+    options:
+      - text: "Удалить объявление поля и добавить `reserved 4;`"
+        correct: true
+        explain: "Зарезервированный номер компилятор `.proto` не даст занять — старые клиенты не столкнутся с новым полем под тем же номером."
+      - text: "Добавить `reserved \"promo_code\";`"
+        correct: true
+        explain: "Имя важно для JSON: в нём поле идёт по имени. Зарезервированное имя не займут под поле с другим смыслом и типом."
+      - text: Перенумеровать оставшиеся поля, чтобы не было дыры
+        explain: "Наоборот: номера неизменны навсегда. Дыра в нумерации ничего не стоит, а перенумерация ломает всех клиентов."
+      - text: "Выпустить пакет `orders.v2`"
+        explain: "Удаление с `reserved` — совместимое изменение, новая версия пакета не нужна. `v2` — для того, что совместимо сделать нельзя."

@@ -40,7 +40,11 @@ func (e *Executor) Vulncheck(ctx context.Context, files Files) (*VulncheckResult
 		return nil, err
 	}
 	defer e.release(uid)
-	ws, err := e.newWorkspace(uid, files)
+	ws, err := e.newWorkspace(ctx, uid, files)
+	var genErr *GenerateError
+	if errors.As(err, &genErr) {
+		return &VulncheckResult{Output: genErr.Output, ExitCode: 1, Failed: true}, nil
+	}
 	if err != nil {
 		return nil, err
 	}

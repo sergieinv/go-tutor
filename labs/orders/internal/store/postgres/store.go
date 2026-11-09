@@ -8,6 +8,7 @@ package postgres
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -15,6 +16,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
@@ -25,7 +27,7 @@ import (
 	"gotutor/labs/orders/migrations"
 )
 
-// Store реализует orders.Store.
+// Store реализует orders.Store и outbox.Store.
 type Store struct {
 	pool *pgxpool.Pool
 	q    *sqlcgen.Queries
@@ -91,14 +93,23 @@ func (s *Store) Migrate(ctx context.Context) error {
 func (s *Store) Ping(ctx context.Context) error { return s.pool.Ping(ctx) }
 
 // Begin открывает транзакцию с уровнем изоляции по умолчанию (READ
-// COMMITTED). Его достаточно: остатки меняются атомарным UPDATE с условием,
-// заказ блокируется FOR UPDATE.
+// COMMITTED). Его достаточно: отмена блокирует строку заказа FOR UPDATE,
+// смена статуса проверяет старое значение.
 func (s *Store) Begin(ctx context.Context) (orders.Tx, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("begin: %w", err)
 	}
 	return &Tx{tx: tx, q: s.q.WithTx(tx)}, nil
+}
+
+// NextOrderID выдаёт номер заказа из последовательности.
+func (s *Store) NextOrderID(ctx context.Context) (int64, error) {
+	id, err := s.q.NextOrderID(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("next order id: %w", err)
+	}
+	return id, nil
 }
 
 // Order читает заказ и его позиции — двумя запросами, без транзакции:
@@ -111,56 +122,138 @@ func (s *Store) Order(ctx context.Context, id int64) (orders.Order, error) {
 	return withItems(ctx, s.q, row)
 }
 
-// Product читает товар с остатком.
-func (s *Store) Product(ctx context.Context, id int64) (orders.Product, error) {
-	row, err := s.q.GetProduct(ctx, id)
+// ListOrders читает страницу заказов и позиции всех её заказов — двумя
+// запросами независимо от размера страницы.
+func (s *Store) ListOrders(ctx context.Context, customerID, beforeID int64, limit int) ([]orders.Order, error) {
+	rows, err := s.q.ListCustomerOrders(ctx, sqlcgen.ListCustomerOrdersParams{
+		CustomerID: customerID,
+		BeforeID:   beforeID,
+		RowLimit:   int32(min(limit, math.MaxInt32)),
+	})
 	if err != nil {
-		return orders.Product{}, notFound(err, "product", id)
+		return nil, fmt.Errorf("list orders: %w", err)
 	}
-	return orders.Product{ID: row.ID, Name: row.Name, PriceCents: row.PriceCents, Available: int(row.Available)}, nil
+	if len(rows) == 0 {
+		return nil, nil
+	}
+	ids := make([]int64, len(rows))
+	for i, r := range rows {
+		ids[i] = r.ID
+	}
+	items, err := s.q.ListItemsByOrderIDs(ctx, ids)
+	if err != nil {
+		return nil, fmt.Errorf("list order items: %w", err)
+	}
+	byOrder := make(map[int64][]orders.Item, len(rows))
+	for _, it := range items {
+		byOrder[it.OrderID] = append(byOrder[it.OrderID], orders.Item{
+			ProductID: it.ProductID, Quantity: int(it.Quantity), PriceCents: it.PriceCents,
+		})
+	}
+	list := make([]orders.Order, len(rows))
+	for i, r := range rows {
+		list[i] = toOrder(r, byOrder[r.ID])
+	}
+	return list, nil
 }
 
-// CreateProduct добавляет товар и остаток в одной транзакции. pgx.BeginFunc
-// делает Commit/Rollback сам — удобная форма для коротких транзакций внутри
-// хранилища.
-func (s *Store) CreateProduct(ctx context.Context, p orders.NewProduct) (orders.Product, error) {
-	if p.Available < 0 || p.Available > math.MaxInt32 {
-		return orders.Product{}, &orders.ValidationError{Field: "available", Message: "out of range"}
+// ProductsByIDs читает товары одним запросом: срез уходит в PostgreSQL
+// одним параметром-массивом (WHERE id = ANY($1)).
+func (s *Store) ProductsByIDs(ctx context.Context, ids []int64) ([]orders.Product, error) {
+	rows, err := s.q.ListProductsByIDs(ctx, ids)
+	if err != nil {
+		return nil, fmt.Errorf("list products: %w", err)
 	}
-	var id int64
-	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
-		q := s.q.WithTx(tx)
-		var err error
-		// RETURNING id: PostgreSQL возвращает сгенерированный ключ прямо из INSERT.
-		id, err = q.CreateProduct(ctx, sqlcgen.CreateProductParams{Name: p.Name, PriceCents: p.PriceCents})
-		if err != nil {
-			return err
-		}
-		return q.CreateStock(ctx, sqlcgen.CreateStockParams{ProductID: id, Available: int32(p.Available)})
-	})
+	products := make([]orders.Product, len(rows))
+	for i, r := range rows {
+		products[i] = orders.Product{ID: r.ID, Name: r.Name, PriceCents: r.PriceCents}
+	}
+	return products, nil
+}
+
+// CreateProduct добавляет товар в каталог. RETURNING id: PostgreSQL
+// возвращает сгенерированный ключ прямо из INSERT.
+func (s *Store) CreateProduct(ctx context.Context, p orders.NewProduct) (orders.Product, error) {
+	id, err := s.q.CreateProduct(ctx, sqlcgen.CreateProductParams{Name: p.Name, PriceCents: p.PriceCents})
 	if err != nil {
 		return orders.Product{}, fmt.Errorf("create product: %w", err)
 	}
-	return orders.Product{ID: id, Name: p.Name, PriceCents: p.PriceCents, Available: p.Available}, nil
+	return orders.Product{ID: id, Name: p.Name, PriceCents: p.PriceCents}, nil
 }
 
-// PendingEvents возвращает неопубликованные события outbox.
-func (s *Store) PendingEvents(ctx context.Context, limit int) ([]orders.Event, error) {
-	rows, err := s.q.ListPendingEvents(ctx, int32(min(limit, math.MaxInt32)))
-	if err != nil {
-		return nil, fmt.Errorf("list pending events: %w", err)
-	}
-	events := make([]orders.Event, len(rows))
-	for i, r := range rows {
-		events[i] = orders.Event{
-			ID:        r.ID,
-			Type:      r.EventType,
-			OrderID:   r.AggregateID,
-			Payload:   r.Payload,
-			CreatedAt: r.CreatedAt.UTC(),
+// outboxLockKey — ключ advisory-блокировки relay. Произвольное число,
+// уникальное в пределах базы.
+const outboxLockKey = 0x6f7574626f78 // "outbox"
+
+// PublishPending — один такт relay: в транзакции берёт до limit
+// неопубликованных событий по порядку, отдаёт их publish и, если тот
+// вернул nil (брокер подтвердил запись), отмечает опубликованными.
+//
+// Транзакция держится, пока идёт отправка, — это и есть «отметка после
+// подтверждения». Упал relay между подтверждением Kafka и COMMIT — события
+// уйдут ещё раз: доставка at-least-once, потребители дедуплицируют по
+// event_id.
+func (s *Store) PublishPending(ctx context.Context, limit int, publish func(context.Context, []orders.Event) error) (int, error) {
+	var n int
+	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		q := s.q.WithTx(tx)
+		locked, err := q.TryLockOutbox(ctx, outboxLockKey)
+		if err != nil {
+			return fmt.Errorf("lock outbox: %w", err)
 		}
+		if !locked {
+			return nil // публикует другая реплика
+		}
+		rows, err := q.ListPendingEvents(ctx, int32(min(limit, math.MaxInt32)))
+		if err != nil {
+			return fmt.Errorf("list pending events: %w", err)
+		}
+		if len(rows) == 0 {
+			return nil
+		}
+		events := make([]orders.Event, len(rows))
+		ids := make([]int64, len(rows))
+		for i, r := range rows {
+			var tc map[string]string
+			if err := json.Unmarshal(r.TraceContext, &tc); err != nil {
+				return fmt.Errorf("event %d trace context: %w", r.ID, err)
+			}
+			events[i] = orders.Event{
+				ID: r.ID, EventID: r.EventID, Type: r.EventType, OrderID: r.AggregateID,
+				Payload: r.Payload, TraceContext: tc, CreatedAt: r.CreatedAt.UTC(),
+			}
+			ids[i] = r.ID
+		}
+		if err := publish(ctx, events); err != nil {
+			return err
+		}
+		err = q.MarkEventsPublished(ctx, sqlcgen.MarkEventsPublishedParams{
+			PublishedAt: pgtype.Timestamptz{Time: time.Now().UTC(), Valid: true},
+			Ids:         ids,
+		})
+		if err != nil {
+			return fmt.Errorf("mark events published: %w", err)
+		}
+		n = len(events)
+		return nil
+	})
+	if err != nil {
+		return 0, err
 	}
-	return events, nil
+	return n, nil
+}
+
+// PendingStats — отставание outbox: число неопубликованных событий и время
+// создания самого старого (нулевое, если ждущих нет).
+func (s *Store) PendingStats(ctx context.Context) (int64, time.Time, error) {
+	row, err := s.q.OutboxStats(ctx)
+	if err != nil {
+		return 0, time.Time{}, fmt.Errorf("outbox stats: %w", err)
+	}
+	if row.Pending == 0 {
+		return 0, time.Time{}, nil
+	}
+	return row.Pending, row.Oldest.UTC(), nil
 }
 
 // Tx реализует orders.Tx поверх pgx.Tx.
@@ -175,72 +268,32 @@ func (t *Tx) Commit(ctx context.Context) error { return t.tx.Commit(ctx) }
 // Rollback откатывает транзакцию; после Commit возвращает pgx.ErrTxClosed.
 func (t *Tx) Rollback(ctx context.Context) error { return t.tx.Rollback(ctx) }
 
-// ProductsByIDs читает товары одним запросом: срез уходит в PostgreSQL
-// одним параметром-массивом (WHERE id = ANY($1)).
-func (t *Tx) ProductsByIDs(ctx context.Context, ids []int64) ([]orders.Product, error) {
-	rows, err := t.q.ListProductsByIDs(ctx, ids)
-	if err != nil {
-		return nil, fmt.Errorf("list products: %w", err)
-	}
-	products := make([]orders.Product, len(rows))
-	for i, r := range rows {
-		products[i] = orders.Product{ID: r.ID, Name: r.Name, PriceCents: r.PriceCents, Available: int(r.Available)}
-	}
-	return products, nil
-}
-
-// ReserveStock списывает остаток атомарным UPDATE … WHERE available >= qty.
-// Параллельные транзакции на той же строке ждут блокировку, а затем
-// PostgreSQL перепроверяет условие на новой версии строки — продать больше
-// остатка невозможно.
-func (t *Tx) ReserveStock(ctx context.Context, productID int64, qty int) error {
-	n, err := t.q.ReserveStock(ctx, sqlcgen.ReserveStockParams{Quantity: int32(qty), ProductID: productID})
-	if err != nil {
-		return fmt.Errorf("reserve stock: %w", err)
-	}
-	if n == 0 {
-		return orders.ErrOutOfStock
-	}
-	return nil
-}
-
-// ReleaseStock возвращает товар на склад.
-func (t *Tx) ReleaseStock(ctx context.Context, productID int64, qty int) error {
-	n, err := t.q.ReleaseStock(ctx, sqlcgen.ReleaseStockParams{Quantity: int32(qty), ProductID: productID})
-	if err != nil {
-		return fmt.Errorf("release stock: %w", err)
-	}
-	if n == 0 {
-		return fmt.Errorf("stock of product %d: %w", productID, orders.ErrNotFound)
-	}
-	return nil
-}
-
-// CreateOrder вставляет заказ (id — из RETURNING) и его позиции.
-func (t *Tx) CreateOrder(ctx context.Context, o orders.Order) (int64, error) {
-	id, err := t.q.CreateOrder(ctx, sqlcgen.CreateOrderParams{
+// CreateOrder вставляет заказ с выданным заранее id и его позиции.
+func (t *Tx) CreateOrder(ctx context.Context, o orders.Order) error {
+	err := t.q.CreateOrder(ctx, sqlcgen.CreateOrderParams{
+		ID:         o.ID,
 		CustomerID: o.CustomerID,
 		Status:     string(o.Status),
 		TotalCents: o.TotalCents,
 		CreatedAt:  o.CreatedAt,
 	})
 	if err != nil {
-		return 0, fmt.Errorf("insert order: %w", err)
+		return fmt.Errorf("insert order: %w", err)
 	}
 	// Позиций не больше orders.MaxItems — по INSERT на позицию приемлемо.
 	// Для тысяч строк в PostgreSQL есть COPY (в sqlc — аннотация :copyfrom).
 	for _, it := range o.Items {
 		err := t.q.CreateOrderItem(ctx, sqlcgen.CreateOrderItemParams{
-			OrderID:    id,
+			OrderID:    o.ID,
 			ProductID:  it.ProductID,
 			Quantity:   int32(it.Quantity),
 			PriceCents: it.PriceCents,
 		})
 		if err != nil {
-			return 0, fmt.Errorf("insert order item: %w", err)
+			return fmt.Errorf("insert order item: %w", err)
 		}
 	}
-	return id, nil
+	return nil
 }
 
 // LockOrder читает заказ с блокировкой строки (SELECT … FOR UPDATE).
@@ -271,16 +324,30 @@ func (t *Tx) UpdateOrderStatus(ctx context.Context, id int64, from, to orders.St
 
 // AddEvent пишет событие в outbox.
 func (t *Tx) AddEvent(ctx context.Context, e orders.Event) error {
-	err := t.q.CreateOutboxEvent(ctx, sqlcgen.CreateOutboxEventParams{
-		EventType:   e.Type,
-		AggregateID: e.OrderID,
-		Payload:     e.Payload,
-		CreatedAt:   e.CreatedAt,
+	tc, err := json.Marshal(nonNil(e.TraceContext))
+	if err != nil {
+		return fmt.Errorf("marshal trace context: %w", err)
+	}
+	err = t.q.CreateOutboxEvent(ctx, sqlcgen.CreateOutboxEventParams{
+		EventID:      e.EventID,
+		EventType:    e.Type,
+		AggregateID:  e.OrderID,
+		Payload:      e.Payload,
+		TraceContext: tc,
+		CreatedAt:    e.CreatedAt,
 	})
 	if err != nil {
 		return fmt.Errorf("insert outbox event: %w", err)
 	}
 	return nil
+}
+
+// nonNil заменяет nil-map пустой: в jsonb пишется {}, а не null.
+func nonNil(m map[string]string) map[string]string {
+	if m == nil {
+		return map[string]string{}
+	}
+	return m
 }
 
 // withItems дочитывает позиции заказа одним запросом и собирает доменный заказ.
@@ -290,21 +357,25 @@ func withItems(ctx context.Context, q *sqlcgen.Queries, row sqlcgen.Order) (orde
 	if err != nil {
 		return orders.Order{}, fmt.Errorf("list order items: %w", err)
 	}
-	o := orders.Order{
+	items := make([]orders.Item, len(rows))
+	for i, r := range rows {
+		items[i] = orders.Item{ProductID: r.ProductID, Quantity: int(r.Quantity), PriceCents: r.PriceCents}
+	}
+	return toOrder(row, items), nil
+}
+
+func toOrder(row sqlcgen.Order, items []orders.Item) orders.Order {
+	return orders.Order{
 		ID:         row.ID,
 		CustomerID: row.CustomerID,
 		Status:     orders.Status(row.Status),
-		Items:      make([]orders.Item, len(rows)),
+		Items:      items,
 		TotalCents: row.TotalCents,
 		// pgx возвращает timestamptz в локальной зоне процесса; домен
 		// работает в UTC.
 		CreatedAt: row.CreatedAt.UTC(),
 		UpdatedAt: row.UpdatedAt.UTC(),
 	}
-	for i, r := range rows {
-		o.Items[i] = orders.Item{ProductID: r.ProductID, Quantity: int(r.Quantity), PriceCents: r.PriceCents}
-	}
-	return o, nil
 }
 
 // notFound переводит «нет строк» драйвера в доменную ErrNotFound.

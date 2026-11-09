@@ -1,0 +1,10 @@
+топик: orders.events партиций: 3
+sync  A-1 created   → p0@0
+sync  B-2 created   → p1@0
+sync  A-1 paid      → p0@1
+async A-1 shipped   → p0@2
+async B-2 cancelled → p1@1
+async C-3 created   → p2@0
+партиция 0: [0:A-1/created 1:A-1/paid 2:A-1/shipped]
+партиция 1: [0:B-2/created 1:B-2/cancelled]
+партиция 2: [0:C-3/created]

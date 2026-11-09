@@ -1,0 +1,19 @@
+InvalidArgument (HTTP 400): invalid request
+  поле customer: must not be empty
+  поле quantity: must be positive
+  повторять: false 0s
+NotFound (HTTP 404): order not found
+  причина ORDER_NOT_FOUND@orders.example.com
+  повторять: false 0s
+FailedPrecondition (HTTP 400): order cannot be paid
+  условие STATUS orders/ord-7: order is cancelled
+  повторять: false 0s
+Aborted (HTTP 409): concurrent modification
+  причина CONFLICT@orders.example.com
+  повторять: true 0s
+Unavailable (HTTP 503): temporarily unavailable
+  повторить через 200ms
+  повторять: true 200ms
+  лог сервера: pq: password authentication failed for user "orders" at 10.0.3.7
+Internal (HTTP 500): internal error
+  повторять: false 0s

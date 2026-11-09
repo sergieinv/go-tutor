@@ -16,6 +16,7 @@ interface Props {
 const { lesson, statement, task, kind } = Astro.props;
 const template = await highlight(task.template.trimEnd(), "go");
 const tests = await highlight(task.tests.trimEnd(), "go");
+const protos = await Promise.all(Object.entries(task.protos).map(async ([name, src]) => ({ name, html: await highlight(src.trimEnd(), "proto") })));
 const hints = await renderHints(task.hints);
 ---
 
@@ -55,6 +56,14 @@ const hints = await renderHints(task.hints);
   </div>
   <div class="result" data-result aria-live="polite"></div>
 
+  {
+    protos.map((p) => (
+      <details class="tests-source" open>
+        <summary>Контракт задачи — {p.name}</summary>
+        <Fragment set:html={p.html} />
+      </details>
+    ))
+  }
   <details class="tests-source">
     <summary>Открытые тесты — task_test.go</summary>
     <Fragment set:html={tests} />

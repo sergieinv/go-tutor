@@ -1,0 +1,151 @@
+syntax = "proto3";
+
+// Контракт сервиса «Заказы». Один источник истины для gRPC, REST
+// (grpc-gateway по аннотациям google.api.http) и валидации (protovalidate).
+// Правила эволюции: номера полей не меняются и не переиспользуются,
+// удалённые поля — в reserved, несовместимые изменения — только в orders.v2.
+package orders.v1;
+
+import "buf/validate/validate.proto";
+import "google/api/annotations.proto";
+import "google/protobuf/timestamp.proto";
+
+option go_package = "gotutor/labs/api/gen/orders/v1;ordersv1";
+
+// OrderService — заказы покупателей.
+//
+// Создание заказа — сага: резерв товара в «Складе» (WarehouseService.Reserve),
+// затем запись заказа и события в outbox; при сбое записи резерв отменяется
+// (Release). События уходят в Kafka (events.v1.OrderEvent).
+service OrderService {
+  // CreateOrder создаёт заказ и резервирует товар.
+  // Ошибки: INVALID_ARGUMENT — запрос не прошёл валидацию или товара нет в
+  // каталоге (детали — google.rpc.BadRequest); FAILED_PRECONDITION — не
+  // хватает товара (google.rpc.PreconditionFailure, google.rpc.ErrorInfo с
+  // reason OUT_OF_STOCK); UNAVAILABLE — склад недоступен, запрос можно
+  // повторить.
+  rpc CreateOrder(CreateOrderRequest) returns (CreateOrderResponse) {
+    option (google.api.http) = {
+      post: "/v1/orders"
+      body: "*"
+    };
+  }
+
+  // GetOrder возвращает заказ. NOT_FOUND — заказа нет.
+  rpc GetOrder(GetOrderRequest) returns (GetOrderResponse) {
+    option (google.api.http) = {get: "/v1/orders/{order_id}"};
+  }
+
+  // ListOrders возвращает заказы покупателя, новые первыми, страницами.
+  // Пагинация по курсору (page_token), а не по смещению: страница не
+  // «съезжает», когда появляются новые заказы.
+  rpc ListOrders(ListOrdersRequest) returns (ListOrdersResponse) {
+    option (google.api.http) = {get: "/v1/orders"};
+  }
+
+  // CancelOrder отменяет заказ и возвращает товар на склад. Идемпотентен:
+  // повторная отмена возвращает тот же отменённый заказ.
+  rpc CancelOrder(CancelOrderRequest) returns (CancelOrderResponse) {
+    // Пользовательский метод в стиле Google AIP-136: глагол после двоеточия.
+    option (google.api.http) = {
+      post: "/v1/orders/{order_id}:cancel"
+      body: "*"
+    };
+  }
+}
+
+// OrderStatus — статус заказа.
+enum OrderStatus {
+  // Нулевое значение обязано означать «не задано»: его получит поле,
+  // которое отправитель не заполнил (или заполнил значением из будущей
+  // версии контракта, неизвестной получателю).
+  ORDER_STATUS_UNSPECIFIED = 0;
+  // Товар зарезервирован на складе. Заказ без резерва не записывается.
+  ORDER_STATUS_RESERVED = 1;
+  // Заказ отменён, резерв возвращён. Конечный статус.
+  ORDER_STATUS_CANCELLED = 2;
+}
+
+// Order — заказ с позициями.
+message Order {
+  int64 order_id = 1;
+  int64 customer_id = 2;
+  OrderStatus status = 3;
+  // Позиции упорядочены по product_id.
+  repeated OrderItem items = 4;
+  // Сумма в копейках: деньги не передаются во float.
+  int64 total_cents = 5;
+  google.protobuf.Timestamp create_time = 6;
+  google.protobuf.Timestamp update_time = 7;
+}
+
+// OrderItem — позиция заказа. Цена фиксируется на момент заказа.
+message OrderItem {
+  int64 product_id = 1;
+  int32 quantity = 2;
+  int64 price_cents = 3;
+}
+
+message CreateOrderRequest {
+  // Покупатель. Пока берётся из запроса как есть — аутентификации нет
+  // (см. labs/README.md, «Чего нет»).
+  int64 customer_id = 1 [(buf.validate.field).int64.gt = 0];
+  repeated CreateOrderItem items = 2 [
+    (buf.validate.field).repeated = {
+      min_items: 1
+      max_items: 100
+    },
+    (buf.validate.field).cel = {
+      id: "items.unique_product"
+      message: "each product must appear at most once"
+      expression: "this.map(item, item.product_id).unique()"
+    }
+  ];
+}
+
+// CreateOrderItem — что и сколько заказать.
+message CreateOrderItem {
+  int64 product_id = 1 [(buf.validate.field).int64.gt = 0];
+  int32 quantity = 2 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 1000
+  }];
+}
+
+message CreateOrderResponse {
+  Order order = 1;
+}
+
+message GetOrderRequest {
+  int64 order_id = 1 [(buf.validate.field).int64.gt = 0];
+}
+
+message GetOrderResponse {
+  Order order = 1;
+}
+
+message ListOrdersRequest {
+  int64 customer_id = 1 [(buf.validate.field).int64.gt = 0];
+  // Размер страницы; 0 — по умолчанию (20).
+  int32 page_size = 2 [(buf.validate.field).int32 = {
+    gte: 0
+    lte: 100
+  }];
+  // Непрозрачный курсор из next_page_token предыдущего ответа. Действует
+  // только с тем же customer_id.
+  string page_token = 3 [(buf.validate.field).string.max_len = 128];
+}
+
+message ListOrdersResponse {
+  repeated Order orders = 1;
+  // Пустой — страниц больше нет.
+  string next_page_token = 2;
+}
+
+message CancelOrderRequest {
+  int64 order_id = 1 [(buf.validate.field).int64.gt = 0];
+}
+
+message CancelOrderResponse {
+  Order order = 1;
+}

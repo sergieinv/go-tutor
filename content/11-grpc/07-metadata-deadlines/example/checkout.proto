@@ -1,0 +1,36 @@
+syntax = "proto3";
+
+// Два сервиса: Checkout принимает заказ и резервирует товар
+// вызовом следующего сервиса — Stock.
+package orders.v1;
+
+option go_package = "lesson/proto;main";
+
+service CheckoutService {
+  rpc Checkout(CheckoutRequest) returns (CheckoutResponse);
+}
+
+service StockService {
+  rpc Reserve(ReserveRequest) returns (ReserveResponse);
+}
+
+message CheckoutRequest {
+  string order_id = 1;
+  string sku = 2;
+  int32 quantity = 3;
+}
+
+message CheckoutResponse {
+  string order_id = 1;
+  string reservation_id = 2;
+}
+
+message ReserveRequest {
+  string order_id = 1;
+  string sku = 2;
+  int32 quantity = 3;
+}
+
+message ReserveResponse {
+  string reservation_id = 1;
+}

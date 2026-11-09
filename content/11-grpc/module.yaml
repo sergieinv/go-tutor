@@ -1,0 +1,7 @@
+title: Контракты и gRPC
+summary: Контракт как источник истины — proto3, эволюция без поломок, buf и protovalidate; gRPC от unary до bidi-стримов, ошибки, interceptors, безопасность и REST через grpc-gateway.
+goals:
+  - "Описывать API в proto3 и менять контракт, не ломая клиентов: номера полей, reserved, buf breaking."
+  - "Вести контракты buf'ом и проверять запросы protovalidate прямо по правилам из .proto."
+  - "Писать gRPC-серверы и клиенты: unary и стримы, metadata, дедлайны, статусы с деталями, interceptors, health."
+  - "Защищать сервис TLS/mTLS и аутентификацией, отдавать REST из того же контракта через grpc-gateway."

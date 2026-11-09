@@ -1,0 +1,20 @@
+syntax = "proto3";
+
+// Контракт склада: один метод резервирования. Из него buf генерирует
+// inventory.pb.go и inventory_grpc.pb.go.
+package inventory.v1;
+
+option go_package = "lesson/proto;main";
+
+service InventoryService {
+  rpc Reserve(ReserveRequest) returns (ReserveResponse);
+}
+
+message ReserveRequest {
+  string sku = 1;
+  int32 quantity = 2;
+}
+
+message ReserveResponse {
+  string reservation_id = 1;
+}

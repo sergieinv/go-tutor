@@ -1,0 +1,147 @@
+questions:
+  - id: lazy-client
+    kind: output
+    prompt: На порту никто не слушает. Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"context"
+      	"fmt"
+      	"net"
+      	"time"
+
+      	"google.golang.org/grpc"
+      	"google.golang.org/grpc/credentials/insecure"
+      	healthpb "google.golang.org/grpc/health/grpc_health_v1"
+      	"google.golang.org/grpc/status"
+      )
+
+      func main() {
+      	// Занимаем свободный порт и сразу освобождаем: там никого нет.
+      	lis, _ := net.Listen("tcp", "127.0.0.1:0")
+      	addr := lis.Addr().String()
+      	lis.Close()
+
+      	conn, err := grpc.NewClient(addr,
+      		grpc.WithTransportCredentials(insecure.NewCredentials()))
+      	fmt.Println(err)
+      	defer conn.Close()
+
+      	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+      	defer cancel()
+      	_, err = healthpb.NewHealthClient(conn).Check(ctx, &healthpb.HealthCheckRequest{})
+      	fmt.Println(status.Code(err))
+      }
+    options:
+      - text: "<nil>\nUnavailable"
+        correct: true
+        explain: "`grpc.NewClient` только разбирает адрес и создаёт канал — подключение ленивое, поэтому ошибки нет. Первый вызов пытается подключиться, получает отказ и сразу (вызов не `WaitForReady`) завершается с `Unavailable`."
+      - text: "connection refused\nUnavailable"
+        explain: "Так вёл себя устаревший `grpc.Dial` с `grpc.WithBlock()`: он ждал подключения. `NewClient` в сеть при создании не ходит."
+      - text: "<nil>\nDeadlineExceeded"
+        explain: "Дедлайн истёк бы, если бы вызов ждал готовности канала (`grpc.WaitForReady(true)`). Без этой опции отказ в подключении сразу превращается в `Unavailable`."
+      - text: "<nil>\nNotFound"
+        explain: "`NotFound` — прикладной код, его отправляет обработчик сервера. Здесь до сервера дело не дошло: это ошибка транспорта."
+
+  - id: unknown-service
+    kind: output
+    prompt: Сервер запущен, но сервис health на нём не зарегистрирован. Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"context"
+      	"fmt"
+      	"net"
+
+      	"google.golang.org/grpc"
+      	"google.golang.org/grpc/credentials/insecure"
+      	healthpb "google.golang.org/grpc/health/grpc_health_v1"
+      	"google.golang.org/grpc/status"
+      )
+
+      func main() {
+      	srv := grpc.NewServer() // ни одного сервиса
+      	lis, _ := net.Listen("tcp", "127.0.0.1:0")
+      	go srv.Serve(lis)
+      	defer srv.Stop()
+
+      	conn, _ := grpc.NewClient(lis.Addr().String(),
+      		grpc.WithTransportCredentials(insecure.NewCredentials()))
+      	defer conn.Close()
+
+      	_, err := healthpb.NewHealthClient(conn).Check(context.Background(), &healthpb.HealthCheckRequest{})
+      	fmt.Println(status.Code(err))
+      }
+    options:
+      - text: Unimplemented
+        correct: true
+        explain: "Метод — это путь `/grpc.health.v1.Health/Check` в HTTP/2-запросе. Сервер не нашёл сервис и ответил статусом `Unimplemented` с сообщением `unknown service grpc.health.v1.Health`. Тот же код отдаёт встроенная `Unimplemented…Server` для метода, который сервис не реализовал."
+      - text: NotFound
+        explain: "`NotFound` — «нет такого ресурса» на уровне бизнес-логики (заказа, пользователя). Для неизвестного метода gRPC использует `Unimplemented`."
+      - text: Unavailable
+        explain: "Соединение установлено, и сервер ответил — `Unavailable` означал бы, что ответа не было вовсе."
+      - text: OK
+        explain: "Пустого успешного ответа не будет: обработчика для этого метода на сервере нет."
+
+  - id: stop-stream
+    kind: output
+    prompt: Клиент подписан на стрим Watch сервиса health. Что выведет программа после `srv.Stop()`?
+    code: |
+      package main
+
+      import (
+      	"context"
+      	"fmt"
+      	"net"
+
+      	"google.golang.org/grpc"
+      	"google.golang.org/grpc/credentials/insecure"
+      	"google.golang.org/grpc/health"
+      	healthpb "google.golang.org/grpc/health/grpc_health_v1"
+      	"google.golang.org/grpc/status"
+      )
+
+      func main() {
+      	srv := grpc.NewServer()
+      	healthpb.RegisterHealthServer(srv, health.NewServer())
+      	lis, _ := net.Listen("tcp", "127.0.0.1:0")
+      	go srv.Serve(lis)
+
+      	conn, _ := grpc.NewClient(lis.Addr().String(),
+      		grpc.WithTransportCredentials(insecure.NewCredentials()))
+      	defer conn.Close()
+
+      	stream, _ := healthpb.NewHealthClient(conn).Watch(context.Background(), &healthpb.HealthCheckRequest{})
+      	first, _ := stream.Recv()
+      	fmt.Println(first.GetStatus())
+
+      	srv.Stop()
+      	_, err := stream.Recv()
+      	fmt.Println(status.Code(err))
+      }
+    options:
+      - text: "SERVING\nUnavailable"
+        correct: true
+        explain: "`Stop` закрывает слушатели и все соединения сразу, не дожидаясь активных вызовов и стримов. Для клиента это обрыв транспорта посреди стрима — `Unavailable`."
+      - text: "SERVING\nCanceled"
+        explain: "`Canceled` получает тот, кто отменил вызов сам — клиент через свой `context`. Здесь вызов оборвал сервер."
+      - text: Программа зависнет после SERVING
+        explain: "Так вышло бы с `GracefulStop`: он ждёт завершения всех вызовов, а бесконечный стрим Watch сам не закончится. `Stop` ничего не ждёт."
+      - text: "SERVING\nOK"
+        explain: "Нормальный конец стрима — `io.EOF` из `Recv`, когда обработчик сервера вернул `nil`. Обрыв соединения — это ошибка."
+
+  - id: embed-pointer
+    kind: single
+    prompt: "Реализация сервиса встраивает указатель: `type server struct{ *UnimplementedOrderServiceServer }`, и создаётся как `&server{}`. Что произойдёт?"
+    options:
+      - text: "`RegisterOrderServiceServer` запаникует при регистрации"
+        correct: true
+        explain: "Сгенерированная регистрация вызывает метод встроенного типа (`testEmbeddedByValue`) именно для того, чтобы nil-указатель обнаружился при старте, а не при первом вызове нереализованного метода. Встраивайте по значению."
+      - text: Не скомпилируется — нужен тип, а не указатель
+        explain: "Встраивать указатель язык разрешает, и методы встроенного типа попадают в набор методов `server` — интерфейс выполнен, код компилируется."
+      - text: Всё работает, нереализованные методы вернут Unimplemented
+        explain: "Методы встроенного типа с получателем-значением на nil-указателе разыменовывают его — паника. Генератор ловит это заранее, при регистрации."
+      - text: Паника случится при первом вызове любого метода
+        explain: "Реализованные методы `server` встроенный указатель не трогают. А проверку nil генератор вынес в регистрацию, так что падение будет раньше любого вызова."

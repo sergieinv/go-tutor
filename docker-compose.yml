@@ -1,13 +1,16 @@
 # Учебник целиком: docker compose up --build → http://localhost:8080
-# С базами для модуля 10 и дальше: docker compose --profile labs up --build
+# С базами для модуля 10 и дальше и итоговым проектом модулей 11–12
+# (labs/README.md): docker compose --profile labs up --build
 services:
   site:
     build:
       context: .
       dockerfile: site/Dockerfile
     image: go-tutor/site:dev
+    # Только localhost: через /api/ сайт проксирует runner, который
+    # исполняет произвольный код, — из локальной сети он недоступен.
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
     depends_on:
       runner:
         condition: service_healthy
@@ -30,6 +33,12 @@ services:
       # работает в той же сети, и пароли из репозитория ей известны.
       RUNNER_LAB_POSTGRES: postgres://runner:labs-runner@postgres:5432/postgres?sslmode=disable
       RUNNER_LAB_MYSQL: runner:labs-runner@tcp(mysql:3306)/
+      # Kafka для песочницы выключена: у брокера нет аутентификации и ACL,
+      # и программа ученика могла бы читать и удалять чужие топики (в том числе
+      # orders.events сервисов), менять настройки брокера и уронить его.
+      # Уроки работают на kfake. Включить на своей машине — раскомментировать
+      # строку и добавить sandbox в networks сервиса kafka.
+      # RUNNER_LAB_KAFKA: kafka:9092
     # Код учеников пишется только во временный каталог в памяти.
     tmpfs:
       - /tmp/runner:size=512m,mode=0711,exec,nosuid,nodev
@@ -83,22 +92,154 @@ services:
       retries: 60
     networks: [default, sandbox]
 
-  # Сквозной учебный сервис «Заказы» (labs/orders) на PostgreSQL:
-  # http://localhost:8090. Миграции применяет сам при старте.
+  # Kafka в режиме KRaft, один узел. Автосоздание топиков выключено: урок
+  # создаёт их сам с префиксом KAFKA_TOPIC_PREFIX, который выдаёт runner.
+  # Сервисам — kafka:9092, с машины — localhost:59092; из песочницы брокер
+  # недоступен (см. RUNNER_LAB_KAFKA у runner).
+  kafka:
+    image: apache/kafka:4.3.1
+    profiles: [labs]
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      # Контроллер принимает admin-запросы — только внутри контейнера.
+      KAFKA_LISTENERS: INTERNAL://:9092,HOST://:59092,CONTROLLER://localhost:9093
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:9092,HOST://localhost:59092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,HOST:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      KAFKA_HEAP_OPTS: -Xmx512m -Xms256m
+    tmpfs:
+      - /tmp/kraft-combined-logs:size=1g
+    mem_limit: 1g
+    ports:
+      - "127.0.0.1:59092:59092"
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 >/dev/null 2>&1"]
+      interval: 5s
+      timeout: 10s
+      retries: 30
+    networks: [default]
+
+  # Итоговый проект модулей 11–12 (labs/README.md): «Заказы», «Склад»,
+  # «Уведомления», Jaeger и Prometheus. Образы собираются из каталога labs/
+  # (модули ссылаются на labs/api и labs/platform). Порты — только на
+  # 127.0.0.1; в сеть sandbox сервисы не входят: программам песочницы до
+  # них дела нет.
+
+  # «Заказы» (labs/orders): REST http://127.0.0.1:8090, gRPC 127.0.0.1:50051,
+  # метрики и пробы — 127.0.0.1:8190. Миграции и топик orders.events —
+  # при старте. DSN — учебный суперпользователь (см. labs/orders/README.md).
   orders:
     build:
-      context: ./labs/orders
+      context: ./labs
+      dockerfile: orders/Dockerfile
     image: go-tutor/orders:dev
     profiles: [labs]
     environment:
       ORDERS_DB: postgres
       ORDERS_DSN: postgres://postgres:labs@postgres:5432/orders?sslmode=disable
+      ORDERS_WAREHOUSE_ADDR: dns:///warehouse:9090
+      ORDERS_KAFKA_BROKERS: kafka:9092
+      ORDERS_OTLP_ENDPOINT: jaeger:4317
+      ORDERS_GRPC_REFLECTION: "true"
     depends_on:
       postgres:
         condition: service_healthy
+      kafka:
+        condition: service_healthy
+      warehouse:
+        condition: service_started
+      jaeger:
+        condition: service_started
     ports:
       - "127.0.0.1:8090:8080"
-    # Только default: программам песочницы до сервиса дела нет.
+      - "127.0.0.1:50051:9090"
+      - "127.0.0.1:8190:8081"
+    read_only: true
+    mem_limit: 256m
+    networks: [default]
+
+  # «Склад» (labs/warehouse): MySQL, база и пользователь warehouse —
+  # labs/initdb/mysql/20-warehouse.sql. REST (только GetStock)
+  # http://127.0.0.1:8091, gRPC 127.0.0.1:50052, служебный — 127.0.0.1:8191.
+  warehouse:
+    build:
+      context: ./labs
+      dockerfile: warehouse/Dockerfile
+    image: go-tutor/warehouse:dev
+    profiles: [labs]
+    environment:
+      WAREHOUSE_MYSQL_DSN: warehouse:labs-warehouse@tcp(mysql:3306)/warehouse
+      WAREHOUSE_OTLP_ENDPOINT: jaeger:4317
+      WAREHOUSE_GRPC_REFLECTION: "true"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      jaeger:
+        condition: service_started
+    ports:
+      - "127.0.0.1:8091:8080"
+      - "127.0.0.1:50052:9090"
+      - "127.0.0.1:8191:8081"
+    read_only: true
+    mem_limit: 256m
+    networks: [default]
+
+  # «Уведомления» (labs/notifications): консьюмер orders.events, DLQ —
+  # notifications.dlq, обработанные события — SQLite в tmpfs. Только
+  # служебный порт 127.0.0.1:8192.
+  notifications:
+    build:
+      context: ./labs
+      dockerfile: notifications/Dockerfile
+    image: go-tutor/notifications:dev
+    profiles: [labs]
+    environment:
+      NOTIFICATIONS_KAFKA_BROKERS: kafka:9092
+      NOTIFICATIONS_OTLP_ENDPOINT: jaeger:4317
+      NOTIFICATIONS_DB_PATH: /data/notifications.db
+    tmpfs:
+      - /data:size=64m,uid=65532,gid=65532,mode=0700
+    depends_on:
+      kafka:
+        condition: service_healthy
+      jaeger:
+        condition: service_started
+    ports:
+      - "127.0.0.1:8192:8081"
+    read_only: true
+    mem_limit: 256m
+    networks: [default]
+
+  # Jaeger v2 (all-in-one, хранилище в памяти): приём OTLP/gRPC на 4317
+  # из docker-сети, UI — http://127.0.0.1:16686.
+  jaeger:
+    image: jaegertracing/jaeger:2.22.0
+    profiles: [labs]
+    ports:
+      - "127.0.0.1:16686:16686"
+    mem_limit: 512m
+    networks: [default]
+
+  # Prometheus: скрейпит служебные порты трёх сервисов (labs/prometheus),
+  # UI — http://127.0.0.1:9091.
+  prometheus:
+    image: prom/prometheus:v3.15.1
+    profiles: [labs]
+    volumes:
+      - ./labs/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    tmpfs:
+      - /prometheus:size=256m,uid=65534,gid=65534
+    ports:
+      - "127.0.0.1:9091:9090"
+    mem_limit: 512m
     networks: [default]
 
 networks:

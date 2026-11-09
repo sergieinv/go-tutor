@@ -1,0 +1,12 @@
+корректный: <nil>
+  -                          order.discount_needs_coupon  discount above 10% requires a coupon
+  customer_email             string.email                 must be a valid email address
+  delivery                   required                     exactly one field is required in oneof
+  items[0].price_cents       item.whole_rubles            price must be in whole rubles
+  items[0].quantity          uint32.gt_lte                must be greater than 0 and less than or equal to 100
+  items[0].sku               string.pattern               does not match regex pattern `^[A-Z0-9-]+$`
+CreateOrder(bad): InvalidArgument invalid request
+  нарушений в BadRequest: 6
+GetOrder(-5): InvalidArgument
+CreateOrder(good): OK 1001
+вызовов обработчиков: 1

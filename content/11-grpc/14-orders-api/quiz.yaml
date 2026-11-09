@@ -1,0 +1,103 @@
+questions:
+  - id: http-codes
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+
+      	"github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
+      	"google.golang.org/grpc/codes"
+      )
+
+      func main() {
+      	for _, c := range []codes.Code{codes.FailedPrecondition, codes.AlreadyExists, codes.Unauthenticated, codes.ResourceExhausted} {
+      		fmt.Print(runtime.HTTPStatusFromCode(c), " ")
+      	}
+      	fmt.Println()
+      }
+    options:
+      - text: "400 409 401 429 "
+        correct: true
+        explain: "Так gateway переводит коды gRPC в HTTP. Обратите внимание: `FailedPrecondition` — 400, а не 409 или 412, поэтому «заказ уже отменён» в REST выглядит как обычная ошибка запроса, а различают её по `code` в теле."
+      - text: "412 409 401 429 "
+        explain: "Соответствие задаёт таблица gateway (она же в `google/rpc/code.proto`): `FAILED_PRECONDITION` → 400."
+      - text: "400 409 403 503 "
+        explain: "`Unauthenticated` — 401, а 403 — это `PermissionDenied`. `ResourceExhausted` — 429 Too Many Requests."
+      - text: "500 500 500 500 "
+        explain: "500 получают только `Internal`, `Unknown` и `DataLoss`; у остальных кодов свои статусы."
+
+  - id: int64-json
+    kind: output
+    prompt: "Что выведет программа? Так же gateway отдаёт поле `int64 total_cents`."
+    code: |
+      package main
+
+      import (
+      	"fmt"
+
+      	"google.golang.org/protobuf/encoding/protojson"
+      	"google.golang.org/protobuf/types/known/wrapperspb"
+      )
+
+      func main() {
+      	b, _ := protojson.Marshal(wrapperspb.Int64(360))
+      	var v wrapperspb.Int64Value
+      	err := protojson.Unmarshal([]byte(`360`), &v)
+      	fmt.Println(string(b), v.GetValue(), err)
+      }
+    options:
+      - text: "\"360\" 360 <nil>"
+        correct: true
+        explain: "В protojson `int64`/`uint64` пишутся строкой — JavaScript не представит точно числа больше 2^53. Читать protojson умеет оба вида, число и строку. Клиентам REST об этом надо сказать: `\"totalCents\":\"360\"` — не ошибка."
+      - text: "360 360 <nil>"
+        explain: "Так было бы для `int32`. 64-битные целые в JSON-отображении protobuf — строки."
+      - text: "\"360\" 0 proto: invalid value"
+        explain: "Разбор строже записи не бывает: protojson принимает для `int64` и число, и строку."
+      - text: "{\"value\":\"360\"} 360 <nil>"
+        explain: "Обёртки (`wrapperspb`) в JSON представлены самим значением, без объекта `{\"value\": ...}`."
+
+  - id: idempotency-mismatch
+    kind: single
+    prompt: "Клиент повторил `CreateOrder` с тем же `idempotency-key`, но с другим количеством товара. Как правильно ответить?"
+    options:
+      - text: "Ошибкой (`AlreadyExists`, в REST 409): ключ уже связан с другим запросом"
+        correct: true
+        explain: "Ключ идемпотентности означает «это тот же самый запрос». Другое тело с тем же ключом — ошибка клиента (переиспользовал ключ). Вернуть старый заказ — значит молча проигнорировать изменения, создать новый — сломать гарантию «не больше одного заказа на ключ»."
+      - text: "Вернуть заказ, созданный первым запросом"
+        explain: "Клиент решит, что заказ создан с новым количеством, хотя это не так. Поэтому сервер хранит вместе с ключом сам запрос (или его хеш) и сравнивает."
+      - text: "Создать новый заказ: тело другое — значит запрос другой"
+        explain: "Тогда ключ ничего не гарантирует: сетевой повтор с чуть иначе сериализованным телом создаст дубль."
+      - text: "Обновить существующий заказ новым количеством"
+        explain: "`CreateOrder` не должен менять существующие заказы — для этого есть отдельные методы."
+
+  - id: handler-server
+    kind: single
+    prompt: "Сервер собран так: `grpc.NewServer(grpc.ChainUnaryInterceptor(auth, validate))`, а gateway — через `RegisterOrderServiceHandlerServer(ctx, mux, svc)`. Что не так?"
+    options:
+      - text: "REST-запросы вызывают методы `svc` напрямую и проходят мимо auth и валидации"
+        correct: true
+        explain: "`Register…HandlerServer` — вызов реализации внутри процесса без gRPC: interceptors, лимиты сообщений и стримы gRPC не участвуют (стриминговые методы этот режим вообще не поддерживает). Чтобы REST шёл через тот же конвейер, регистрируйте `Register…Handler(ctx, mux, conn)` или `…FromEndpoint` — через настоящее gRPC-соединение, пусть и на loopback."
+      - text: "Ничего: gateway сам применит interceptors сервера"
+        explain: "Gateway о gRPC-сервере ничего не знает — в режиме HandlerServer он видит только интерфейс `OrderServiceServer`."
+      - text: "Так не скомпилируется: HandlerServer требует `*grpc.Server`"
+        explain: "Требуется реализация интерфейса `OrderServiceServer`, её и передают."
+      - text: "Сломается только сериализация JSON"
+        explain: "JSON работает. Ломается безопасность: проверки остаются только на gRPC-пути."
+
+  - id: page-token
+    kind: multiple
+    prompt: "Что верно для `page_token` в пагинации gRPC/REST API (Google AIP-158)?"
+    options:
+      - text: "Токен непрозрачен для клиента: формат может меняться, клиент только передаёт его обратно"
+        correct: true
+        explain: "Поэтому смещение кодируют (base64 с префиксом версии), а не отдают голым числом: так формат можно поменять на курсор по ключу, не ломая клиентов."
+      - text: "Пустой `next_page_token` — признак последней страницы"
+        correct: true
+        explain: "Не число элементов на странице: страница может быть короче `page_size` и не последней (фильтры), поэтому ориентир — только токен."
+      - text: "Мусорный токен — повод вернуть первую страницу"
+        explain: "Это скрывает ошибки клиента и может зациклить обход. Правильный ответ — `InvalidArgument`."
+      - text: "`page_size = 0` — значит «нет ограничения, вернуть всё»"
+        explain: "0 — «на усмотрение сервера», то есть размер по умолчанию. Отдавать всё без ограничений опасно: один запрос выгрузит всю таблицу."

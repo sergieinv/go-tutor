@@ -1,0 +1,171 @@
+questions:
+  - id: error-after-messages
+    kind: output
+    prompt: "Сервис описан вручную через `grpc.ServiceDesc` — так выглядит код, который генерирует `protoc-gen-go-grpc`. Что выведет программа?"
+    code: |
+      package main
+
+      import (
+      	"context"
+      	"fmt"
+      	"net"
+
+      	"google.golang.org/grpc"
+      	"google.golang.org/grpc/codes"
+      	"google.golang.org/grpc/credentials/insecure"
+      	"google.golang.org/grpc/status"
+      	"google.golang.org/protobuf/types/known/wrapperspb"
+      )
+
+      var desc = grpc.ServiceDesc{
+      	ServiceName: "demo.Counter",
+      	HandlerType: (*any)(nil),
+      	Streams: []grpc.StreamDesc{{
+      		StreamName:    "Count",
+      		ServerStreams: true,
+      		Handler: func(_ any, ss grpc.ServerStream) error {
+      			for i := int32(1); i <= 3; i++ {
+      				if err := ss.SendMsg(wrapperspb.Int32(i)); err != nil {
+      					return err
+      				}
+      			}
+      			return status.Error(codes.Internal, "диск кончился")
+      		},
+      	}},
+      }
+
+      func main() {
+      	srv := grpc.NewServer()
+      	srv.RegisterService(&desc, struct{}{})
+      	lis, _ := net.Listen("tcp", "127.0.0.1:0")
+      	go srv.Serve(lis)
+      	defer srv.Stop()
+      	conn, _ := grpc.NewClient(lis.Addr().String(),
+      		grpc.WithTransportCredentials(insecure.NewCredentials()))
+      	defer conn.Close()
+
+      	stream, _ := conn.NewStream(context.Background(), &desc.Streams[0], "/demo.Counter/Count")
+      	stream.SendMsg(&wrapperspb.Int32Value{})
+      	stream.CloseSend()
+      	for {
+      		var v wrapperspb.Int32Value
+      		if err := stream.RecvMsg(&v); err != nil {
+      			fmt.Println(status.Code(err))
+      			return
+      		}
+      		fmt.Print(v.GetValue(), " ")
+      	}
+      }
+    options:
+      - text: "1 2 3 Internal"
+        correct: true
+        explain: "Сообщения уходят клиенту сразу, по мере `SendMsg`, а статус вызова — в трейлерах после них. Клиент получит все три числа, и только следующий `RecvMsg` вернёт ошибку со статусом `Internal`. Поэтому ошибка в конце стрима не отменяет уже доставленные данные — клиент должен быть к этому готов."
+      - text: Internal
+        explain: "Так было бы в unary-вызове: ответ с ошибкой не доставляется. В стриме сообщения не копятся до конца вызова, они уже у клиента."
+      - text: "1 2 3 OK"
+        explain: "`OK` в трейлерах означал бы, что обработчик вернул `nil` — тогда `RecvMsg` вернул бы `io.EOF`, а `status.Code(io.EOF)` и вовсе `Unknown`. Здесь обработчик вернул ошибку."
+      - text: "1 2 3 Unknown"
+        explain: "`Unknown` получается, когда обработчик возвращает обычную ошибку без статуса. `status.Error(codes.Internal, ...)` доходит до клиента со своим кодом."
+
+  - id: forgot-close-send
+    kind: output
+    prompt: Клиент отправил два числа и ждёт сумму. Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"context"
+      	"errors"
+      	"fmt"
+      	"io"
+      	"net"
+      	"time"
+
+      	"google.golang.org/grpc"
+      	"google.golang.org/grpc/credentials/insecure"
+      	"google.golang.org/grpc/status"
+      	"google.golang.org/protobuf/types/known/wrapperspb"
+      )
+
+      // Client streaming: сервер суммирует числа до конца потока.
+      var desc = grpc.ServiceDesc{
+      	ServiceName: "demo.Adder",
+      	HandlerType: (*any)(nil),
+      	Streams: []grpc.StreamDesc{{
+      		StreamName:    "Sum",
+      		ClientStreams: true,
+      		Handler: func(_ any, ss grpc.ServerStream) error {
+      			var sum int32
+      			for {
+      				var v wrapperspb.Int32Value
+      				err := ss.RecvMsg(&v)
+      				if errors.Is(err, io.EOF) {
+      					return ss.SendMsg(wrapperspb.Int32(sum))
+      				}
+      				if err != nil {
+      					return err
+      				}
+      				sum += v.GetValue()
+      			}
+      		},
+      	}},
+      }
+
+      func main() {
+      	srv := grpc.NewServer()
+      	srv.RegisterService(&desc, struct{}{})
+      	lis, _ := net.Listen("tcp", "127.0.0.1:0")
+      	go srv.Serve(lis)
+      	defer srv.Stop()
+      	conn, _ := grpc.NewClient(lis.Addr().String(),
+      		grpc.WithTransportCredentials(insecure.NewCredentials()))
+      	defer conn.Close()
+
+      	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+      	defer cancel()
+      	stream, _ := conn.NewStream(ctx, &desc.Streams[0], "/demo.Adder/Sum")
+      	stream.SendMsg(wrapperspb.Int32(2))
+      	stream.SendMsg(wrapperspb.Int32(3))
+
+      	var sum wrapperspb.Int32Value
+      	err := stream.RecvMsg(&sum)
+      	fmt.Println(sum.GetValue(), status.Code(err))
+      }
+    options:
+      - text: "0 DeadlineExceeded"
+        correct: true
+        explain: "Клиент не вызвал `CloseSend`, поэтому сервер не получает `io.EOF` и ждёт третье число, а клиент ждёт ответ. Взаимное ожидание обрывает только дедлайн. В сгенерированном клиенте для этого есть `CloseAndRecv` — он закрывает отправку и читает ответ."
+      - text: "5 OK"
+        explain: "Сервер отвечает только после `io.EOF`, а `io.EOF` на сервере появляется лишь после `CloseSend` клиента. Сам `RecvMsg` у клиента поток не закрывает."
+      - text: "5 DeadlineExceeded"
+        explain: "Ответ не пришёл вовсе, поэтому сообщение осталось пустым: `GetValue()` — 0."
+      - text: Программа зависнет навсегда
+        explain: "Зависла бы с `context.Background()`. Контекст с таймаутом обрывает вызов через 300 мс."
+
+  - id: concurrent-send
+    kind: single
+    prompt: Bidi-стрим используют несколько горутин. Что из этого безопасно?
+    options:
+      - text: Одна горутина вызывает только Send, другая — только Recv
+        correct: true
+        explain: "Документация `grpc.ClientStream` и `ServerStream` разрешает ровно это: один писатель и один читатель одновременно. Так и устроен типичный bidi-клиент — чтение в отдельной горутине."
+      - text: Несколько горутин вызывают Send одновременно, gRPC сериализует их сам
+        explain: "Не сериализует: `SendMsg` из нескольких горутин одновременно — гонка. Нужен один писатель — например, горутина, читающая из канала, или мьютекс вокруг `Send`."
+      - text: CloseSend из одной горутины, пока другая вызывает Send
+        explain: "Документация прямо запрещает вызывать `CloseSend` одновременно с `SendMsg`. Закрывает поток тот же писатель, когда отправил последнее сообщение."
+      - text: Ничего — стрим можно использовать только из той горутины, где он создан
+        explain: "Привязки к горутине нет: допустимы один писатель и один читатель параллельно, в любых горутинах."
+
+  - id: stream-or-pagination
+    kind: single
+    prompt: "Мобильному клиенту нужен список заказов покупателя — до нескольких тысяч, страницами по 50 при прокрутке. Что выбрать?"
+    options:
+      - text: "Unary `ListOrders` с `page_size` и `page_token`"
+        correct: true
+        explain: "Клиент читает страницу, показывает её и, может быть, никогда не попросит следующую. Каждый запрос независим: его легко повторить, кешировать, пропустить через grpc-gateway в REST, и он не держит соединение и память сервера между прокрутками."
+      - text: "Server streaming `WatchOrders`: открыть стрим и читать по мере прокрутки"
+        explain: "Стрим живёт, пока клиент не дочитал или не отменил, и привязан к одному соединению и одной реплике. Мобильная сеть его оборвёт, и продолжить с места нельзя без своего механизма курсоров — то есть той же пагинации."
+      - text: "Bidi: клиент присылает «дай ещё 50», сервер отвечает пачкой"
+        explain: "Это пагинация, переизобретённая поверх долгоживущего стрима, со всеми его минусами: обрывы, балансировка, нет REST-отображения."
+      - text: "Unary `ListOrders`, возвращающий все заказы сразу"
+        explain: "Тысячи заказов — это мегабайты, лимит сообщения в 4 МБ по умолчанию и долгий первый экран. Отдавать порциями нужно в любом случае."

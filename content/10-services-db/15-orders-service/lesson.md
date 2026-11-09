@@ -28,30 +28,28 @@ taskKind: review
 | Раздел примера | Пакет в `labs/orders` | Что в нём важно |
 | --- | --- | --- |
 | `Status`, `Order`, ошибки, `Store`, `Service` | `internal/orders` | доменные ошибки для `errors.Is`, `ValidationError` с полем, интерфейс `Store` объявлен здесь — у потребителя |
-| `SQLiteStore`, `withTx` | `internal/store/sqlite` (и `postgres`, `mysql`) | явная транзакция с `defer tx.Rollback()`, атомарный резерв `UPDATE … WHERE available >= ?`, событие outbox в той же транзакции, заказ с позициями — два запроса, а не 1 + N |
-| `handler`, `fail` | `internal/httpapi` | `MaxBytesReader` и `DisallowUnknownFields`, `r.Context()` до самого SQL, перевод ошибок в статусы в одном месте, подробности — только в журнал |
+| `SQLiteStore`, `withTx` | `internal/store/sqlite` (и `postgres`; резерв — в `labs/warehouse/internal/store/mysql`) | явная транзакция с `defer tx.Rollback()`, атомарный резерв `UPDATE … WHERE available >= ?`, событие outbox в той же транзакции, заказ с позициями — два запроса, а не 1 + N |
+| `handler`, `fail` | `internal/grpcapi` (REST — grpc-gateway, middleware — `labs/platform/httpx`) | `MaxBytesReader` и `DisallowUnknownFields`, `r.Context()` до самого SQL, перевод ошибок в статусы в одном месте, подробности — только в журнал |
 | `run` | `cmd/orders` | ручная сборка: база → хранилище → сервис → обработчик → `http.Server` с таймаутами; `run` тестируем, `main` — три строки |
 
 Сценарий примера проходит основные пути. Создание заказа резервирует товар. Второй заказ не проходит целиком: кружка, списанная первой позицией, возвращается вместе с откатом транзакции. Неизвестный товар даёт `422`, лишнее поле в JSON — `400`, повторная отмена — `409`, несуществующий заказ — `404`. В конце пример печатает остатки и события outbox в порядке изменений.
 
-**Полноценный сервис — `labs/orders`.** Это отдельный Go-модуль `gotutor/labs/orders` в репозитории учебника. Его стоит прочитать целиком: он написан так, как пишут в продакшне.
+**Полноценный сервис — `labs/orders`.** Это отдельный Go-модуль `gotutor/labs/orders` в репозитории учебника. Его стоит прочитать целиком: он написан так, как пишут в продакшне. Сейчас он уже в состоянии после модулей 11–12 (gRPC, сага со «Складом», Kafka) — устройство системы описано в `labs/README.md`.
 
 ```
 labs/orders/
   cmd/orders/main.go          main → run(ctx, args, getenv, stdout): конфигурация из env,
                               миграции при старте, сборка зависимостей, graceful shutdown
   internal/orders/            домен и сервис; интерфейсы Store и Tx объявлены здесь
-  internal/httpapi/           JSON API на ServeMux: DTO, middleware (request id, журнал,
-                              recover, дедлайн), ошибки → статусы (errors.go)
+  internal/grpcapi/           gRPC OrderService (REST — grpc-gateway), ошибки → статусы (errors.go)
   internal/store/postgres/    pgxpool + sqlc
-  internal/store/mysql/       database/sql + go-sql-driver/mysql + sqlc
   internal/store/sqlite/      database/sql + modernc.org/sqlite + sqlc
-  internal/storetest/         один контрактный набор тестов для всех трёх хранилищ
-  migrations/{postgres,mysql,sqlite}/   миграции goose, встроены через embed
+  internal/storetest/         один контрактный набор тестов для обоих хранилищ
+  migrations/{postgres,sqlite}/   миграции goose, встроены через embed
   sqlc.yaml                   генерация кода запросов
 ```
 
-Конфигурация — три переменные: `ORDERS_DB` (`postgres`, `mysql` или `sqlite`), `ORDERS_DSN` и `ORDERS_ADDR`. Команда `docker compose --profile labs up --build` поднимает сервис на `localhost:8090` с PostgreSQL. Миграции и демо-каталог он применяет сам, проверить можно через `curl -s localhost:8090/products/3`. Без Docker сервис запускается на SQLite: `ORDERS_DB=sqlite ORDERS_DSN=orders.db go run ./cmd/orders` в каталоге `labs/orders`. Тесты: `go test -race ./...` гоняет контрактный набор на SQLite. С переменными `ORDERS_TEST_POSTGRES` и `ORDERS_TEST_MYSQL` (DSN администратора баз профиля labs) тот же набор идёт ещё на PostgreSQL и MySQL, вплоть до конкурентного резерва: 24 покупателя на 7 единиц товара — продано ровно 7. Команды и примеры запросов — в `labs/orders/README.md`. Два упрощения там названы прямо: аутентификации пока нет (любой клиент читает и отменяет любой заказ), а DSN из `docker-compose.yml` — учебный: суперпользователь, пароль в репозитории, `sslmode=disable`. В продакшне сервис ходит в базу отдельной ролью без прав на DDL, с `sslmode=verify-full` и паролем из менеджера секретов.
+Конфигурация — переменные `ORDERS_*`: база (`ORDERS_DB` — `postgres` или `sqlite`, `ORDERS_DSN`), адреса «Склада» и Kafka; полный список — в README. Команда `docker compose --profile labs up --build` поднимает сервис на `localhost:8090` с PostgreSQL вместе с остальной системой. Миграции и демо-каталог он применяет сам, проверить можно через `curl -s localhost:8090/v1/orders/1` после создания заказа (`POST /v1/orders`). Тесты: `go test -race ./...` гоняет контрактный набор на SQLite. С переменной `ORDERS_TEST_POSTGRES` (DSN администратора базы профиля labs) тот же набор идёт ещё на PostgreSQL; конкурентный резерв (24 покупателя на 7 единиц товара — продано ровно 7) проверяют тесты «Склада» (`WAREHOUSE_TEST_MYSQL`). Команды и примеры запросов — в `labs/orders/README.md`. Два упрощения там названы прямо: аутентификации пока нет (любой клиент читает и отменяет любой заказ), а DSN из `docker-compose.yml` — учебный: суперпользователь, пароль в репозитории, `sslmode=disable`. В продакшне сервис ходит в базу отдельной ролью без прав на DDL, с `sslmode=verify-full` и паролем из менеджера секретов.
 
 Чем сервис богаче примера: цена фиксируется на момент заказа, а порядок резерва по возрастанию `product_id` (в примере он тоже есть) проверяет тест — без сортировки встречные заказы на PostgreSQL и MySQL ловят дедлок. Транзакция передаётся явно через `Store.Begin` → `Tx`. Повторная отмена идемпотентна: она возвращает `200` и тот же заказ, а не `409`, как в примере, — клиент может безопасно повторить запрос после таймаута. Ещё у запроса есть дедлайн, который доходит до драйвера, а ответ об ошибке несёт `request_id`. Дальше сервис растёт вместе с курсом. В модуле 11 появится gRPC рядом с REST, а резерв уйдёт в отдельный сервис «Склад» на MySQL — с сагой и компенсацией. В модуле 12 публикатор outbox начнёт отправлять `order.created` и `order.cancelled` в Kafka, добавятся метрики и трассировка. В модуле 14 — кеш каталога, защита от перегрузки и чтение с реплик.
 

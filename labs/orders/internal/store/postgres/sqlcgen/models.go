@@ -27,21 +27,18 @@ type OrderItem struct {
 }
 
 type Outbox struct {
-	ID          int64
-	EventType   string
-	AggregateID int64
-	Payload     []byte
-	CreatedAt   time.Time
-	PublishedAt pgtype.Timestamptz
+	ID           int64
+	EventID      string
+	EventType    string
+	AggregateID  int64
+	Payload      []byte
+	TraceContext []byte
+	CreatedAt    time.Time
+	PublishedAt  pgtype.Timestamptz
 }
 
 type Product struct {
 	ID         int64
 	Name       string
 	PriceCents int64
-}
-
-type Stock struct {
-	ProductID int64
-	Available int32
 }

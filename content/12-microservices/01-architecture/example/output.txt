@@ -1,0 +1,6 @@
+POST /orders → 201 {"id":"o-1"}
+POST /orders → 409 out of stock
+POST /orders → 201 {"id":"o-3"}
+склад: map[cup:0 tea:0]
+уведомления: order.created o-1 для alice
+уведомления: order.created o-3 для carol

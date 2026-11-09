@@ -1,0 +1,146 @@
+questions:
+  - id: tag-and-varint
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+
+      	"google.golang.org/protobuf/encoding/protowire"
+      )
+
+      func main() {
+      	b := protowire.AppendTag(nil, 2, protowire.VarintType)
+      	b = protowire.AppendVarint(b, 300)
+      	fmt.Printf("% x\n", b)
+      }
+    options:
+      - text: 10 ac 02
+        correct: true
+        explain: "Тег — `2<<3 | 0 = 16 = 0x10`. 300 — это `100101100` в двоичном виде: младшие 7 бит `0101100` идут первыми со старшим битом-продолжением (`0xac`), остаток `10` — вторым байтом (`0x02`)."
+      - text: 12 ac 02
+        explain: "`0x12` — поле 2 с wire type 2 (длина + байты), так кодируется строка. У varint wire type 0, тег — `0x10`."
+      - text: 10 01 2c
+        explain: "Это 300 в big-endian (`0x012c`). Varint пишет число группами по 7 бит, начиная с младших, и у каждого байта, кроме последнего, взведён старший бит."
+
+  - id: json-int64
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"time"
+
+      	"google.golang.org/protobuf/encoding/protojson"
+      	"google.golang.org/protobuf/types/known/durationpb"
+      	"google.golang.org/protobuf/types/known/wrapperspb"
+      )
+
+      func main() {
+      	a, _ := protojson.Marshal(wrapperspb.Int64(150))
+      	b, _ := protojson.Marshal(wrapperspb.Int32(150))
+      	c, _ := protojson.Marshal(durationpb.New(1500 * time.Millisecond))
+      	fmt.Println(string(a), string(b), string(c))
+      }
+    options:
+      - text: '"150" 150 "1.500s"'
+        correct: true
+        explain: "Каноническое JSON-отображение proto3 пишет 64-битные целые строкой: в JavaScript `Number` точен только до 2^53. 32-битные — числом. `Duration` — строка секунд с суффиксом `s`, дробная часть — 3, 6 или 9 знаков. Обёртки (`Int64Value`) в JSON выглядят как само значение."
+      - text: 150 150 "1.5s"
+        explain: "`int64` в protojson — строка, это правило отображения, а не настройка. И `Duration` дробную часть пишет группами по 3 знака: `1.500s`."
+      - text: '{"value":"150"} {"value":150} {"seconds":"1","nanos":500000000}'
+        explain: "У well-known types своё JSON-отображение: обёртка — само значение, `Duration` и `Timestamp` — строки. Поля `value`, `seconds`, `nanos` видны только в бинарном виде."
+
+  - id: negative-size
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+
+      	"google.golang.org/protobuf/proto"
+      	"google.golang.org/protobuf/types/known/wrapperspb"
+      )
+
+      func main() {
+      	fmt.Println(
+      		proto.Size(wrapperspb.Int64(0)),
+      		proto.Size(wrapperspb.Int32(-1)),
+      		proto.Size(wrapperspb.Int64(1)),
+      	)
+      }
+    options:
+      - text: 0 11 2
+        correct: true
+        explain: "Ноль у скалярного поля proto3 не кодируется — сообщение пустое. Отрицательное `int32` расширяется до 64 бит и в varint занимает 10 байт, плюс байт тега. Единица — тег и один байт. Для полей, где часто бывают отрицательные числа, есть `sint32`/`sint64` (zigzag): −1 там занимает один байт."
+      - text: 2 2 2
+        explain: "Нулевые значения в proto3 на провод не попадают, поэтому первый размер — 0. А −1 в `int32` — не два байта: varint знака не знает и кодирует 64-битное дополнение."
+      - text: 0 5 2
+        explain: "Похоже на правду для 32-битного числа, но protobuf расширяет отрицательное `int32` до `int64`, чтобы поле можно было без потерь читать как `int64`. Получается 10 байт значения и байт тега."
+
+  - id: concat-merge
+    kind: output
+    prompt: "Два сообщения закодированы по отдельности, байты склеены и разобраны одним `Unmarshal`. Что выведет программа?"
+    code: |
+      package main
+
+      import (
+      	"fmt"
+
+      	"google.golang.org/protobuf/proto"
+      	"google.golang.org/protobuf/types/known/structpb"
+      	"google.golang.org/protobuf/types/known/wrapperspb"
+      )
+
+      func main() {
+      	s1, _ := proto.Marshal(wrapperspb.String("ab"))
+      	s2, _ := proto.Marshal(wrapperspb.String("cd"))
+      	var s wrapperspb.StringValue
+      	if err := proto.Unmarshal(append(s1, s2...), &s); err != nil {
+      		panic(err)
+      	}
+
+      	l1, _ := proto.Marshal(&structpb.ListValue{Values: []*structpb.Value{structpb.NewStringValue("x")}})
+      	l2, _ := proto.Marshal(&structpb.ListValue{Values: []*structpb.Value{structpb.NewStringValue("y")}})
+      	var l structpb.ListValue
+      	if err := proto.Unmarshal(append(l1, l2...), &l); err != nil {
+      		panic(err)
+      	}
+      	fmt.Println(s.GetValue(), len(l.GetValues()))
+      }
+    options:
+      - text: cd 2
+        correct: true
+        explain: "У сообщения protobuf нет заголовка и длины, поэтому склейка байтов — корректное сообщение, а разбор работает как слияние: скалярное поле берётся из последнего вхождения, `repeated` — дописывается. На этом держится и задача урока."
+      - text: abcd 2
+        explain: "Строки не склеиваются: для скалярного поля, встреченного дважды, побеждает последнее значение."
+      - text: ошибка разбора — паника
+        explain: "Байты двух сообщений подряд — тоже правильное сообщение: в формате нет маркера конца. Ошибки нет."
+      - text: cd 1
+        explain: "`repeated`-поле при повторе не заменяется, а дополняется: в списке оба элемента."
+
+  - id: copy-message
+    kind: compile
+    prompt: "Скомпилируется ли программа? (`go build`, не `go vet`)"
+    code: |
+      package main
+
+      import (
+      	"fmt"
+
+      	"google.golang.org/protobuf/types/known/timestamppb"
+      )
+
+      func main() {
+      	a := timestamppb.Now()
+      	b := *a
+      	fmt.Println(b.Seconds > 0)
+      }
+    compiles: true
+    explain: "Компилятор копирование структуры не запрещает. Но `go vet` (его гоняют в CI и линтерах; `go test` запускает только часть проверок vet, и copylocks в неё не входит) сообщит `assignment copies lock value to b: ... contains protoimpl.MessageState contains sync.Mutex`. Сообщения передают указателями, копию делают `proto.Clone`."

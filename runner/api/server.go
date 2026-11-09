@@ -1,5 +1,5 @@
 // Package api — HTTP-интерфейс runner: /api/run, /api/test, /api/gotest,
-// /api/vulncheck, /api/fmt, /api/trace, /api/race.
+// /api/vulncheck, /api/buf, /api/fmt, /api/trace, /api/race.
 package api
 
 import (
@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"go/format"
 	"log/slog"
+	"mime"
 	"net/http"
 	"regexp"
 	"slices"
@@ -42,6 +43,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/test", s.handleTest)
 	mux.HandleFunc("POST /api/gotest", s.handleGoTest)
 	mux.HandleFunc("POST /api/vulncheck", s.handleVulncheck)
+	mux.HandleFunc("POST /api/buf", s.handleBuf)
 	mux.HandleFunc("POST /api/fmt", s.handleFmt)
 	mux.HandleFunc("POST /api/solution", s.handleSolution)
 	mux.HandleFunc("POST /api/trace", s.handleTrace)
@@ -49,7 +51,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/health", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "lessons": len(s.lessons)})
 	})
-	return mux
+	// runner исполняет присланный код, поэтому POST с чужой страницы
+	// (Sec-Fetch-Site: cross-site или Origin не совпадает с Host) отвергается.
+	return http.NewCrossOriginProtection().Handler(mux)
 }
 
 type runRequest struct {
@@ -196,6 +200,31 @@ func (s *Server) handleVulncheck(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.log.Info("vulncheck", "lesson", req.Lesson, "ms", res.DurationMs, "exit", res.ExitCode, "found", res.Found)
+	writeJSON(w, http.StatusOK, res)
+}
+
+// handleBuf запускает buf lint, а если передан against — buf breaking
+// против прежней версии контракта.
+func (s *Server) handleBuf(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Lesson  string        `json:"lesson"`
+		Files   sandbox.Files `json:"files"`
+		Against sandbox.Files `json:"against"`
+	}
+	if !decode(w, r, &req) {
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), s.queueTimeout)
+	defer cancel()
+	res, err := s.exec.BufCheck(ctx, req.Files, req.Against)
+	if errors.Is(err, sandbox.ErrNoBuf) {
+		writeError(w, http.StatusNotImplemented, "в этом runner нет buf")
+		return
+	}
+	if s.fail(w, r, err) {
+		return
+	}
+	s.log.Info("buf", "lesson", req.Lesson, "breaking", req.Against != nil, "ms", res.DurationMs, "exit", res.ExitCode, "found", res.Found)
 	writeJSON(w, http.StatusOK, res)
 }
 
@@ -353,6 +382,12 @@ func (s *Server) fail(w http.ResponseWriter, r *http.Request, err error) bool {
 const maxBody = 1 << 20
 
 func decode(w http.ResponseWriter, r *http.Request, v any) bool {
+	// Только application/json: «простой» запрос браузера (text/plain, форма)
+	// с чужой страницы уходит без preflight, а такой — нет.
+	if mt, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type")); mt != "application/json" {
+		writeError(w, http.StatusUnsupportedMediaType, "нужен Content-Type: application/json")
+		return false
+	}
 	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBody))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(v); err != nil {

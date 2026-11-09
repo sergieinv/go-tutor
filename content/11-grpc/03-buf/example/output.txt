@@ -1,0 +1,17 @@
+файл: orders.proto пакет: shop.v1
+  импорт: google/protobuf/timestamp.proto
+метод /shop.v1.OrderService/GetOrder(OrderRef) -> Order
+метод /shop.v1.OrderService/CreateOrder(CreateOrderRequest) -> CreateOrderResponse
+сообщение OrderRef
+  1 id int64 json=id
+сообщение Order
+  1 id int64 json=id
+  2 customerEmail string json=customerEmail
+  3 status enum json=status
+  4 created_at message json=createdAt
+сообщение CreateOrderRequest
+  1 customer_email string json=customerEmail
+сообщение CreateOrderResponse
+  1 order message json=order
+ENUM_VALUE_PREFIX shop.v1.PAID: нужен префикс ORDER_STATUS_
+образ: google/protobuf/timestamp.proto, orders.proto | байт > 0: true

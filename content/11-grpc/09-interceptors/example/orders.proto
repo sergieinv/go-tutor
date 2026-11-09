@@ -1,0 +1,32 @@
+// Контракт примера: один unary-метод и один серверный стрим —
+// на них видно и unary-, и stream-interceptors.
+syntax = "proto3";
+
+package interceptors.v1;
+
+option go_package = "lesson/proto;main";
+
+service OrderService {
+  // Заказ по id.
+  rpc GetOrder(GetOrderRequest) returns (GetOrderResponse);
+  // Заказы клиента по одному сообщению в стриме.
+  rpc ListOrders(ListOrdersRequest) returns (stream ListOrdersResponse);
+}
+
+message GetOrderRequest {
+  int64 id = 1;
+}
+
+message GetOrderResponse {
+  int64 id = 1;
+  string status = 2;
+}
+
+message ListOrdersRequest {
+  string customer = 1;
+}
+
+message ListOrdersResponse {
+  int64 id = 1;
+  string status = 2;
+}

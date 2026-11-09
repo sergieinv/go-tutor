@@ -33,12 +33,36 @@ export interface TraceEvent {
   case: number;
 }
 
+/** Задача trace.NewTask или регион trace.WithRegion; end -1 — не закрыт. */
+export interface TraceSpan {
+  id: number;
+  kind: "task" | "region";
+  name: string;
+  /** У задачи — родительская задача (0 — нет), у региона — его задача. */
+  task: number;
+  g: number;
+  start: number;
+  end: number;
+  depth: number;
+}
+
+/** Запись trace.Log(ctx, category, message). */
+export interface TraceLog {
+  t: number;
+  g: number;
+  task: number;
+  category: string;
+  message: string;
+}
+
 export interface Trace {
   goroutines: TraceGoroutine[];
   selects: TraceSelect[];
   events: TraceEvent[];
   total: number;
   durationUs: number;
+  spans: TraceSpan[];
+  logs: TraceLog[];
 }
 
 export interface TraceResult {

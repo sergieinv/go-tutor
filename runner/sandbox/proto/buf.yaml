@@ -1,0 +1,16 @@
+# buf.yaml по умолчанию для примеров с .proto (рядом — buf.lock и buf.gen.yaml).
+# Зависимости — только эти две: у песочницы нет сети, образ runner кладёт
+# их в кеш buf при сборке по коммитам из buf.lock.
+version: v2
+deps:
+  - buf.build/googleapis/googleapis
+  - buf.build/bufbuild/protovalidate
+lint:
+  use:
+    - STANDARD
+  except:
+    # Файлы примера лежат в одном каталоге, а не в orders/v1/.
+    - PACKAGE_DIRECTORY_MATCH
+breaking:
+  use:
+    - FILE

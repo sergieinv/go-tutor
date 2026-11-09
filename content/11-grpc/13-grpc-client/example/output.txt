@@ -1,0 +1,8 @@
+после NewClient: IDLE
+после Connect: READY
+6 вызовов round_robin: a=2 b=2 c=2
+flaky: 7 <nil> previous attempts = [2]
+пустой sku: InvalidArgument попыток: 1
+сервер лежит: Unavailable
+сервер лежит, WaitForReady: DeadlineExceeded
+после Close: SHUTDOWN

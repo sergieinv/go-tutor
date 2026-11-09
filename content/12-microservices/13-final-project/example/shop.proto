@@ -1,0 +1,56 @@
+// Контракты всей системы в одном файле — модель labs/api, где
+// у каждого сервиса свой пакет: orders.v1, warehouse.v1, events.v1.
+syntax = "proto3";
+
+package shop.v1;
+
+option go_package = "lesson/proto;main";
+
+// OrderService — публичный API «Заказов».
+service OrderService {
+  // CreateOrder — сага: резерв на складе, затем заказ и событие
+  // в outbox одной транзакцией; при сбое записи — Release.
+  rpc CreateOrder(CreateOrderRequest) returns (CreateOrderResponse);
+}
+
+message CreateOrderRequest {
+  int64 customer_id = 1;
+  repeated Item items = 2;
+}
+
+message Item {
+  int64 product_id = 1;
+  int32 quantity = 2;
+}
+
+message CreateOrderResponse {
+  int64 order_id = 1;
+}
+
+// WarehouseService — внутренний API «Склада»: идемпотентен по order_id.
+service WarehouseService {
+  // Reserve резервирует все позиции или ни одной.
+  rpc Reserve(ReserveRequest) returns (ReserveResponse);
+  // Release возвращает резерв; без резерва — не ошибка.
+  rpc Release(ReleaseRequest) returns (ReleaseResponse);
+}
+
+message ReserveRequest {
+  int64 order_id = 1;
+  repeated Item items = 2;
+}
+
+message ReserveResponse {}
+
+message ReleaseRequest {
+  int64 order_id = 1;
+}
+
+message ReleaseResponse {}
+
+// OrderEvent — значение записи Kafka в топике orders.events.
+message OrderEvent {
+  string event_id = 1;
+  int64 order_id = 2;
+  int64 customer_id = 3;
+}

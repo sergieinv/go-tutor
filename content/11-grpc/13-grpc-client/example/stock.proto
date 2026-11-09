@@ -1,0 +1,21 @@
+syntax = "proto3";
+
+package stock.v1;
+
+option go_package = "lesson/proto;main";
+
+// StockService — склад, запущенный в трёх экземплярах.
+service StockService {
+  rpc GetStock(GetStockRequest) returns (GetStockResponse);
+}
+
+message GetStockRequest {
+  string sku = 1;
+}
+
+message GetStockResponse {
+  string sku = 1;
+  int32 quantity = 2;
+  // Имя экземпляра, который ответил.
+  string backend = 3;
+}

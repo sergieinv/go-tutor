@@ -1,0 +1,24 @@
+склад работает:
+ 1. OK                                            до склада дошло: 1
+ 2. OK                                            до склада дошло: 2
+ 3. InvalidArgument: quantity <= 0                до склада дошло: 3
+ 4. OK                                            до склада дошло: 4
+склад упал:
+ 5. Unavailable: склад перезапускается            до склада дошло: 5
+ 6. Unavailable: склад перезапускается            до склада дошло: 6
+ 7. Unavailable: склад перезапускается            до склада дошло: 7
+   breaker: closed → open
+ 8. Unavailable: склад перезапускается            до склада дошло: 8
+ 9. Unavailable: circuit breaker is open          до склада дошло: 8
+10. Unavailable: circuit breaker is open          до склада дошло: 8
+   …прошло 5s
+   breaker: open → half-open
+   breaker: half-open → open
+11. Unavailable: склад перезапускается            до склада дошло: 9
+12. Unavailable: circuit breaker is open          до склада дошло: 9
+   …прошло 5s
+склад поднялся:
+   breaker: open → half-open
+   breaker: half-open → closed
+13. OK                                            до склада дошло: 10
+14. OK                                            до склада дошло: 11

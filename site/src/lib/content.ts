@@ -63,6 +63,8 @@ export interface Task {
   template: string;
   tests: string;
   hints: string;
+  /** Контракты .proto задачи: их, как и тесты, задаёт урок. */
+  protos: Record<string, string>;
 }
 
 export interface Example {
@@ -74,6 +76,8 @@ export interface Example {
   tests: Record<string, string>;
   /** Свой go.mod примера (например, с уязвимой версией модуля): редактируется в песочнице. */
   mod?: string;
+  /** Контракты .proto: редактируются в песочнице, runner генерирует по ним код при каждом запуске. */
+  protos: Record<string, string>;
   /** Есть ли в тестах бенчмарки и какие fuzz-цели — для кнопок песочницы. */
   bench: boolean;
   fuzz: string[];
@@ -92,7 +96,8 @@ function loadExample(dir: string): Example {
   return {
     source: read(dir, "example", "main.go"),
     output: exists(dir, "example", "output.txt") ? read(dir, "example", "output.txt") : "",
-    files: pick((f) => f !== "main.go" && f !== "go.mod" && f !== "output.txt" && !f.endsWith("_test.go")),
+    files: pick((f) => f !== "main.go" && f !== "go.mod" && f !== "output.txt" && !f.endsWith("_test.go") && !f.endsWith(".proto")),
+    protos: pick((f) => f.endsWith(".proto")),
     tests,
     mod: names.includes("go.mod") ? read(dir, "example", "go.mod") : undefined,
     bench: benchFunc.test(testSrc),
@@ -172,6 +177,13 @@ function loadLesson(module: Module, slug: string): Lesson {
         template: read(dir, "task", "task.go"),
         tests: read(dir, "task", "task_test.go"),
         hints: read(dir, "task", "hints.md"),
+        protos: Object.fromEntries(
+          fs
+            .readdirSync(path.join(dir, "task"))
+            .filter((f) => f.endsWith(".proto"))
+            .sort()
+            .map((f) => [f, read(dir, "task", f)]),
+        ),
       }
     : undefined;
   return {

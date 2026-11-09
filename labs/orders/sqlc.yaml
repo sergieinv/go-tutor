@@ -16,13 +16,6 @@ sql:
           # колонкам достаточно time.Time.
           - db_type: timestamptz
             go_type: time.Time
-  - engine: mysql
-    schema: migrations/mysql
-    queries: internal/store/mysql/query.sql
-    gen:
-      go:
-        package: sqlcgen
-        out: internal/store/mysql/sqlcgen
   # query.sql для sqlite — только ASCII: парсер sqlite в sqlc v1.31 путает
   # смещения на многобайтных символах, и кириллица в комментариях ломает
   # генерацию. Пояснения к запросам — в internal/store/sqlite/store.go.

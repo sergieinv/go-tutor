@@ -1,0 +1,15 @@
+# Свой buf.yaml урока: два пакета proto в одном каталоге (в настоящем
+# репозитории они лежали бы в shop/legacy/v1 и shop/current/v1).
+version: v2
+deps:
+  - buf.build/googleapis/googleapis
+  - buf.build/bufbuild/protovalidate
+lint:
+  use:
+    - STANDARD
+  except:
+    - PACKAGE_DIRECTORY_MATCH
+    - DIRECTORY_SAME_PACKAGE
+breaking:
+  use:
+    - FILE

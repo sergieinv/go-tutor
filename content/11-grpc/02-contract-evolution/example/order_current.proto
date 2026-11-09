@@ -1,0 +1,39 @@
+// Та же сущность через полгода: с этой версией собран сервер.
+// В настоящем репозитории это был бы тот же файл и тот же пакет,
+// просто в новом коммите. Здесь обе версии лежат рядом, чтобы
+// обменяться байтами в одном процессе, а имена сообщений
+// различаются только потому, что весь сгенерированный код
+// попадает в один Go-пакет main. По проводу имена не идут.
+syntax = "proto3";
+
+package shop.current.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "lesson/proto;main";
+
+// CurrentOrder — заказ, каким его знает новый сервер.
+message CurrentOrder {
+  // Промокоды убрали: номер и имя зарезервированы навсегда,
+  // чтобы никто не занял их под поле с другим смыслом.
+  reserved 4;
+  reserved "promo_code";
+
+  int64 id = 1;
+  // Переименовано из customer: в бинарном виде совместимо,
+  // в JSON — нет.
+  string customer_email = 2;
+  int64 total_cents = 3;
+  CurrentStatus status = 5;
+  // Новые поля — только с новыми номерами.
+  repeated string tags = 6;
+  google.protobuf.Timestamp paid_at = 7;
+}
+
+// CurrentStatus — к статусам добавился SHIPPED.
+enum CurrentStatus {
+  CURRENT_STATUS_UNSPECIFIED = 0;
+  CURRENT_STATUS_NEW = 1;
+  CURRENT_STATUS_PAID = 2;
+  CURRENT_STATUS_SHIPPED = 3;
+}

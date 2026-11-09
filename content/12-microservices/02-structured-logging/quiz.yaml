@@ -1,0 +1,156 @@
+questions:
+  - id: lost-wrapper
+    kind: output
+    prompt: "Обёртка встраивает `slog.Handler` и переопределяет только `Handle`. Что выведет программа?"
+    code: |
+      package main
+
+      import (
+      	"context"
+      	"log/slog"
+      	"os"
+      )
+
+      type key struct{}
+
+      type ctxHandler struct{ slog.Handler }
+
+      func (h ctxHandler) Handle(ctx context.Context, r slog.Record) error {
+      	if id, ok := ctx.Value(key{}).(string); ok {
+      		r = r.Clone()
+      		r.AddAttrs(slog.String("request_id", id))
+      	}
+      	return h.Handler.Handle(ctx, r)
+      }
+
+      func main() {
+      	log := slog.New(ctxHandler{slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
+      		ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
+      			if a.Key == slog.TimeKey {
+      				return slog.Attr{}
+      			}
+      			return a
+      		},
+      	})})
+      	ctx := context.WithValue(context.Background(), key{}, "r-1")
+      	log.Info("a")
+      	log.InfoContext(ctx, "b")
+      	log.With("k", 1).InfoContext(ctx, "c")
+      }
+    options:
+      - text: |
+          level=INFO msg=a
+          level=INFO msg=b request_id=r-1
+          level=INFO msg=c k=1
+        correct: true
+        explain: "`Info` передаёт в `Handle` `context.Background()` — атрибута нет. `InfoContext` передаёт `ctx` — есть. А `With` вызвал `WithAttrs`, который пришёл от встроенного `TextHandler` и вернул голый `TextHandler`: обёртка выпала, и `request_id` пропал."
+      - text: |
+          level=INFO msg=a
+          level=INFO msg=b request_id=r-1
+          level=INFO msg=c k=1 request_id=r-1
+        explain: "Так было бы, если бы `ctxHandler` переопределял `WithAttrs` и возвращал новую обёртку. Встроенный метод возвращает внутренний обработчик."
+      - text: |
+          level=INFO msg=a request_id=r-1
+          level=INFO msg=b request_id=r-1
+          level=INFO msg=c k=1 request_id=r-1
+        explain: "`Info` без `Context` не знает о `ctx` из `main`: в `Handle` приходит `context.Background()`."
+      - text: |
+          level=INFO msg=a
+          level=INFO msg=b
+          level=INFO msg=c k=1
+        explain: "Для `b` контекст передан, и `Handle` обёртки срабатывает: `request_id` добавляется."
+
+  - id: lazy-value
+    kind: output
+    prompt: "Логгер на уровне INFO. Сколько раз посчитаются «дорогие» значения?"
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"io"
+      	"log/slog"
+      )
+
+      type lazyDump struct{ calls *int }
+
+      func (d lazyDump) LogValue() slog.Value {
+      	*d.calls++
+      	return slog.StringValue("big")
+      }
+
+      func main() {
+      	eager, lazy := 0, 0
+      	dump := func() string { eager++; return "big" }
+
+      	log := slog.New(slog.NewJSONHandler(io.Discard, nil)) // уровень INFO
+      	log.Debug("state", "dump", dump())
+      	log.Debug("state", "dump", lazyDump{&lazy})
+      	log.Info("state", "dump", lazyDump{&lazy})
+      	fmt.Println(eager, lazy)
+      }
+    options:
+      - text: "1 1"
+        correct: true
+        explain: "Аргументы Go вычисляет до вызова, поэтому `dump()` отработал, хотя DEBUG выключен. `LogValue` вызывает обработчик только при выводе: для отброшенной DEBUG-записи — ни разу, для INFO — один раз."
+      - text: "0 1"
+        explain: "Уровень проверяется внутри `Debug`, а `dump()` вычислен раньше, при подготовке аргументов."
+      - text: "1 2"
+        explain: "Запись уровня DEBUG отбрасывается до обработки атрибутов, поэтому `LogValue` для неё не вызывается."
+      - text: "0 0"
+        explain: "INFO-запись выводится (в `io.Discard`, но обработчик об этом не знает), и `LogValue` вызывается."
+
+  - id: group-json
+    kind: output
+    prompt: "Что выведет программа?"
+    code: |
+      package main
+
+      import (
+      	"log/slog"
+      	"os"
+      )
+
+      func main() {
+      	h := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+      		ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
+      			if len(groups) == 0 && a.Key == slog.TimeKey {
+      				return slog.Attr{}
+      			}
+      			return a
+      		},
+      	})
+      	log := slog.New(h).With("service", "orders").WithGroup("db")
+      	log.Info("query", "rows", 3)
+      	log.Debug("plan", "cost", 42)
+      }
+    options:
+      - text: '{"level":"INFO","msg":"query","service":"orders","db":{"rows":3}}'
+        correct: true
+        explain: "`With` до `WithGroup` кладёт атрибут на верхний уровень, а атрибуты вызова попадают в открытую группу `db`. DEBUG-запись отброшена: уровень по умолчанию — INFO."
+      - text: '{"level":"INFO","msg":"query","db":{"service":"orders","rows":3}}'
+        explain: "`service` добавлен до открытия группы, поэтому он снаружи неё."
+      - text: '{"level":"INFO","msg":"query","service":"orders","db.rows":3}'
+        explain: "Так группы выглядят в `TextHandler` (`db.rows=3`). `JSONHandler` делает вложенный объект."
+      - text: |
+          {"level":"INFO","msg":"query","service":"orders","db":{"rows":3}}
+          {"level":"DEBUG","msg":"plan","service":"orders","db":{"cost":42}}
+        explain: "Без `HandlerOptions.Level` минимальный уровень — INFO, DEBUG не выводится."
+
+  - id: what-to-log
+    kind: multiple
+    prompt: "Что серверный interceptor должен писать в access-лог каждого gRPC-вызова?"
+    options:
+      - text: "Полное имя метода и код ответа"
+        correct: true
+        explain: "По ним фильтруют и считают ошибки; код же определяет уровень записи."
+      - text: "`request_id` и `trace_id`"
+        correct: true
+        explain: "Без них запись не связать с остальными записями запроса в этом и соседних сервисах."
+      - text: "Длительность вызова"
+        correct: true
+        explain: "Позволяет найти медленные запросы прямо в логах; агрегаты по длительности — работа метрик (урок `04-metrics`)."
+      - text: "Всё сообщение запроса через `\"req\", req`"
+        explain: "Вместе с сообщением в лог уедут поля, которые добавят в контракт потом, — персональные данные, токены. Нужные поля выбирают явно, например через `LogValuer`."
+      - text: "Всю входящую metadata"
+        explain: "В metadata лежит `authorization` и cookie. Логируют только известные безопасные ключи вроде `x-request-id`."

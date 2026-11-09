@@ -1,5 +1,5 @@
 // Отрисовка результатов runner. Вывод программ — только через textContent.
-import type { GoTestMode, GoTestResult, RunResult, TestResult, VulncheckResult } from "./api.ts";
+import type { GoTestMode, GoTestResult, RunResult, TestResult, VulncheckResult, BufResult } from "./api.ts";
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, className?: string, text?: string) {
   const e = document.createElement(tag);
@@ -93,6 +93,18 @@ export function showVulncheck(target: HTMLElement, r: VulncheckResult) {
   else parts.push(status("Уязвимых вызовов не найдено", "ok", r.durationMs));
   if (r.output) parts.push(block("govulncheck ./...", r.output, r.failed ? "err" : "out"));
   if (r.dbModified) parts.push(el("p", "muted", `База уязвимостей — снимок vuln.go.dev от ${r.dbModified}.`));
+  target.replaceChildren(...parts);
+}
+
+export function showBuf(target: HTMLElement, r: BufResult, breaking: boolean) {
+  target.removeAttribute("aria-busy");
+  const cmd = breaking ? "buf breaking" : "buf lint";
+  const parts: HTMLElement[] = [];
+  if (r.timedOut) parts.push(status(`${cmd} не уложился в лимит времени`, "bad", r.durationMs));
+  else if (r.failed) parts.push(status(`${cmd} не смог проверить контракт`, "bad", r.durationMs));
+  else if (r.found) parts.push(status(breaking ? "Изменения ломают совместимость с исходным контрактом" : "Контракт нарушает правила lint", "bad", r.durationMs));
+  else parts.push(status(breaking ? "Совместимо с исходным контрактом" : "Нарушений lint нет", "ok", r.durationMs));
+  if (r.output) parts.push(block(cmd, r.output, r.failed ? "err" : "out"));
   target.replaceChildren(...parts);
 }
 

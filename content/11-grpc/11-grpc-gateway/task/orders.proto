@@ -1,0 +1,68 @@
+// Контракт задачи: REST-маршруты из google.api.http.
+syntax = "proto3";
+
+package shop.v1;
+
+import "google/api/annotations.proto";
+
+option go_package = "lesson/proto;task";
+
+service OrderService {
+  rpc GetOrder(GetOrderRequest) returns (GetOrderResponse) {
+    option (google.api.http) = {get: "/v1/orders/{id}"};
+  }
+  // Один метод — два маршрута: фильтр по клиенту из query или из пути.
+  rpc ListOrders(ListOrdersRequest) returns (ListOrdersResponse) {
+    option (google.api.http) = {
+      get: "/v1/orders"
+      additional_bindings {get: "/v1/customers/{customer_id}/orders"}
+    };
+  }
+  // POST /v1/orders/7:cancel — «пользовательский метод» после двоеточия.
+  rpc CancelOrder(CancelOrderRequest) returns (CancelOrderResponse) {
+    option (google.api.http) = {
+      post: "/v1/orders/{id}:cancel"
+      body: "*"
+    };
+  }
+}
+
+enum OrderStatus {
+  ORDER_STATUS_UNSPECIFIED = 0;
+  ORDER_STATUS_NEW = 1;
+  ORDER_STATUS_PAID = 2;
+  ORDER_STATUS_CANCELLED = 3;
+}
+
+message Order {
+  int64 id = 1;
+  string customer_id = 2;
+  int64 total_cents = 3;
+  OrderStatus status = 4;
+}
+
+message GetOrderRequest {
+  int64 id = 1;
+}
+
+message GetOrderResponse {
+  Order order = 1;
+}
+
+message ListOrdersRequest {
+  string customer_id = 1;
+  OrderStatus status = 2;
+}
+
+message ListOrdersResponse {
+  repeated Order orders = 1;
+}
+
+message CancelOrderRequest {
+  int64 id = 1;
+  string reason = 2;
+}
+
+message CancelOrderResponse {
+  Order order = 1;
+}

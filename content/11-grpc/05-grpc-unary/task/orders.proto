@@ -1,0 +1,60 @@
+syntax = "proto3";
+
+package orders.v1;
+
+option go_package = "lesson/proto;task";
+
+service OrderService {
+  rpc CreateOrder(CreateOrderRequest) returns (CreateOrderResponse);
+  rpc GetOrder(GetOrderRequest) returns (GetOrderResponse);
+  rpc ListOrders(ListOrdersRequest) returns (ListOrdersResponse);
+  // Реализовывать не нужно: клиент должен получить Unimplemented.
+  rpc CancelOrder(CancelOrderRequest) returns (CancelOrderResponse);
+}
+
+message Item {
+  string sku = 1;
+  int32 quantity = 2;
+  int64 price_cents = 3;
+}
+
+message Order {
+  string id = 1;
+  string customer = 2;
+  repeated Item items = 3;
+  int64 total_cents = 4;
+}
+
+message CreateOrderRequest {
+  string customer = 1;
+  repeated Item items = 2;
+}
+
+message CreateOrderResponse {
+  Order order = 1;
+}
+
+message GetOrderRequest {
+  string id = 1;
+}
+
+message GetOrderResponse {
+  Order order = 1;
+}
+
+message ListOrdersRequest {
+  // Пусто — все заказы, иначе только заказы этого покупателя.
+  string customer = 1;
+}
+
+message ListOrdersResponse {
+  repeated Order orders = 1;
+}
+
+message CancelOrderRequest {
+  string id = 1;
+}
+
+message CancelOrderResponse {
+  Order order = 1;
+}

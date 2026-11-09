@@ -1,0 +1,60 @@
+// Контракт задачи: три версии одного сообщения. Открытые тесты сравнивают
+// OrderV1 с OrderV2Compatible и с OrderV2Broken.
+syntax = "proto3";
+
+package shop.task.v1;
+
+option go_package = "lesson/proto;task";
+
+// OrderV1 — исходная версия.
+message OrderV1 {
+  reserved 10;
+  reserved "coupon";
+
+  int64 id = 1;
+  string customer = 2;
+  int64 total_cents = 3;
+  repeated string tags = 4;
+  map<string, string> labels = 5;
+  oneof payment {
+    string card_last4 = 6;
+    bool cash = 7;
+  }
+}
+
+// OrderV2Compatible — совместимая эволюция: tags удалено с reserved,
+// добавлено новое поле.
+message OrderV2Compatible {
+  reserved 4, 10;
+  reserved "tags", "coupon";
+
+  int64 id = 1;
+  string customer = 2;
+  int64 total_cents = 3;
+  map<string, string> labels = 5;
+  oneof payment {
+    string card_last4 = 6;
+    bool cash = 7;
+  }
+  string comment = 8;
+}
+
+// OrderV2Broken — всё, чего делать нельзя.
+message OrderV2Broken {
+  int64 id = 1;
+  // Переименовано: JSON-имя сменилось.
+  string customer_email = 2;
+  // total_cents (3) удалено без reserved.
+  // Было repeated.
+  string tags = 4;
+  // Было map<string, string>.
+  map<string, int64> labels = 5;
+  oneof payment {
+    string card_last4 = 6;
+  }
+  // Вынесено из oneof.
+  bool cash = 7;
+  // Номер и имя были зарезервированы в OrderV1.
+  int32 legacy_discount = 10;
+  string coupon = 11;
+}

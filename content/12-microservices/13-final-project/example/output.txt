@@ -1,0 +1,62 @@
+== 1. Заказ: 2 монитора
+  ответ: OK, заказ 1
+  склад: товар 3 — доступно 1, в резерве 2
+== 2. Не хватает товара
+  ответ: FailedPrecondition out of stock, reason OUT_OF_STOCK
+  склад: товар 3 — доступно 1, в резерве 2
+== 3. Сбой записи после резерва
+  запись заказа 3 не удалась: disk I/O error
+  компенсация Release(3): товар возвращён
+  ответ: Internal internal error
+  склад: товар 1 — доступно 10, в резерве 0
+== 4. Склад лёг
+  выключатель: closed → open
+  компенсация Release(4) не удалась: circuit breaker is open
+  ответ: Unavailable warehouse unavailable, retry later, повторить через 1s
+  склад: товар 1 — доступно 10, в резерве 0
+== 5. Выключатель разомкнут
+  компенсация Release(5) не удалась: circuit breaker is open
+  ответ: Unavailable warehouse unavailable, retry later, повторить через 1s
+  склад: товар 1 — доступно 10, в резерве 0
+  до склада дошло вызовов: 0
+== 6. Склад поднялся, прошло 5 с
+  выключатель: open → half-open
+  выключатель: half-open → closed
+  ответ: OK, заказ 6
+  склад: товар 1 — доступно 9, в резерве 1
+== 7. Outbox → Kafka → «Уведомления»
+relay: отправлено 2, упал до отметки
+relay: отправлено 2, отмечено
+  офсет 0: «Заказ 1 оформлен» → покупатель 42
+  офсет 1: «Заказ 6 оформлен» → покупатель 8
+  офсет 2: evt-1 уже обработано — пропуск
+  офсет 3: evt-2 уже обработано — пропуск
+  офсет 4 → DLQ (decode)
+== 8. Метрики
+  notifications_events_total{result="dlq"} 1
+  notifications_events_total{result="duplicate"} 2
+  notifications_events_total{result="sent"} 2
+  orders_saga_total{result="compensated"} 1
+  orders_saga_total{result="created"} 2
+  orders_saga_total{result="out_of_stock"} 1
+  orders_saga_total{result="release_failed"} 2
+  orders_warehouse_breaker_opened_total 1
+  orders_warehouse_retries_total 4
+== Трасса заказа 1
+  POST /v1/orders [orders, server]
+    shop.v1.OrderService/CreateOrder [orders, client]
+      shop.v1.OrderService/CreateOrder [orders, server]
+        shop.v1.WarehouseService/Reserve [orders, client]
+          shop.v1.WarehouseService/Reserve [warehouse, server]
+        orders.events publish [orders, producer]
+          orders.events process [notifications, consumer]
+        orders.events publish [orders, producer]
+          orders.events process [notifications, consumer] +duplicate
+== Трасса заказа 3
+  POST /v1/orders [orders, server]
+    shop.v1.OrderService/CreateOrder [orders, client]
+      shop.v1.OrderService/CreateOrder [orders, server]
+        shop.v1.WarehouseService/Reserve [orders, client]
+          shop.v1.WarehouseService/Reserve [warehouse, server]
+        shop.v1.WarehouseService/Release [orders, client]
+          shop.v1.WarehouseService/Release [warehouse, server]

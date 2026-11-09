@@ -41,6 +41,90 @@ func (c *Checker) CheckLesson(ctx context.Context, l *Lesson, p *Problems) {
 	if _, err := os.Stat(filepath.Join(l.Dir, "example", "sqlc.yaml")); err == nil {
 		c.checkSqlc(ctx, l, p)
 	}
+	for _, dir := range []string{"example", "task"} {
+		c.checkProto(ctx, l, dir, p)
+	}
+	if l.Meta.Buf != nil {
+		c.checkBufLint(ctx, l, p)
+	}
+}
+
+// checkProto требует, чтобы закоммиченный код по .proto совпадал с тем,
+// что сгенерирует runner: ученик видит в уроке тот же код, что собирается.
+func (c *Checker) checkProto(ctx context.Context, l *Lesson, dir string, p *Problems) {
+	protos, _ := filepath.Glob(filepath.Join(l.Dir, dir, "*.proto"))
+	if len(protos) == 0 {
+		return
+	}
+	files := sandbox.Files{}
+	entries, _ := os.ReadDir(filepath.Join(l.Dir, dir))
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasSuffix(name, ".proto") && name != "buf.yaml" && !sandbox.IsGenerated(name) {
+			continue
+		}
+		b, err := os.ReadFile(filepath.Join(l.Dir, dir, name))
+		if err != nil {
+			p.Errorf("%s: %v", dir, err)
+			return
+		}
+		files[name] = string(b)
+	}
+	gen, err := c.Exec.GenerateFiles(ctx, files)
+	var genErr *sandbox.GenerateError
+	switch {
+	case errors.As(err, &genErr):
+		p.Errorf("%s: buf generate:\n%s", dir, indent(genErr.Output))
+		return
+	case err != nil:
+		p.Errorf("%s: buf generate: %v", dir, err)
+		return
+	}
+	for name, src := range gen {
+		switch {
+		case files[name] == src:
+		case c.Update:
+			if err := os.WriteFile(filepath.Join(l.Dir, dir, name), []byte(src), 0o644); err != nil {
+				p.Errorf("%v", err)
+			}
+		default:
+			p.Errorf("%s/%s: не совпадает с buf generate — перегенерируйте код: go run ./tools/lessonlint -update", dir, name)
+		}
+	}
+	for name := range files {
+		if sandbox.IsGenerated(name) && gen[name] == "" {
+			p.Errorf("%s/%s: такого файла buf generate не создаёт — удалите его", dir, name)
+		}
+	}
+}
+
+// checkBufLint прогоняет buf lint по примеру, как кнопка в песочнице, и
+// требует нарушений из buf.expectLint (пусто — контракт чистый).
+func (c *Checker) checkBufLint(ctx context.Context, l *Lesson, p *Problems) {
+	files, err := exampleFiles(l)
+	if err != nil {
+		return
+	}
+	res, err := c.Exec.BufCheck(ctx, files, nil)
+	switch {
+	case errors.Is(err, sandbox.ErrNoBuf):
+		p.Errorf("buf lint: buf не найден — флаг -buf")
+		return
+	case err != nil:
+		p.Errorf("buf lint: %v", err)
+		return
+	case res.Failed:
+		p.Errorf("buf lint: не смог проверить пример\n%s", indent(res.Output))
+		return
+	}
+	for _, rule := range l.Meta.Buf.ExpectLint {
+		if !strings.Contains(res.Output, " "+rule+" ") {
+			p.Errorf("buf lint: нет нарушения %s в выводе\n%s", rule, indent(res.Output))
+		}
+	}
+	if len(l.Meta.Buf.ExpectLint) == 0 && res.Found {
+		p.Errorf("buf lint: контракт примера не проходит lint, а buf.expectLint пуст\n%s", indent(res.Output))
+	}
 }
 
 // checkSqlc требует, чтобы сгенерированный код примера совпадал с тем,
@@ -125,7 +209,9 @@ func (c *Checker) checkLive(ctx context.Context, l *Lesson, p *Problems) {
 		p.Errorf("live: в трассе нет событий select — визуализатору нечего показать")
 	case builder == "goroutines" && len(res.Trace.Goroutines) < 2:
 		p.Errorf("live: в трассе одна горутина — визуализатору нечего показать")
-	case builder != "select" && builder != "goroutines":
+	case builder == "spans" && len(res.Trace.Spans) == 0:
+		p.Errorf("live: в трассе нет задач и регионов runtime/trace — визуализатору нечего показать")
+	case builder != "select" && builder != "goroutines" && builder != "spans":
 		p.Errorf("viz.ts: неизвестный builder %q", builder)
 	case res.Trace.Total > livetrace.MaxEvents:
 		p.Warnf("live: %d событий, показаны будут первые %d — сократите программу", res.Trace.Total, livetrace.MaxEvents)
@@ -347,9 +433,20 @@ func (c *Checker) checkTask(ctx context.Context, l *Lesson, p *Problems) {
 		}
 		files[name] = string(b)
 	}
+	// Остальное в task/ (кроме подсказок) — файлы урока, как у runner:
+	// контракты .proto и сгенерированный по ним код.
+	lessonFiles, err := taskFiles(l)
+	if err != nil {
+		p.Errorf("task: %v", err)
+		return
+	}
 	// Шаблон и эталон объявляют одно и то же — собираем их по очереди.
 	withTests := func(code string) sandbox.Files {
-		return sandbox.Files{"task.go": code, "task_test.go": files["task_test.go"], "hidden_test.go": files["hidden_test.go"]}
+		out := sandbox.Files{"task.go": code}
+		for name, src := range lessonFiles {
+			out[name] = src
+		}
+		return out
 	}
 
 	// Эталон проходит все тесты, включая скрытые.
@@ -375,6 +472,27 @@ func (c *Checker) checkTask(ctx context.Context, l *Lesson, p *Problems) {
 	default:
 		checkExploits(l, files, res, p)
 	}
+}
+
+// taskFiles — файлы урока из task/: всё, кроме task.go, solution.go и hints.md.
+func taskFiles(l *Lesson) (sandbox.Files, error) {
+	entries, err := os.ReadDir(filepath.Join(l.Dir, "task"))
+	if err != nil {
+		return nil, err
+	}
+	files := sandbox.Files{}
+	for _, e := range entries {
+		switch name := e.Name(); {
+		case e.IsDir(), name == "task.go", name == "solution.go", name == "hints.md":
+		default:
+			b, err := os.ReadFile(filepath.Join(l.Dir, "task", name))
+			if err != nil {
+				return nil, err
+			}
+			files[name] = string(b)
+		}
+	}
+	return files, nil
 }
 
 var (

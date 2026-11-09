@@ -1,0 +1,22 @@
+  [grpc] CreateOrder → OK
+gRPC create: ord-1 360 <nil>
+  [grpc] CreateOrder → InvalidArgument
+gRPC create: InvalidArgument
+  customer_id: must be at least 1 characters
+  items[0].sku: does not match regex pattern `^[A-Z0-9-]{3,32}$`
+  items[0].quantity: must be greater than 0 and less than or equal to 1000
+  [grpc] CreateOrder → OK
+REST POST /v1/orders → 200
+  {"order":{"id":"ord-2","customerId":"c-1","items":[{"sku":"PEAR-2","quantity":1,"priceCents":"250"}],"totalCents":"250","status":"ORDER_STATUS_CREATED","createTime":"2026-11-08T10:00:00Z"}}
+  [grpc] GetOrder → NotFound
+REST GET /v1/orders/ord-404 → 404
+  {"code":5,"message":"order ord-404 not found","details":[]}
+REST GET /v1/customers/c-1/orders → 200
+  {"result":{"order":{"id":"ord-1","customerId":"c-1","items":[{"sku":"APPLE-1","quantity":3,"priceCents":"120"}],"totalCents":"360","status":"ORDER_STATUS_CREATED","createTime":"2026-11-08T10:00:00Z"}}}
+  {"result":{"order":{"id":"ord-2","customerId":"c-1","items":[{"sku":"PEAR-2","quantity":1,"priceCents":"250"}],"totalCents":"250","status":"ORDER_STATUS_CREATED","createTime":"2026-11-08T10:00:00Z"}}}
+  [grpc] CancelOrder → OK
+REST POST /v1/orders/ord-1:cancel → 200
+  {"order":{"id":"ord-1","customerId":"c-1","items":[{"sku":"APPLE-1","quantity":3,"priceCents":"120"}],"totalCents":"360","status":"ORDER_STATUS_CANCELLED","createTime":"2026-11-08T10:00:00Z"}}
+  [grpc] CancelOrder → FailedPrecondition
+REST POST /v1/orders/ord-1:cancel → 400
+  {"code":9,"message":"order already cancelled","details":[{"@type":"type.googleapis.com/google.rpc.PreconditionFailure","violations":[{"type":"STATUS","subject":"orders/ord-1","description":"order is cancelled"}]}]}

@@ -1,0 +1,10 @@
+Check(""): SERVING OK
+Check("shop.v1.OrderService"): SERVING OK
+Check("shop.v1.Payments"): UNKNOWN NotFound
+Watch: SERVING
+Watch: база недоступна → NOT_SERVING
+Watch: база вернулась → SERVING
+reflection: [grpc.health.v1.Health grpc.reflection.v1.ServerReflection grpc.reflection.v1alpha.ServerReflection shop.v1.OrderService]
+  orders.proto: GetOrder(.shop.v1.GetOrderRequest) .shop.v1.GetOrderResponse
+Watch: остановка → NOT_SERVING
+сервер остановлен

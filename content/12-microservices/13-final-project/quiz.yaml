@@ -1,0 +1,125 @@
+questions:
+  - id: breaker-inside-retries
+    kind: output
+    prompt: "Склад лежит. Клиент «Заказов» делает до 3 попыток на UNAVAILABLE, выключатель стоит внутри повторов и размыкается после 5 неудач подряд. Сага вызывает Reserve, а после его неудачи — компенсирующий Release. Что выведет программа?"
+    code: |
+      package main
+
+      import (
+      	"errors"
+      	"fmt"
+      )
+
+      var errOpen = errors.New("open")
+
+      func main() {
+      	calls, failures := 0, 0
+      	breaker := func() error {
+      		if failures >= 5 {
+      			return errOpen // не трогаем сеть
+      		}
+      		calls++
+      		failures++
+      		return errors.New("unavailable")
+      	}
+      	call := func() error {
+      		var err error
+      		for range 3 {
+      			if err = breaker(); errors.Is(err, errOpen) {
+      				return err // ErrOpen не повторяем
+      			}
+      		}
+      		return err
+      	}
+      	call() // Reserve
+      	call() // Release
+      	call() // следующий заказ: Reserve
+      	fmt.Println(calls, failures)
+      }
+    options:
+      - text: "5 5"
+        correct: true
+        explain: "Reserve — три попытки (3 неудачи), Release — ещё две, на пятой выключатель размыкается, и третья попытка Release получает `errOpen` без сетевого вызова. Следующий заказ отклоняется мгновенно. Так и в labs: выключатель размыкается уже на первом запросе после падения склада."
+      - text: "6 6"
+        explain: "Шестой попытки не будет: после пятой неудачи `breaker` отвечает `errOpen`, а `call` её не повторяет."
+      - text: "9 9"
+        explain: "Без выключателя было бы 9 вызовов к мёртвому складу. Выключатель стоит внутри повторов — поэтому он останавливает и оставшиеся попытки текущей серии."
+      - text: "3 3"
+        explain: "Неудачи Release тоже считаются: выключатель общий на все методы склада."
+
+  - id: which-errors-compensate
+    kind: multiple
+    prompt: "Сага получила номер заказа и вызвала Reserve. После каких ответов нужно вызвать компенсирующий Release?"
+    options:
+      - text: "DEADLINE_EXCEEDED"
+        correct: true
+        explain: "Дедлайн истёк у клиента, а склад мог успеть зарезервировать — исход неизвестен. Release идемпотентен и оставляет «надгробие», поэтому безопасен и тогда, когда резерва нет."
+      - text: "UNAVAILABLE после всех повторов"
+        correct: true
+        explain: "Обычно это значит, что вызов не принят, но гарантии нет: соединение могло оборваться после того, как сервер выполнил запрос."
+      - text: "Обрыв соединения без статуса gRPC (`connection reset`)"
+        correct: true
+        explain: "Любая ошибка, кроме точного отказа, — исход неизвестен."
+      - text: "FAILED_PRECONDITION с ErrorInfo OUT_OF_STOCK"
+        explain: "Это ответ склада: он проверил остатки и ничего не зарезервировал. Компенсировать нечего — клиент получает 400 с причиной."
+      - text: "INVALID_ARGUMENT"
+        explain: "Склад отверг запрос до какой-либо работы (валидация protovalidate). Резерва нет."
+
+  - id: without-cancel
+    kind: output
+    prompt: "Клиент ушёл посреди запроса. Что выведет программа?"
+    code: |
+      package main
+
+      import (
+      	"context"
+      	"fmt"
+      	"time"
+      )
+
+      type key struct{}
+
+      func main() {
+      	req, cancel := context.WithCancel(context.WithValue(context.Background(), key{}, "req-7"))
+      	cancel() // клиент ушёл
+      	ctx, stop := context.WithTimeout(context.WithoutCancel(req), 5*time.Second)
+      	defer stop()
+      	_, hasDeadline := ctx.Deadline()
+      	fmt.Println(req.Err() != nil, ctx.Err(), ctx.Value(key{}), hasDeadline)
+      }
+    options:
+      - text: "true <nil> req-7 true"
+        correct: true
+        explain: "`WithoutCancel` сохраняет значения (id запроса, спан трассы), но не отмену и не дедлайн родителя. Свой таймаут добавляем сами — иначе компенсация может висеть вечно."
+      - text: "true context canceled req-7 true"
+        explain: "Отмена родителя через `WithoutCancel` не проходит — ради этого его и вызывают."
+      - text: "true <nil> <nil> true"
+        explain: "Значения сохраняются: `WithoutCancel` отрезает только отмену. Поэтому Release остаётся в трассе запроса, а журнал — с `request_id`."
+      - text: "true <nil> req-7 false"
+        explain: "Дедлайна родителя у контекста нет, но `WithTimeout` поставил свой."
+
+  - id: commit-unknown
+    kind: single
+    prompt: "Резерв сделан, а транзакция заказа упала на самом COMMIT (соединение с базой оборвалось). Что правильно сделать саге?"
+    options:
+      - text: "Проверить отдельным запросом, записан ли заказ: есть — успех, нет — Release, не удалось проверить — оставить резерв и поднять тревогу"
+        correct: true
+        explain: "Ошибка на COMMIT неоднозначна: база могла зафиксировать транзакцию. Так делает `labs/orders/internal/orders/service.go`. «Висящий» резерв лучше, чем оплаченный заказ без товара."
+      - text: "Сразу вызвать Release: транзакция не удалась"
+        explain: "Если COMMIT на самом деле прошёл, получится заказ без товара — склад продаст его второй раз."
+      - text: "Повторить COMMIT"
+        explain: "Транзакция уже завершена (или соединение мертво) — повторять нечего. Нужна проверка исхода."
+      - text: "Ничего: relay outbox всё исправит"
+        explain: "Relay публикует только записанные события. Если заказа нет, резерв повиснет навсегда."
+
+  - id: relay-replicas
+    kind: single
+    prompt: "«Заказы» запущены в трёх репликах. Почему relay в labs берёт `pg_try_advisory_xact_lock`, а не `SELECT … FOR UPDATE SKIP LOCKED`?"
+    options:
+      - text: "Чтобы публиковала одна реплика за раз: SKIP LOCKED раздал бы пачки разным репликам, и события одного заказа могли уйти в Kafka не по порядку"
+        correct: true
+        explain: "Порядок по ключу — гарантия всей цепочки: «отменён» не должен обогнать «оформлен». Цена — публикация не масштабируется по репликам, но для outbox одного сервиса этого хватает."
+      - text: "SKIP LOCKED в PostgreSQL 18 не поддерживается"
+        explain: "Поддерживается с 9.5. Дело в порядке, а не в возможностях базы."
+      - text: "Advisory lock делает публикацию exactly-once"
+        explain: "Нет: relay всё равно может упасть между ProduceSync и отметкой. Доставка at-least-once, дубли отсекает потребитель по `event_id`."

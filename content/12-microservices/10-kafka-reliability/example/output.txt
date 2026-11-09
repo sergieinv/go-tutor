@@ -1,0 +1,12 @@
+идемпотентный=true: записей в партиции 1
+идемпотентный=false: записей в партиции 2
+acks=1: idempotency requires acks=all
+e1@0: обработано с попытки 1
+e2@1: в DLQ (попыток: 1): unexpected end of JSON input
+e3@2: обработано с попытки 3
+e1@3: дубль, пропущен
+DLQ: key=A-1 value={"order_id":"A-1",
+  event-id: e2
+  dlq-reason: unexpected end of JSON input
+  dlq-attempts: 1
+  dlq-source: orders.events/0@1

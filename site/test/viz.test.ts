@@ -8,6 +8,7 @@ import { ARROW_HEAD, arrow, type Side, validate } from "../../viz/src/index.ts";
 import { selectHeight, selectSteps, SELECT_WIDTH } from "../../viz/src/live/select.ts";
 import type { TraceResult } from "../../viz/src/live/trace.ts";
 import { GOROUTINES_WIDTH, goroutinesHeight, goroutinesSteps, MAX_FRAMES } from "../../viz/src/live/goroutines.ts";
+import { SPANS_WIDTH, spansHeight, spansSteps } from "../../viz/src/live/spans.ts";
 import { builders } from "../../viz/src/live/index.ts";
 import { raceSteps, type RaceResult } from "../../viz/src/live/race.ts";
 import { type Clock, Player } from "../../viz/src/player.ts";
@@ -203,6 +204,26 @@ test("горутины: стадии pipeline, передачи между ни�
       const right = sh.type === "rect" ? sh.x + sh.w : sh.x;
       const bottom = sh.type === "rect" ? sh.y + sh.h : sh.y;
       assert.ok(right <= GOROUTINES_WIDTH && bottom <= h, `${sh.id}: ${right}×${bottom}`);
+    }
+});
+
+test("задачи и регионы: цепочка сервисов, остаток дедлайна, отмена третьего", () => {
+  const t = (readFixture("spans-trace.json") as TraceResult).trace!;
+  const s = spansSteps(t);
+  // Вступление, по шагу на событие (3 задачи и 3 региона — начало и конец, 4 лога), итог.
+  assert.equal(s.length, 1 + 12 + 4 + 1);
+  const names = s[s.length - 1].scene.filter((x) => x.id.startsWith("name:")).map((x) => (x as { text: string }).text);
+  assert.deepEqual(names, ["gateway", "orders", "warehouse"]);
+  assert.ok(s.some((x) => /orders · deadline: осталось 50 мс/.test(x.note)));
+  assert.ok(s.some((x) => /Задача warehouse началась \(вызвана из orders\)/.test(x.note)));
+  assert.ok(s.some((x) => /warehouse · error: context deadline exceeded/.test(x.note)));
+  const h = spansHeight(t);
+  for (const step of s)
+    for (const sh of step.scene) {
+      if (sh.type === "path") continue;
+      const right = sh.type === "rect" ? sh.x + sh.w : sh.x;
+      const bottom = sh.type === "rect" ? sh.y + sh.h : sh.y;
+      assert.ok(right <= SPANS_WIDTH && bottom <= h, `${sh.id}: ${right}×${bottom}`);
     }
 });
 

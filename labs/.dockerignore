@@ -1,0 +1,8 @@
+# Контекст сборки образов сервисов — каталог labs/ (модули ссылаются на
+# labs/api и labs/platform через replace). В контекст — только исходники.
+**/*.db
+**/*.db-*
+**/*.test
+**/README.md
+initdb
+prometheus

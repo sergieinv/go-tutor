@@ -34,7 +34,7 @@ const sections = await renderLessonBody(lesson.body);
     <LessonHeader lesson={lesson} />
     <div class="prose intro" set:html={sections.intro} />
 
-    <AnnotatedExample source={lesson.example.source} output={lesson.example.output} tests={lesson.example.tests} mod={lesson.example.mod} />
+    <AnnotatedExample source={lesson.example.source} output={lesson.example.output} tests={lesson.example.tests} mod={lesson.example.mod} protos={lesson.example.protos} />
 
     {sections.csharp && <CSharpBridge differences={sections.csharp} files={lesson.csharp} />}
 

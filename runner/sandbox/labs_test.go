@@ -3,12 +3,14 @@ package sandbox
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/go-sql-driver/mysql"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -167,5 +169,94 @@ func TestStaleIDs(t *testing.T) {
 	got := staleIDs([]string{fresh, old, "run_xyz", "runner", "run_0a0b"})
 	if len(got) != 1 || got[0] != old {
 		t.Fatalf("staleIDs = %v, want [%s]", got, old)
+	}
+}
+
+// RUNNER_TEST_KAFKA=localhost:59092
+func TestLabsKafka(t *testing.T) {
+	brokers := os.Getenv("RUNNER_TEST_KAFKA")
+	if brokers == "" {
+		t.Skip("нет RUNNER_TEST_KAFKA")
+	}
+	e := newExecutor(t)
+	e.cfg.WallTime = 10 * time.Second
+	e.labs = newLabs(map[string]string{LabKafka: brokers})
+	src := `package main
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"strings"
+	"time"
+
+	"github.com/twmb/franz-go/pkg/kadm"
+	"github.com/twmb/franz-go/pkg/kgo"
+)
+
+func main() {
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	topic := os.Getenv("KAFKA_TOPIC_PREFIX") + "orders"
+	cl, err := kgo.NewClient(kgo.SeedBrokers(strings.Split(os.Getenv("KAFKA_BROKERS"), ",")...),
+		kgo.ConsumeTopics(topic), kgo.ConsumeResetOffset(kgo.NewOffset().AtStart()))
+	if err != nil {
+		panic(err)
+	}
+	defer cl.Close()
+	if _, err := kadm.NewClient(cl).CreateTopic(ctx, 1, 1, nil, topic); err != nil {
+		panic(err)
+	}
+	if err := cl.ProduceSync(ctx, &kgo.Record{Topic: topic, Value: []byte("created")}).FirstErr(); err != nil {
+		panic(err)
+	}
+	fs := cl.PollFetches(ctx)
+	if err := fs.Err(); err != nil {
+		panic(err)
+	}
+	fmt.Println(topic, string(fs.Records()[0].Value))
+}
+`
+	res, err := e.Run(context.Background(), Files{"main.go": src}, Flags{Labs: []string{LabKafka}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	topic, value, _ := strings.Cut(strings.TrimSpace(res.Stdout), " ")
+	if res.ExitCode != 0 || value != "created" || !strings.HasPrefix(topic, labPrefix) {
+		t.Fatalf("%+v", res)
+	}
+	adm, cl, err := kafkaAdmin(brokers)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cl.Close()
+	topics, err := adm.ListTopics(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if topics.Has(topic) {
+		t.Fatalf("топик %s не удалён", topic)
+	}
+}
+
+// Роль runner (CREATE USER) не должна снимать блокировки входа из песочницы:
+// иначе программа ученика удалила бы запись root@'172.29.99.%' и вошла как root.
+// ACCOUNT LOCK на уже заблокированной записи ничего не меняет, даже если тест упадёт.
+func TestLabsMySQLLockedAccounts(t *testing.T) {
+	admin := os.Getenv("RUNNER_TEST_MYSQL")
+	if admin == "" {
+		t.Skip("нет RUNNER_TEST_MYSQL")
+	}
+	db, err := sql.Open("mysql", admin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	for _, acc := range []string{"'root'@'172.29.99.%'", "'warehouse'@'172.29.99.%'"} {
+		_, err := db.Exec("ALTER USER " + acc + " ACCOUNT LOCK")
+		var myErr *mysql.MySQLError
+		if !errors.As(err, &myErr) || myErr.Number != 1227 {
+			t.Errorf("ALTER USER %s от runner: %v, want ошибку 1227 (нужен SYSTEM_USER)", acc, err)
+		}
 	}
 }

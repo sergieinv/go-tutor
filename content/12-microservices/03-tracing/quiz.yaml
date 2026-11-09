@@ -1,0 +1,134 @@
+questions:
+  - id: lost-context
+    kind: output
+    prompt: "Что выведет программа?"
+    code: |
+      package main
+
+      import (
+      	"context"
+      	"fmt"
+
+      	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+      	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+      )
+
+      func main() {
+      	sr := tracetest.NewSpanRecorder()
+      	tracer := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(sr)).Tracer("quiz")
+
+      	ctx, handler := tracer.Start(context.Background(), "handler")
+      	_, db := tracer.Start(context.Background(), "db")
+      	_, cache := tracer.Start(ctx, "cache")
+      	_, audit := tracer.Start(ctx, "audit")
+      	cache.End()
+      	db.End()
+      	handler.End()
+      	_ = audit
+
+      	for _, s := range sr.Ended() {
+      		fmt.Println(s.Name(), s.Parent().IsValid())
+      	}
+      	fmt.Println(len(sr.Started()))
+      }
+    options:
+      - text: |
+          cache true
+          db false
+          handler false
+          4
+        correct: true
+        explain: "`db` начат от `context.Background()` — это корень отдельной трассы, родителя нет. `cache` начат от `ctx` со спаном `handler` — ребёнок. `audit` начат, но не закрыт: в `Ended` его нет, хотя `Started` видит все четыре. Порядок `Ended` — порядок вызовов `End`."
+      - text: |
+          cache true
+          db true
+          handler false
+          4
+        explain: "Родитель берётся только из переданного контекста. `context.Background()` спана не содержит — `db` оказался в другой трассе."
+      - text: |
+          cache true
+          db false
+          audit true
+          handler false
+          4
+        explain: "Незакрытый спан не завершён: процессор получает его в `OnEnd` только после `End`. В экспорт он тоже не попадёт."
+      - text: |
+          handler false
+          db false
+          cache true
+          3
+        explain: "`Ended` упорядочен по моменту `End`, а не `Start`; и `Started` учитывает все начатые спаны, включая незакрытый `audit`."
+
+  - id: forgot-extract
+    kind: output
+    prompt: "Продюсер внедрил контекст в заголовки. Что выведет программа?"
+    code: |
+      package main
+
+      import (
+      	"context"
+      	"fmt"
+
+      	"go.opentelemetry.io/otel/propagation"
+      	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+      	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+      )
+
+      func main() {
+      	sr := tracetest.NewSpanRecorder()
+      	tracer := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(sr)).Tracer("quiz")
+      	prop := propagation.TraceContext{}
+
+      	ctx, pub := tracer.Start(context.Background(), "publish")
+      	h := propagation.MapCarrier{}
+      	prop.Inject(ctx, h)
+      	pub.End()
+
+      	_, c1 := tracer.Start(context.Background(), "consume-1") // заголовки не прочитаны
+      	c1.End()
+      	_, c2 := tracer.Start(prop.Extract(context.Background(), h), "consume-2")
+      	c2.End()
+
+      	fmt.Println(len(h),
+      		c1.SpanContext().TraceID() == pub.SpanContext().TraceID(),
+      		c2.SpanContext().TraceID() == pub.SpanContext().TraceID())
+      }
+    options:
+      - text: "1 false true"
+        correct: true
+        explain: "`TraceContext` пишет `traceparent`, а `tracestate` — только если он не пуст, поэтому заголовок один. Без `Extract` потребитель начинает новую трассу; с `Extract` его спан — ребёнок удалённого спана продюсера с тем же `trace_id`."
+      - text: "2 false true"
+        explain: "`tracestate` пустой и не записывается. Заголовок один — `traceparent`."
+      - text: "1 true true"
+        explain: "Спан, начатый от `context.Background()`, ничего не знает о продюсере: у него новый `trace_id`."
+      - text: "1 false false"
+        explain: "`Extract` восстановил удалённый `SpanContext` продюсера, и `consume-2` стал его ребёнком в той же трассе."
+
+  - id: server-status
+    kind: single
+    prompt: "«Склад» вернул `codes.FailedPrecondition` («товара не хватает»). Как `otelgrpc` пометит спаны вызова?"
+    options:
+      - text: "Клиентский спан — Error, серверный — без статуса Error"
+        correct: true
+        explain: "На клиенте любой код, кроме `OK`, — ошибка вызова. На сервере ошибкой считаются только сбои самого сервера: `Unknown`, `DeadlineExceeded`, `Unimplemented`, `Internal`, `Unavailable`, `DataLoss`. Отказ по бизнес-правилу — нормальная работа «Склада»."
+      - text: "Оба спана — Error"
+        explain: "Тогда каждый корректный отказ выглядел бы как сбой сервера, и дашборд ошибок «Склада» шумел бы. Серверная сторона помечает Error только сбои."
+      - text: "Оба спана — без статуса Error: это не исключение, а штатный код"
+        explain: "Для клиента вызов не удался — его спан помечается Error."
+      - text: "Серверный — Error, клиентский — нет"
+        explain: "Наоборот: клиент считает ошибкой любой не-`OK`, сервер — только свои сбои."
+
+  - id: span-attributes
+    kind: multiple
+    prompt: "Что разумно положить в атрибуты спана обработки заказа?"
+    options:
+      - text: "`order.id`"
+        correct: true
+        explain: "Каждый спан хранится отдельно, так что уникальные значения в атрибутах — норма, по ним и ищут трассу. В метках метрик id заказа как раз запрещён (урок `04-metrics`)."
+      - text: "`messaging.destination.name` и `db.system.name` из семантических соглашений"
+        correct: true
+        explain: "Стандартные имена атрибутов понимают Jaeger, Tempo и Grafana: группировка и фильтры работают без настройки."
+      - text: "Заголовок `authorization` входящего запроса"
+        explain: "Трассы видят многие, хранятся долго и часто уходят во внешние сервисы. Секреты в атрибуты не кладут — как и в логи."
+      - text: "Тело запроса целиком"
+        explain: "В теле — персональные данные, а размер атрибутов ограничен. Нужные поля выбирают явно."

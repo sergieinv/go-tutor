@@ -106,6 +106,21 @@ export interface VulncheckResult {
 /** govulncheck по модулю примера: код не запускается, только анализируется. */
 export const vulncheck = (files: Files, lesson?: string) => post<VulncheckResult>("vulncheck", { files, lesson });
 
+/** Вывод buf lint / buf breaking; повторяет sandbox.BufResult. */
+export interface BufResult {
+  output: string;
+  exitCode: number;
+  /** buf нашёл нарушения. */
+  found: boolean;
+  /** buf не смог проверить: .proto не компилируется и т.п. */
+  failed: boolean;
+  timedOut: boolean;
+  durationMs: number;
+}
+
+/** buf lint, а с against — buf breaking против прежней версии контракта. */
+export const buf = (files: Files, lesson?: string, against?: Files) => post<BufResult>("buf", { files, lesson, against });
+
 export const format = (files: Files) => post<FmtResult>("fmt", { files });
 
 export const solution = (lesson: string) => post<{ files: Files }>("solution", { lesson });

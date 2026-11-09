@@ -1,0 +1,102 @@
+questions:
+  - id: details-roundtrip
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+
+      	"google.golang.org/genproto/googleapis/rpc/errdetails"
+      	"google.golang.org/grpc/codes"
+      	"google.golang.org/grpc/status"
+      )
+
+      func main() {
+      	st, err := status.New(codes.InvalidArgument, "invalid request").WithDetails(&errdetails.BadRequest{
+      		FieldViolations: []*errdetails.BadRequest_FieldViolation{{Field: "items[0].sku", Reason: "string.pattern"}},
+      	})
+      	if err != nil {
+      		panic(err)
+      	}
+      	got := status.Convert(st.Err())
+      	br := got.Details()[0].(*errdetails.BadRequest)
+      	fmt.Println(got.Code(), got.Message(), len(got.Details()), br.GetFieldViolations()[0].GetField())
+      }
+    options:
+      - text: InvalidArgument invalid request 1 items[0].sku
+        correct: true
+        explain: "`WithDetails` упаковывает сообщения в `Any` внутри `google.rpc.Status`, а `Details()` распаковывает их обратно в типы, зарегистрированные в программе. Клиент получает тот же `BadRequest` и может подсветить поле по пути."
+      - text: InvalidArgument invalid request 0
+        explain: "`st.Err()` сохраняет детали: ошибка несёт весь `Status`, а не только код и текст. По сети детали едут в трейлере `grpc-status-details-bin`."
+      - text: "Unknown invalid request 1 items[0].sku"
+        explain: "`status.Convert` для ошибки, созданной пакетом `status`, возвращает её код как есть. `Unknown` бывает у обычных ошибок, не несущих статуса."
+
+  - id: wrapped-not-status
+    kind: output
+    prompt: "Обработчик вернул ошибку валидации, обернув её. Что выведет программа?"
+    code: |
+      package main
+
+      import (
+      	"errors"
+      	"fmt"
+
+      	"buf.build/go/protovalidate"
+      	"google.golang.org/grpc/status"
+      )
+
+      func main() {
+      	err := fmt.Errorf("create order: %w", &protovalidate.ValidationError{})
+      	var verr *protovalidate.ValidationError
+      	fmt.Println(errors.As(err, &verr), status.Code(err))
+      }
+    options:
+      - text: true Unknown
+        correct: true
+        explain: "`errors.As` находит `*ValidationError` в цепочке, но gRPC про неё ничего не знает: ошибка без статуса уходит клиенту как `codes.Unknown`. Перевод в `InvalidArgument` с деталями надо сделать явно — лучше в одном месте, в interceptor."
+      - text: true InvalidArgument
+        explain: "grpc-go не распознаёт ошибки protovalidate. Код берётся только из ошибки, созданной пакетом `status` (или реализующей `GRPCStatus()`); иначе — `Unknown`."
+      - text: false Unknown
+        explain: "`%w` строит цепочку, и `errors.As` проходит её до `*protovalidate.ValidationError`."
+
+  - id: required-scalar
+    kind: single
+    prompt: "`uint32 discount_percent = 5 [(buf.validate.field).required = true];` Клиент прислал скидку 0. Что будет?"
+    options:
+      - text: "Нарушение `required`: у скаляра proto3 без presence ноль неотличим от «не задано»"
+        correct: true
+        explain: "Ноль на провод не попадает, и сервер видит то же, что при отсутствии поля. Чтобы ноль был допустим, а отсутствие — нет, поле объявляют `optional`: тогда `required` проверяет presence."
+      - text: "Запрос пройдёт: поле задано, просто равно нулю"
+        explain: "У обычного скалярного поля proto3 нет признака «задано». Для `required` ноль и отсутствие — одно и то же."
+      - text: "Ошибка компиляции правил: `required` нельзя ставить на скаляр"
+        explain: "Можно; для скаляров без presence `required` означает «не нулевое значение», для строк — «не пустая»."
+
+  - id: compilation-error-code
+    kind: single
+    prompt: "`v.Validate(req)` вернул `*protovalidate.CompilationError`: CEL-выражение в контракте ссылается на несуществующее поле. Что вернуть клиенту?"
+    options:
+      - text: "`codes.Internal` с общим текстом, а подробности записать в лог"
+        correct: true
+        explain: "Ошибка в правилах — баг сервера, клиент не может её исправить. Текст ошибки компиляции раскрывает внутреннее устройство — наружу его не отдают. До выкатки такие ошибки ловит правило `PROTOVALIDATE` в `buf lint`."
+      - text: "`codes.InvalidArgument` с текстом ошибки"
+        explain: "Клиент прислал корректный запрос; `InvalidArgument` заставит его искать ошибку у себя. И текст компиляции CEL — внутренняя деталь."
+      - text: "Пропустить запрос к обработчику: правило всё равно сломано"
+        explain: "Это молча выключает все правила сообщения, а не только сломанное: некорректные данные дойдут до хранилища. Безопасный отказ — ошибка."
+
+  - id: why-server
+    kind: multiple
+    prompt: "Мобильный клиент проверяет форму по тем же правилам protovalidate. Почему сервер всё равно должен валидировать? (несколько вариантов)"
+    options:
+      - text: "Запрос можно отправить в обход приложения — `grpcurl`, скриптом, изменённым клиентом"
+        correct: true
+        explain: "Клиент — по ту сторону границы доверия. Всё, что проверяет только клиент, атакующий просто не проверяет."
+      - text: "Старые версии приложения собраны со старыми правилами"
+        correct: true
+        explain: "Правило ужесточили в контракте — сервер применит его сразу, а приложение двухлетней давности продолжит слать то, что раньше было допустимо."
+      - text: "Иначе protovalidate на клиенте не сработает"
+        explain: "Клиентская проверка работает независимо от сервера. Дело не в библиотеке, а в доверии к входным данным."
+      - text: "Сервер получает запросы и от других сервисов, у которых может не быть клиентской проверки"
+        correct: true
+        explain: "Тот же метод вызывают соседние сервисы, задачи миграции, админка. Проверка на сервере — единственное место, через которое проходят все."

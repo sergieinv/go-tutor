@@ -199,3 +199,36 @@ func TestVulncheckNotConfigured(t *testing.T) {
 		t.Fatalf("code = %d, out = %v", code, out)
 	}
 }
+
+// Чужая страница не должна запускать код: ни «простым» запросом без
+// preflight (text/plain), ни запросом с Sec-Fetch-Site: cross-site.
+func TestRejectCrossSite(t *testing.T) {
+	srv := newTestServer(t)
+	body := `{"files":{"main.go":"package main\nfunc main(){}\n"}}`
+	cases := []struct {
+		name   string
+		header map[string]string
+		want   int
+	}{
+		{"text/plain", map[string]string{"Content-Type": "text/plain"}, http.StatusUnsupportedMediaType},
+		{"без Content-Type", nil, http.StatusUnsupportedMediaType},
+		{"cross-site", map[string]string{"Content-Type": "application/json", "Sec-Fetch-Site": "cross-site"}, http.StatusForbidden},
+		{"чужой Origin", map[string]string{"Content-Type": "application/json", "Origin": "https://evil.example"}, http.StatusForbidden},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			req, _ := http.NewRequest("POST", srv.URL+"/api/fmt", strings.NewReader(body))
+			for k, v := range c.header {
+				req.Header.Set(k, v)
+			}
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			resp.Body.Close()
+			if resp.StatusCode != c.want {
+				t.Fatalf("status = %d, want %d", resp.StatusCode, c.want)
+			}
+		})
+	}
+}

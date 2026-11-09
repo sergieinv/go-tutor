@@ -4,14 +4,13 @@ import (
 	"path/filepath"
 	"testing"
 
-	"gotutor/labs/orders/internal/orders"
 	"gotutor/labs/orders/internal/store/sqlite"
 	"gotutor/labs/orders/internal/storetest"
 )
 
 // SQLite не нужен сервер: контрактный набор против него идёт всегда.
 func TestStore(t *testing.T) {
-	storetest.Run(t, func(t *testing.T) orders.Store {
+	storetest.Run(t, func(t *testing.T) storetest.Store {
 		// Файл во временном каталоге теста: Go удалит его сам.
 		s, err := sqlite.Open(t.Context(), filepath.Join(t.TempDir(), "orders.db"))
 		if err != nil {

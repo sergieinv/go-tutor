@@ -1,0 +1,238 @@
+{
+  "buildFailed": false,
+  "stdout": "context deadline exceeded\n",
+  "stderr": "",
+  "exitCode": 0,
+  "timedOut": false,
+  "truncated": false,
+  "durationMs": 408,
+  "trace": {
+    "goroutines": [
+      {
+        "id": 1,
+        "func": "main.main"
+      }
+    ],
+    "selects": [
+      {
+        "id": 1,
+        "file": "main.go",
+        "line": 22,
+        "cases": [
+          {
+            "line": 23,
+            "kind": "recv",
+            "text": "case \u003c-time.After(work)"
+          },
+          {
+            "line": 24,
+            "kind": "recv",
+            "text": "case \u003c-ctx.Done()"
+          }
+        ],
+        "counts": [
+          2,
+          1
+        ]
+      }
+    ],
+    "events": [
+      {
+        "t": 58,
+        "g": 1,
+        "kind": "select",
+        "file": "main.go",
+        "line": 22,
+        "select": 1,
+        "case": 0
+      },
+      {
+        "t": 62,
+        "g": 1,
+        "kind": "block",
+        "file": "main.go",
+        "line": 22,
+        "reason": "select",
+        "case": 0
+      },
+      {
+        "t": 10508,
+        "g": 0,
+        "kind": "unblock",
+        "target": 1,
+        "case": 0
+      },
+      {
+        "t": 10519,
+        "g": 1,
+        "kind": "case",
+        "file": "main.go",
+        "line": 23,
+        "select": 1,
+        "case": 0
+      },
+      {
+        "t": 10529,
+        "g": 1,
+        "kind": "select",
+        "file": "main.go",
+        "line": 22,
+        "select": 1,
+        "case": 0
+      },
+      {
+        "t": 10547,
+        "g": 1,
+        "kind": "block",
+        "file": "main.go",
+        "line": 22,
+        "reason": "select",
+        "case": 0
+      },
+      {
+        "t": 32074,
+        "g": 0,
+        "kind": "unblock",
+        "target": 1,
+        "case": 0
+      },
+      {
+        "t": 32105,
+        "g": 1,
+        "kind": "case",
+        "file": "main.go",
+        "line": 23,
+        "select": 1,
+        "case": 0
+      },
+      {
+        "t": 32173,
+        "g": 1,
+        "kind": "select",
+        "file": "main.go",
+        "line": 22,
+        "select": 1,
+        "case": 0
+      },
+      {
+        "t": 32202,
+        "g": 1,
+        "kind": "block",
+        "file": "main.go",
+        "line": 22,
+        "reason": "select",
+        "case": 0
+      },
+      {
+        "t": 61871,
+        "g": 0,
+        "kind": "unblock",
+        "target": 1,
+        "case": 0
+      },
+      {
+        "t": 61891,
+        "g": 1,
+        "kind": "case",
+        "file": "main.go",
+        "line": 24,
+        "select": 1,
+        "case": 1
+      }
+    ],
+    "total": 12,
+    "durationUs": 61904,
+    "spans": [
+      {
+        "id": 1,
+        "kind": "task",
+        "name": "gateway",
+        "task": 0,
+        "g": 1,
+        "start": 22,
+        "end": 61904,
+        "depth": 0
+      },
+      {
+        "id": 1,
+        "kind": "region",
+        "name": "работа",
+        "task": 1,
+        "g": 1,
+        "start": 57,
+        "end": 10521,
+        "depth": 0
+      },
+      {
+        "id": 2,
+        "kind": "task",
+        "name": "orders",
+        "task": 1,
+        "g": 1,
+        "start": 10523,
+        "end": 61904,
+        "depth": 0
+      },
+      {
+        "id": 2,
+        "kind": "region",
+        "name": "работа",
+        "task": 2,
+        "g": 1,
+        "start": 10528,
+        "end": 32107,
+        "depth": 0
+      },
+      {
+        "id": 3,
+        "kind": "task",
+        "name": "warehouse",
+        "task": 2,
+        "g": 1,
+        "start": 32114,
+        "end": 61903,
+        "depth": 0
+      },
+      {
+        "id": 3,
+        "kind": "region",
+        "name": "работа",
+        "task": 3,
+        "g": 1,
+        "start": 32171,
+        "end": 61893,
+        "depth": 0
+      }
+    ],
+    "logs": [
+      {
+        "t": 57,
+        "g": 1,
+        "task": 1,
+        "category": "deadline",
+        "message": "осталось 60 мс"
+      },
+      {
+        "t": 10528,
+        "g": 1,
+        "task": 2,
+        "category": "deadline",
+        "message": "осталось 50 мс"
+      },
+      {
+        "t": 32170,
+        "g": 1,
+        "task": 3,
+        "category": "deadline",
+        "message": "осталось 30 мс"
+      },
+      {
+        "t": 61903,
+        "g": 1,
+        "task": 3,
+        "category": "error",
+        "message": "context deadline exceeded"
+      }
+    ]
+  }
+}

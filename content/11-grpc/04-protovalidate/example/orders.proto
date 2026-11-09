@@ -1,0 +1,85 @@
+// Правила валидации живут в контракте: их видят сервер на Go,
+// клиент на C# и документация, а не только код одного сервиса.
+syntax = "proto3";
+
+package shop.v1;
+
+import "buf/validate/validate.proto";
+
+option go_package = "lesson/proto;main";
+
+// OrderService — сервис заказов.
+service OrderService {
+  // CreateOrder создаёт заказ.
+  rpc CreateOrder(CreateOrderRequest) returns (CreateOrderResponse);
+  // GetOrder возвращает заказ.
+  rpc GetOrder(GetOrderRequest) returns (GetOrderResponse);
+}
+
+// CreateOrderRequest — запрос на создание заказа.
+message CreateOrderRequest {
+  // Правило на всё сообщение: CEL-выражение видит все поля через this.
+  option (buf.validate.message).cel = {
+    id: "order.discount_needs_coupon"
+    message: "discount above 10% requires a coupon"
+    expression: "this.discount_percent <= 10 || this.coupon != ''"
+  };
+
+  string customer_email = 1 [(buf.validate.field).string.email = true];
+  repeated Item items = 2 [(buf.validate.field).repeated = {
+    min_items: 1
+    max_items: 20
+  }];
+
+  // Способ доставки обязателен: ровно один вариант oneof.
+  oneof delivery {
+    option (buf.validate.oneof).required = true;
+    Address address = 3;
+    string pickup_point_id = 4 [(buf.validate.field).string.pattern = "^PP-[0-9]{4}$"];
+  }
+
+  uint32 discount_percent = 5 [(buf.validate.field).uint32.lte = 50];
+  string coupon = 6 [(buf.validate.field).string.max_len = 32];
+}
+
+// Item — позиция заказа.
+message Item {
+  string sku = 1 [(buf.validate.field).string = {
+    min_len: 3
+    max_len: 20
+    pattern: "^[A-Z0-9-]+$"
+  }];
+  uint32 quantity = 2 [(buf.validate.field).uint32 = {
+    gt: 0
+    lte: 100
+  }];
+  // Правило на поле своим выражением: this — значение поля.
+  int64 price_cents = 3 [(buf.validate.field).cel = {
+    id: "item.whole_rubles"
+    message: "price must be in whole rubles"
+    expression: "this % 100 == 0"
+  }];
+}
+
+// Address — адрес доставки.
+message Address {
+  // required у строки без presence — «не пустая».
+  string city = 1 [(buf.validate.field).required = true];
+  string line1 = 2 [(buf.validate.field).string.min_len = 3];
+}
+
+// CreateOrderResponse — созданный заказ.
+message CreateOrderResponse {
+  int64 id = 1;
+}
+
+// GetOrderRequest — запрос заказа по номеру.
+message GetOrderRequest {
+  int64 id = 1 [(buf.validate.field).int64.gt = 0];
+}
+
+// GetOrderResponse — заказ.
+message GetOrderResponse {
+  int64 id = 1;
+  string customer_email = 2;
+}

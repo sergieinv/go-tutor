@@ -3,7 +3,7 @@
 // компилируется и не проходит тесты, ответы квизов совпадают с запуском.
 //
 //	go run ./tools/lessonlint [-update] [-run 05-concurrency/] [-j 4] [-govulncheck path] [-vulndb url]
-//	    [-postgres dsn] [-mysql dsn] [-sqlc path] [content]
+//	    [-postgres dsn] [-mysql dsn] [-sqlc path] [-buf path] [content]
 //
 // Уроки с runner.labs запускаются на настоящих базах профиля labs
 // (docker compose --profile labs up), если переданы DSN администратора:
@@ -38,6 +38,7 @@ func main() {
 	postgres := flag.String("postgres", "", "DSN администратора PostgreSQL профиля labs")
 	mysql := flag.String("mysql", "", "DSN администратора MySQL профиля labs")
 	sqlc := flag.String("sqlc", "", "путь к sqlc для сверки сгенерированного кода; по умолчанию ищется в PATH")
+	buf := flag.String("buf", "", "путь к buf (плагины protoc-gen-* рядом) для примеров с .proto; по умолчанию ищется в PATH")
 	flag.Parse()
 	root := "content"
 	if flag.NArg() > 0 {
@@ -66,6 +67,10 @@ func main() {
 	cfg := sandbox.DefaultConfig()
 	cfg.Slots = max(*jobs, 1)
 	cfg.Govulncheck, cfg.VulnDB = *govulncheck, *vulndb
+	cfg.Buf = *buf
+	if cfg.Buf == "" {
+		cfg.Buf, _ = osexec.LookPath("buf")
+	}
 	cfg.Labs = map[string]string{}
 	if *postgres != "" {
 		cfg.Labs[sandbox.LabPostgres] = *postgres

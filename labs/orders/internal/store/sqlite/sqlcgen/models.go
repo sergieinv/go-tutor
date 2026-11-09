@@ -18,6 +18,10 @@ type Order struct {
 	UpdatedAt  time.Time
 }
 
+type OrderID struct {
+	ID int64
+}
+
 type OrderItem struct {
 	OrderID    int64
 	ProductID  int64
@@ -26,21 +30,18 @@ type OrderItem struct {
 }
 
 type Outbox struct {
-	ID          int64
-	EventType   string
-	AggregateID int64
-	Payload     string
-	CreatedAt   time.Time
-	PublishedAt sql.NullTime
+	ID           int64
+	EventID      string
+	EventType    string
+	AggregateID  int64
+	Payload      []byte
+	TraceContext string
+	CreatedAt    time.Time
+	PublishedAt  sql.NullTime
 }
 
 type Product struct {
 	ID         int64
 	Name       string
 	PriceCents int64
-}
-
-type Stock struct {
-	ProductID int64
-	Available int64
 }

@@ -1,0 +1,47 @@
+syntax = "proto3";
+
+// Три вида стримов gRPC на одном сервисе заказов.
+package orders.v1;
+
+option go_package = "lesson/proto;main";
+
+service OrderStreamService {
+  // Server streaming: один запрос, поток ответов.
+  rpc WatchOrders(WatchOrdersRequest) returns (stream WatchOrdersResponse);
+  // Client streaming: поток запросов, один ответ.
+  rpc UploadItems(stream UploadItemsRequest) returns (UploadItemsResponse);
+  // Bidi: два независимых потока в одном вызове.
+  rpc TrackOrders(stream TrackOrdersRequest) returns (stream TrackOrdersResponse);
+}
+
+message WatchOrdersRequest {
+  string customer = 1;
+  // true — не заканчивать стрим, слать события, пока клиент не отменит.
+  bool follow = 2;
+}
+
+message WatchOrdersResponse {
+  int64 seq = 1;
+  string order_id = 2;
+  string status = 3;
+}
+
+message UploadItemsRequest {
+  string sku = 1;
+  int32 quantity = 2;
+  int64 price_cents = 3;
+}
+
+message UploadItemsResponse {
+  int32 count = 1;
+  int64 total_cents = 2;
+}
+
+message TrackOrdersRequest {
+  string order_id = 1;
+}
+
+message TrackOrdersResponse {
+  string order_id = 1;
+  string status = 2;
+}

@@ -21,7 +21,7 @@ import (
 type Lesson struct {
 	ID     string
 	Flags  sandbox.Flags
-	Tests  sandbox.Files   // task_test.go и hidden_test.go
+	Tests  sandbox.Files   // task_test.go, hidden_test.go и прочие файлы урока из task/ (.proto…)
 	Hidden map[string]bool // имена тестов из hidden_test.go
 	// Solution — эталон. Сайт показывает его после успеха или трёх попыток;
 	// в статическую сборку он не попадает.
@@ -75,14 +75,22 @@ func loadLesson(dir string) (*Lesson, error) {
 		}
 		l.Flags = meta.Runner
 	}
-	for _, name := range []string{"task_test.go", "hidden_test.go"} {
-		b, err := os.ReadFile(filepath.Join(dir, "task", name))
-		if os.IsNotExist(err) {
-			continue
-		} else if err != nil {
-			return nil, err
+	// Всё в task/, кроме шаблона, эталона и подсказок, задаёт урок: тесты,
+	// контракты .proto и код, сгенерированный по ним.
+	entries, err := os.ReadDir(filepath.Join(dir, "task"))
+	if err != nil && !os.IsNotExist(err) {
+		return nil, err
+	}
+	for _, e := range entries {
+		switch name := e.Name(); {
+		case e.IsDir(), name == "task.go", name == "solution.go", name == "hints.md":
+		default:
+			b, err := os.ReadFile(filepath.Join(dir, "task", name))
+			if err != nil {
+				return nil, err
+			}
+			l.Tests[name] = string(b)
 		}
-		l.Tests[name] = string(b)
 	}
 	if b, err := os.ReadFile(filepath.Join(dir, "task", "solution.go")); err == nil {
 		l.Solution = string(b)

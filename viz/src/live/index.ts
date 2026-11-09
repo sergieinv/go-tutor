@@ -4,6 +4,7 @@ import type { Step } from "../types.ts";
 import { GOROUTINES_WIDTH, goroutinesHeight, goroutinesSteps } from "./goroutines.ts";
 import { RACE_HEIGHT, RACE_WIDTH, raceSteps, type RaceResult } from "./race.ts";
 import { SELECT_WIDTH, selectHeight, selectSteps } from "./select.ts";
+import { SPANS_WIDTH, spansHeight, spansSteps } from "./spans.ts";
 import type { TraceResult } from "./trace.ts";
 
 export interface Built {
@@ -30,6 +31,7 @@ const fromTrace =
 export const builders: Record<string, LiveBuilder> = {
   select: { endpoint: "trace", build: fromTrace(selectSteps, SELECT_WIDTH, selectHeight) },
   goroutines: { endpoint: "trace", build: fromTrace(goroutinesSteps, GOROUTINES_WIDTH, goroutinesHeight) },
+  spans: { endpoint: "trace", build: fromTrace(spansSteps, SPANS_WIDTH, spansHeight) },
   race: {
     endpoint: "race",
     build: (result) => {

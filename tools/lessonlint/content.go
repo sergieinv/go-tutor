@@ -60,6 +60,11 @@ type Frontmatter struct {
 	// к виду для ревью»: шаблон работает, но падают проверки TestReview…
 	// (идиомы, ошибки, context, ресурсы) по чек-листу ревью.
 	TaskKind string `yaml:"taskKind"`
+	// Buf — проверка контракта примера: ExpectLint — правила buf lint,
+	// которые пример нарушает намеренно (пусто — контракт чистый).
+	Buf *struct {
+		ExpectLint []string `yaml:"expectLint"`
+	} `yaml:"buf"`
 	// Govulncheck — песочница показывает кнопку govulncheck для примера.
 	Govulncheck *struct {
 		// Expect — id уязвимостей (GO-ГГГГ-NNNN), которые govulncheck

@@ -152,7 +152,7 @@ export async function renderHints(md: string): Promise<string[]> {
   );
 }
 
-export function highlight(code: string, lang: "go" | "csharp" | "text"): Promise<string> {
+export function highlight(code: string, lang: "go" | "csharp" | "text" | "proto"): Promise<string> {
   return codeToHtml(code, { lang, themes: shikiThemes, defaultColor: "light" });
 }
 

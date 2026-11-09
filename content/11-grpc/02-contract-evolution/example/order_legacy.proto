@@ -1,0 +1,22 @@
+// Версия контракта, с которой собран старый мобильный клиент.
+syntax = "proto3";
+
+package shop.legacy.v1;
+
+option go_package = "lesson/proto;main";
+
+// LegacyOrder — заказ, каким его знает старый клиент.
+message LegacyOrder {
+  int64 id = 1;
+  string customer = 2;
+  int64 total_cents = 3;
+  string promo_code = 4;
+  LegacyStatus status = 5;
+}
+
+// LegacyStatus — статусы старой версии.
+enum LegacyStatus {
+  LEGACY_STATUS_UNSPECIFIED = 0;
+  LEGACY_STATUS_NEW = 1;
+  LEGACY_STATUS_PAID = 2;
+}
