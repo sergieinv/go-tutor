@@ -358,6 +358,65 @@ services:
     mem_limit: 256m
     networks: [default]
 
+  # Игровой сервер модуля 15 (labs/gameserver): подмножество протокола
+  # Minecraft Java Edition 1.21 / 1.21.1 (протокол 767) и WebSocket-шлюз для
+  # браузерного клиента на одном игровом цикле. Порты только на 127.0.0.1:
+  # Minecraft — 25565 (клиент: Мультиплеер → localhost), WebSocket —
+  # ws://127.0.0.1:25580/ws, служебный — http://127.0.0.1:25590 (/metrics,
+  # /healthz, /readyz, /debug/pprof). Offline-режим (без проверки аккаунтов
+  # Mojang) — поэтому только localhost. Мир сохраняется снапшотами в том
+  # gameserver-data; на docker stop сервер отключает игроков и пишет
+  # финальный снапшот — stop_grace_period с запасом.
+  #   docker-compose --profile labs up -d --build gameserver
+  gameserver:
+    build:
+      context: ./labs
+      dockerfile: gameserver/Dockerfile
+      target: gameserver
+    image: go-tutor/gameserver:dev
+    profiles: [labs]
+    environment:
+      GAME_SAVE_PATH: /data/world.json
+      GAME_SAVE_INTERVAL: 30s
+      # Страницы, которым можно открывать WebSocket: сайт учебника (8080) и
+      # dev-сервер Astro (4321).
+      GAME_WS_ORIGINS: http://localhost:8080,http://127.0.0.1:8080,http://localhost:4321,http://127.0.0.1:4321
+      GAME_MAX_PLAYERS: "256"
+      GAME_VIEW_DISTANCE: "6"
+      # Мягкий предел кучи ниже mem_limit: GC работает чаще у потолка, а не
+      # ловит OOM-killer.
+      GOMEMLIMIT: 400MiB
+    volumes:
+      - gameserver-data:/data
+    ports:
+      - "127.0.0.1:25565:25565"
+      - "127.0.0.1:25580:25580"
+      - "127.0.0.1:25590:25590"
+    read_only: true
+    mem_limit: 512m
+    stop_grace_period: 30s
+    networks: [default]
+
+  # Нагрузочные боты для gameserver (модуль 15). Профиль loadtest, как у
+  # loadgen: «up» их не запускает, «run» включает профиль сам.
+  #   docker-compose --profile labs run --rm gamebots
+  #   docker-compose --profile labs run --rm gamebots -n 300 -duration 2m
+  gamebots:
+    build:
+      context: ./labs
+      dockerfile: gameserver/Dockerfile
+      target: bots
+    image: go-tutor/gamebots:dev
+    profiles: [loadtest]
+    environment:
+      GAMEBOTS_MC: gameserver:25565
+      GAMEBOTS_WS: gameserver:25580
+      GAMEBOTS_OPS: http://gameserver:25590
+    command: ["-n", "200", "-duration", "60s"]
+    read_only: true
+    mem_limit: 512m
+    networks: [default]
+
   # Jaeger v2 (all-in-one, хранилище в памяти): приём OTLP/gRPC на 4317
   # из docker-сети, UI — http://127.0.0.1:16686.
   jaeger:
@@ -381,6 +440,10 @@ services:
       - "127.0.0.1:9091:9090"
     mem_limit: 512m
     networks: [default]
+
+volumes:
+  # Сохранения мира игрового сервера (labs/gameserver).
+  gameserver-data:
 
 networks:
   # internal: у runner нет выхода в интернет, но site до него достаёт.

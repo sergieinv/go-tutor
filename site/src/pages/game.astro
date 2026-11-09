@@ -1,0 +1,506 @@
+---
+// Браузерный клиент игрового сервера модуля 15 (labs/gameserver): карта
+// мира сверху, чат и живой визуализатор тика. Протокол — README сервера,
+// раздел «Протокол WebSocket»; код клиента — src/lib/client/game*.ts.
+import Base from "../layouts/Base.astro";
+import { lessonUrl, loadCourse } from "../lib/content";
+
+const mod = loadCourse().find((m) => m.slug.startsWith("15-"));
+const lesson13 = mod?.lessons.find((l) => l.slug.startsWith("13-"));
+const lessonHref = lesson13 ? lessonUrl(lesson13) : mod?.lessons[0] ? lessonUrl(mod.lessons[0]) : "/";
+const lessonTitle = lesson13 ? `урок 13 «${lesson13.meta.title}»` : "уроки модуля 15";
+---
+
+<Base
+  title="Игровой сервер: браузерный клиент — Go для C#-разработчика"
+  description="Браузерный клиент учебного игрового сервера: карта мира, чат и живой визуализатор тика, чанков и зоны видимости."
+>
+  <h1>Игровой сервер: браузерный клиент</h1>
+  <p class="lead muted">
+    Клиент учебного сервера модуля 15 по WebSocket. Тот же мир и чат, что у игроков Minecraft 1.21.1. Каждый тик
+    (20 раз в секунду) сервер присылает пачку событий. Визуализатор показывает, что в ней пришло этому клиенту.
+  </p>
+
+  <div class="game-root" data-game-root>
+    <section class="card connect" aria-label="Подключение">
+      <form class="connect-form" data-login>
+        <label>
+          <span>Имя</span>
+          <input
+            data-name
+            name="name"
+            required
+            minlength="3"
+            maxlength="16"
+            pattern="[A-Za-z0-9_]{3,16}"
+            autocomplete="nickname"
+            spellcheck="false"
+            title="3–16 символов: латинские буквы, цифры и _"
+          />
+        </label>
+        <label class="url">
+          <span>Адрес шлюза</span>
+          <input data-url name="url" type="text" spellcheck="false" autocomplete="off" />
+        </label>
+        <div class="connect-actions">
+          <button type="submit" class="primary" data-join>Войти</button>
+          <button type="button" data-leave hidden>Выйти</button>
+        </div>
+      </form>
+      <p class="status" data-status aria-live="polite"></p>
+      <div class="problem pitfall" data-problem hidden>
+        <p data-problem-text></p>
+        <div data-offline-help hidden>
+          <p>Запустите профиль labs:</p>
+          <pre class="plain"><code>docker compose --profile labs up -d gameserver</code></pre>
+          <p>Как устроен сервер и как его запускать — <a href={lessonHref}>{lessonTitle}</a>.</p>
+        </div>
+        <button type="button" data-reconnect>Переподключиться</button>
+      </div>
+    </section>
+
+    <div class="game" data-game hidden>
+      <div class="game-main">
+        <section class="card map-card" aria-label="Карта мира">
+          <div class="map-tools" role="radiogroup" aria-label="Действие по клику на карте">
+            <label><input type="radio" name="tool" value="walk" data-tool checked /> Идти</label>
+            <label><input type="radio" name="tool" value="dig" data-tool /> Сломать</label>
+            <label><input type="radio" name="tool" value="place" data-tool /> Поставить</label>
+            <select data-block aria-label="Блок"></select>
+          </div>
+          <canvas class="map" data-map aria-label="Карта мира сверху: чанки, зона видимости и игроки"></canvas>
+          <p class="map-line mono" data-pos></p>
+          <p class="map-line muted" data-hover></p>
+          <p class="map-line teleport" data-teleport aria-live="polite"></p>
+          <p class="map-help muted">
+            <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> или стрелки — идти, <kbd>Shift</kbd> — бегом, клик —
+            идти к точке. Пунктир — зона видимости, заливка — центральный чанк. Жёлтая вспышка — чанк загружен
+            в этом тике, красная — выгружен. Штриховка — за границей мира.
+          </p>
+        </section>
+
+        <section class="card chat-card" aria-label="Чат">
+          <h2>Чат</h2>
+          <ol class="chat-log" data-chat-log aria-live="polite"></ol>
+          <form class="chat-form" data-chat-form>
+            <input data-chat-input type="text" maxlength="256" placeholder="Сообщение" aria-label="Сообщение" autocomplete="off" />
+            <button type="submit">Отправить</button>
+          </form>
+          <p class="muted small">Сообщение видят те, у кого вы в зоне видимости. Вход и выход видят все.</p>
+        </section>
+      </div>
+
+      <section class="card viz-card" aria-label="Живой визуализатор">
+        <h2>Живой визуализатор тика</h2>
+        <dl class="stats">
+          <div><dt>Тик</dt><dd data-stat="tick" data-tick>—</dd></div>
+          <div><dt>MSPT, мс</dt><dd data-stat="mspt">—</dd></div>
+          <div><dt>TPS</dt><dd data-stat="tps">—</dd></div>
+          <div><dt>Событий за тик</dt><dd data-stat="msgs">—</dd></div>
+          <div><dt>Байт за тик</dt><dd data-stat="bytes">—</dd></div>
+          <div><dt>Чанков / в зоне</dt><dd data-stat="chunks">—</dd></div>
+          <div><dt>Центр зоны</dt><dd data-stat="center">—</dd></div>
+        </dl>
+
+        <div class="chart-head">
+          <label>
+            График последних 100 тиков:
+            <select data-series>
+              <option value="msgs">событий этому клиенту (msgs)</option>
+              <option value="bytes">байт этому клиенту (bytes)</option>
+              <option value="mspt">длительность тика (MSPT)</option>
+              <option value="tps">TPS</option>
+            </select>
+          </label>
+          <span class="legend muted"><i class="sw sw-ok"></i>чанки загружены <i class="sw sw-bad"></i>выгружены</span>
+        </div>
+        <canvas class="chart" data-chart aria-label="График последних тиков"></canvas>
+
+        <div class="interest">
+          <div>
+            <h3>Онлайн: <span data-roster-count>0</span> <span class="muted small">(join / leave — всем)</span></h3>
+            <ul class="players" data-roster></ul>
+          </div>
+          <div>
+            <h3>В зоне видимости: <span data-visible-count>0</span> <span class="muted small">(spawn / despawn)</span></h3>
+            <ul class="players" data-visible></ul>
+          </div>
+        </div>
+        <p class="muted small">
+          Interest management: о всех игроках клиент знает из списка, но перемещения и чат получает только от тех, кто
+          в его квадрате чанков. Отойдите от игрока дальше зоны — он уйдёт из второго списка (despawn).
+        </p>
+
+        <h3>Лента событий</h3>
+        <div class="log-filters" data-log-filters role="group" aria-label="Типы событий в ленте"></div>
+        <label class="small"><input type="checkbox" data-log-pause /> пауза ленты</label>
+        <ol class="log" data-log></ol>
+      </section>
+    </div>
+  </div>
+</Base>
+
+<script>
+  import { mountGame } from "../lib/client/game.ts";
+
+  mountGame(document.querySelector<HTMLElement>("[data-game-root]")!);
+</script>
+
+<style>
+  /* display у .game и др. не должен перебивать атрибут hidden. */
+  .game-root :global([hidden]) {
+    display: none !important;
+  }
+  .lead {
+    max-width: 46rem;
+  }
+  .small {
+    font-size: 0.85rem;
+  }
+  .mono {
+    font-family: var(--mono);
+    font-size: 0.85rem;
+  }
+  .card h2 {
+    margin: 0 0 0.5rem;
+    border: none;
+    padding: 0;
+    font-size: 1.15rem;
+  }
+  .card h3 {
+    font-size: 0.95rem;
+    margin: 1rem 0 0.4rem;
+  }
+  input[type="text"],
+  input:not([type]),
+  select {
+    font: inherit;
+    font-size: 0.92rem;
+    padding: 0.35rem 0.5rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--bg);
+    color: var(--fg);
+    min-width: 0;
+  }
+  input:focus-visible,
+  select:focus-visible,
+  canvas:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+  }
+
+  .connect-form {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: 0.75rem;
+  }
+  .connect-form label {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+    font-size: 0.85rem;
+    color: var(--fg-muted);
+  }
+  .connect-form label input {
+    width: 11rem;
+  }
+  .connect-form .url {
+    flex: 1 1 16rem;
+  }
+  .connect-form .url input {
+    width: 100%;
+    font-family: var(--mono);
+  }
+  .connect-actions {
+    display: flex;
+    gap: 0.5rem;
+  }
+  .status:empty {
+    display: none;
+  }
+  .problem p {
+    margin: 0.4rem 0;
+  }
+  .problem pre {
+    margin: 0.4rem 0;
+  }
+
+  .game {
+    margin-top: 1rem;
+    display: grid;
+    gap: 1rem;
+  }
+  .game-main {
+    display: grid;
+    grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+    gap: 1rem;
+    align-items: start;
+  }
+  .map-tools {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.4rem 0.9rem;
+    margin-bottom: 0.5rem;
+    font-size: 0.9rem;
+  }
+  .map {
+    display: block;
+    width: 100%;
+    aspect-ratio: 1;
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+    cursor: crosshair;
+    touch-action: manipulation;
+  }
+  .map-line {
+    margin: 0.35rem 0 0;
+    min-height: 1.3em;
+    font-size: 0.85rem;
+    overflow-wrap: anywhere;
+  }
+  .map-line:empty {
+    display: none;
+  }
+  .teleport {
+    color: var(--bad);
+    font-weight: 600;
+  }
+  .map-help {
+    font-size: 0.82rem;
+    margin: 0.5rem 0 0;
+  }
+
+  .chat-card {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+  .chat-log {
+    list-style: none;
+    margin: 0;
+    padding: 0.5rem;
+    height: 22rem;
+    overflow-y: auto;
+    background: var(--bg-soft);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    font-size: 0.9rem;
+    overflow-wrap: anywhere;
+  }
+  .chat-log :global(li) {
+    padding: 0.1rem 0;
+  }
+  .chat-log :global(.chat-system),
+  .chat-log :global(.chat-join),
+  .chat-log :global(.chat-leave) {
+    color: var(--fg-muted);
+    font-style: italic;
+  }
+  .chat-log :global(.chat-teleport),
+  .chat-log :global(.chat-kick) {
+    color: var(--bad);
+  }
+  .chat-log :global(.chat-self b) {
+    color: var(--accent-strong);
+  }
+  .chat-form {
+    display: flex;
+    gap: 0.5rem;
+    margin-top: 0.5rem;
+  }
+  .chat-form input {
+    flex: 1;
+  }
+
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(8.5rem, 1fr));
+    gap: 0.5rem;
+    margin: 0 0 0.75rem;
+  }
+  .stats div {
+    background: var(--bg-soft);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 0.35rem 0.6rem;
+  }
+  .stats dt {
+    font-size: 0.75rem;
+    color: var(--fg-muted);
+  }
+  .stats dd {
+    margin: 0;
+    font-family: var(--mono);
+    font-size: 1.05rem;
+    font-variant-numeric: tabular-nums;
+  }
+  .chart-head {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.4rem 1rem;
+    font-size: 0.9rem;
+    margin-bottom: 0.4rem;
+  }
+  .chart-head select {
+    max-width: 100%;
+  }
+  .legend {
+    font-size: 0.8rem;
+  }
+  .sw {
+    display: inline-block;
+    width: 0.8rem;
+    height: 0.4rem;
+    margin: 0 0.25rem 0 0.5rem;
+    vertical-align: middle;
+  }
+  .sw-ok {
+    background: #f5c518;
+  }
+  .sw-bad {
+    background: var(--bad);
+  }
+  .chart {
+    display: block;
+    width: 100%;
+    height: 7rem;
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+  }
+
+  .interest {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+    gap: 0 1rem;
+  }
+  .players {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    max-height: 14rem;
+    overflow-y: auto;
+    font-size: 0.9rem;
+  }
+  .players :global(li) {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.15rem 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .players :global(.pname) {
+    font-weight: 600;
+    overflow-wrap: anywhere;
+  }
+  .players :global(.tag) {
+    margin-left: auto;
+    font-size: 0.8rem;
+  }
+  .players :global(.dot) {
+    width: 0.6rem;
+    height: 0.6rem;
+    border-radius: 50%;
+    flex: none;
+    background: var(--border);
+  }
+  .players :global([data-state="visible"] .dot) {
+    background: #d29922;
+  }
+  .players :global([data-state="self"] .dot) {
+    background: var(--accent);
+  }
+  .players :global([data-state="hidden"]) {
+    opacity: 0.65;
+  }
+  .players :global(.empty) {
+    font-style: italic;
+    border: none;
+  }
+
+  .log-filters {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3rem 0.8rem;
+    font-size: 0.85rem;
+    margin-bottom: 0.4rem;
+  }
+  .log-filters :global(.log-filter) {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    white-space: nowrap;
+  }
+  .log-filters :global(.log-count) {
+    color: var(--fg-muted);
+    font-size: 0.75rem;
+    font-variant-numeric: tabular-nums;
+  }
+  .log {
+    list-style: none;
+    margin: 0.5rem 0 0;
+    padding: 0.4rem 0.5rem;
+    height: 16rem;
+    overflow-y: auto;
+    background: var(--bg-soft);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    font-family: var(--mono);
+    font-size: 0.8rem;
+  }
+  .log :global(.ev) {
+    display: grid;
+    grid-template-columns: 4.5rem 5.5rem minmax(0, 1fr);
+    gap: 0.5rem;
+    padding: 0.05rem 0;
+  }
+  .log :global(.ev-tick) {
+    color: var(--fg-muted);
+    font-variant-numeric: tabular-nums;
+  }
+  .log :global(.ev-type) {
+    background: none;
+    padding: 0;
+    color: var(--accent-strong);
+  }
+  .log :global(.ev-text) {
+    overflow-wrap: anywhere;
+  }
+  .log :global(.ev-chunk .ev-type) {
+    color: var(--ok);
+  }
+  .log :global(.ev-unchunk .ev-type),
+  .log :global(.ev-teleport .ev-type),
+  .log :global(.ev-kick .ev-type),
+  .log :global(.ev-despawn .ev-type) {
+    color: var(--bad);
+  }
+
+  @media (max-width: 820px) {
+    .game-main {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .chat-log {
+      height: 14rem;
+    }
+  }
+  @media (max-width: 480px) {
+    .card {
+      padding: 0.75rem;
+    }
+    .connect-form label:not(.url) {
+      flex: 1 1 8rem;
+    }
+    .connect-form label input {
+      width: 100%;
+    }
+    .log :global(.ev) {
+      grid-template-columns: 3.6rem 4.6rem minmax(0, 1fr);
+      gap: 0.3rem;
+    }
+  }
+</style>

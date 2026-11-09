@@ -1,0 +1,11 @@
+Steve: login success 0x02, uuid 5627dd98-e6be-3c21-b8a8-e92344183641, имя Steve
+Steve: keep-alive 0x01, число 1 — возвращаем
+Steve: чат 0x02: <Steve> привет
+пинг: status {"version":{"name":"gotutor","protocol":1},"players":{"max":20,"online":1,"sample":[{"name":"Steve","id":"5627dd98-e6be-3c21-b8a8-e92344183641"}]},"description":{"text":"Учебный сервер"}}
+пинг: pong 20251109
+пинг: соединение закрыто
+Lazy: login success 0x02, uuid 75dfdce7-b47d-3b57-a35c-daf309424190, имя Lazy
+Lazy: disconnect: keep-alive timeout
+Steve: disconnect: unexpected packet 0x00 in state play
+next state 7: соединение закрыто
+сервер остановлен, игроков: 0

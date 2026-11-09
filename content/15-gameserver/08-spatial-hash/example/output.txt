@@ -1,0 +1,16 @@
+=== RUN   TestMatchesBruteForce
+=== RUN   TestMatchesBruteForce/cell=4
+=== RUN   TestMatchesBruteForce/cell=16
+=== RUN   TestMatchesBruteForce/cell=64
+--- PASS: TestMatchesBruteForce (0.00s)
+    --- PASS: TestMatchesBruteForce/cell=4 (0.00s)
+    --- PASS: TestMatchesBruteForce/cell=16 (0.00s)
+    --- PASS: TestMatchesBruteForce/cell=64 (0.00s)
+=== RUN   TestNegativeAndBorder
+--- PASS: TestNegativeAndBorder (0.00s)
+=== RUN   TestQueryDoesNotAllocate
+аллокаций на запрос: 0
+--- PASS: TestQueryDoesNotAllocate (0.00s)
+=== RUN   ExampleGrid_QueryRadius
+--- PASS: ExampleGrid_QueryRadius (0.00s)
+PASS

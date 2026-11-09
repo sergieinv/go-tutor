@@ -1,0 +1,12 @@
+=== RUN   TestSameFrames
+    main_test.go:24: кадр игрока 0: 274 байт, первые байты 90 02 20 0e ce ff
+--- PASS: TestSameFrames (0.00s)
+=== RUN   TestTickAllocs
+    main_test.go:34: наивный тик выделяет память: true (больше одного выделения на игрока: true)
+    main_test.go:35: тик без аллокаций: 0 выделений
+--- PASS: TestTickAllocs (0.00s)
+=== RUN   TestPoolDropsOnGC
+    main_test.go:60: после двух сборок sync.Pool создал новый буфер: true
+    main_test.go:61: своя очередь вернула тот же буфер: true
+--- PASS: TestPoolDropsOnGC (0.00s)
+PASS

@@ -1,0 +1,130 @@
+questions:
+  - id: handshake-length
+    kind: output
+    prompt: "Клиент 1.21.1 пингует `localhost:25565`. Что выведет программа — длину кадра Handshake и байты версии протокола?"
+    code: |
+      package main
+
+      import (
+      	"encoding/binary"
+      	"fmt"
+      )
+
+      func appendVarInt(b []byte, v int32) []byte {
+      	u := uint32(v)
+      	for ; u >= 0x80; u >>= 7 {
+      		b = append(b, byte(u)|0x80)
+      	}
+      	return append(b, byte(u))
+      }
+
+      func main() {
+      	body := appendVarInt(nil, 0x00) // id Handshake
+      	ver := appendVarInt(nil, 767)
+      	body = append(body, ver...)
+      	body = appendVarInt(body, int32(len("localhost")))
+      	body = append(body, "localhost"...)
+      	body = binary.BigEndian.AppendUint16(body, 25565)
+      	body = appendVarInt(body, 1) // next state: status
+      	fmt.Printf("%d % x\n", len(body), ver)
+      }
+    options:
+      - text: "16 ff 05"
+        correct: true
+        explain: "id (1) + версия 767 в VarInt (2: `ff 05`) + строка (1 байт длины + 9) + порт (2) + next state (1) = 16. Это ровно первый байт `0x10` настоящего кадра Handshake."
+      - text: "16 02 ff"
+        explain: "Порт big-endian, а VarInt — нет: младшие 7 бит идут первыми. 767 = 5·128 + 127, поэтому `ff` (127 с битом продолжения), затем `05`."
+      - text: "15 ff 05"
+        explain: "Посчитайте байт длины строки: у строки есть свой VarInt-префикс."
+
+  - id: compressed-small
+    kind: output
+    prompt: "Сжатие включено с порогом 256. Как выглядит кадр keep-alive (id `0x26`, Long = 7)?"
+    code: |
+      package main
+
+      import (
+      	"encoding/binary"
+      	"fmt"
+      )
+
+      func main() {
+      	packet := append([]byte{0x26}, binary.BigEndian.AppendUint64(nil, 7)...)
+      	threshold := 256
+      	var body []byte
+      	if len(packet) < threshold {
+      		body = append([]byte{0x00}, packet...) // длина данных 0
+      	}
+      	frame := append([]byte{byte(len(body))}, body...)
+      	fmt.Printf("% x\n", frame)
+      }
+    options:
+      - text: "0a 00 26 00 00 00 00 00 00 00 07"
+        correct: true
+        explain: "Пакет 9 байт меньше порога: длина данных `00` («не сжато»), за ней пакет как есть; длина кадра — 10 (`0a`) с учётом байта длины данных. Без сжатия кадр был бы `09 26 …` — на байт короче."
+      - text: "09 26 00 00 00 00 00 00 00 07"
+        explain: "Так кадр выглядел до Set Compression. После неё у каждого кадра есть поле «длина данных», даже у несжатого."
+      - text: "0a 09 26 00 00 00 00 00 00 00 07"
+        explain: "Длина данных — размер до сжатия только для сжатых пакетов. Для несжатых в ней `0`."
+
+  - id: limit-reader
+    kind: output
+    prompt: "Объявлено 1000 байт, а zlib-поток разворачивается в 10 МиБ нулей. Что выведет программа?"
+    code: |
+      package main
+
+      import (
+      	"bytes"
+      	"compress/zlib"
+      	"fmt"
+      	"io"
+      )
+
+      func main() {
+      	var z bytes.Buffer
+      	zw := zlib.NewWriter(&z)
+      	zw.Write(make([]byte, 10<<20))
+      	zw.Close()
+
+      	declared := 1000
+      	zr, _ := zlib.NewReader(&z)
+      	out, err := io.ReadAll(io.LimitReader(zr, int64(declared)+1))
+      	fmt.Println(len(out), err, len(out) == declared)
+      }
+    options:
+      - text: "1001 <nil> false"
+        correct: true
+        explain: "`LimitReader` останавливается на 1001 байте и сообщает EOF без ошибки. Лишний байт доказывает, что поток длиннее объявленного, — разрыв, а дальше 1001 байта распаковка не пошла."
+      - text: "10485760 <nil> false"
+        explain: "`LimitReader` не даст прочитать больше лимита — именно поэтому им ограничивают распаковку."
+      - text: "1000 <nil> true"
+        explain: "Лимит — `declared + 1`, чтобы отличить «ровно столько» от «больше». С лимитом `declared` обман был бы незаметен."
+
+  - id: configuration-phase
+    kind: single
+    prompt: "Что происходит в фазе configuration протокола 1.21.1?"
+    options:
+      - text: "Сервер и клиент сверяют известные наборы данных (Known Packs), сервер присылает реестры (Registry Data) и завершает фазу Finish Configuration, после подтверждения клиента начинается play"
+        correct: true
+        explain: "Фаза появилась в 1.20.2; без обязательных реестров (типы измерений, биомы, типы урона…) клиент не войдёт в мир."
+      - text: "Клиент и сервер договариваются о шифровании и сжатии"
+        explain: "Шифрование (Encryption Request) и сжатие (Set Compression) настраиваются раньше — в login."
+      - text: "Сервер присылает чанки вокруг игрока"
+        explain: "Чанки идут уже в play, после пакета Login (0x2B) и Game Event 13."
+      - text: "Ничего — это устаревшее состояние, оставленное для совместимости"
+        explain: "Наоборот, оно новое (1.20.2), и сервер может вернуть клиента в configuration посреди игры."
+
+  - id: offline-online
+    kind: multiple
+    prompt: "Что верно для online-режима Minecraft?"
+    options:
+      - text: "После Encryption Response весь поток в обе стороны шифруется AES/CFB8, ключ и IV равны общему секрету"
+        correct: true
+        explain: "Секрет клиент генерирует сам и передаёт зашифрованным ключом RSA сервера."
+      - text: "Сервер спрашивает у сессионного сервера Mojang (`hasJoined`), действительно ли этот игрок входит к нему"
+        correct: true
+        explain: "Так сервер узнаёт настоящий UUID и проверяет, что клиент владеет аккаунтом."
+      - text: "В стандартной библиотеке Go есть готовый CFB8"
+        explain: "Там только CFB с сегментом в целый блок (помечен `Deprecated`). CFB8 пишут поверх `cipher.Block` или берут из `go-mc`."
+      - text: "Offline-режим отличается только тем, что не проверяет пароль, а шифрование остаётся"
+        explain: "В offline-режиме нет ни Encryption Request, ни шифрования, ни проверки сессии."

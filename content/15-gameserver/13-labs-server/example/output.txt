@@ -1,0 +1,17 @@
+тик 1: доставок 10, кодирований minecraft=3 web=3
+  Alice ← 0x6C chat (24 байт) | 0x70 teleport (30 байт)
+  Bob   ← [{"t":"chat","id":3,"text":"привет"},{"t":"move","id":1,"x":3.5,"z":0.5},{"t":"tick","n":1,"msgs":2}]
+  Carol ← 0x6C chat (24 байт) | 0x2E move (10 байт) | 0x70 teleport (30 байт)
+  Dave  ← (пачки нет)
+тик 2: доставок 3, кодирований minecraft=1 web=1
+  Eve: очередь полна — отключение slow_consumer
+  Alice ← (пачки нет)
+  Bob   ← [{"t":"move","id":1,"x":4,"z":1},{"t":"tick","n":2,"msgs":1}]
+  Carol ← 0x2E move (10 байт)
+  Dave  ← (пачки нет)
+тик 3: доставок 0, кодирований minecraft=0 web=0
+  Eve: убран из мира в начале тика
+  Alice ← (пачки нет)
+  Bob   ← [{"t":"tick","n":3,"msgs":0}]
+  Carol ← (пачки нет)
+  Dave  ← (пачки нет)

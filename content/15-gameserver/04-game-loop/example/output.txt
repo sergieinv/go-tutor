@@ -1,0 +1,36 @@
+=== RUN   TestWorldOwnsState
+    main_test.go:44: тик 1: alice → (0.0, 1.0)
+    main_test.go:44: тик 1: bob → (1.0, 1.0)
+    main_test.go:44: тик 1: carol → (1.0, 1.0)
+    main_test.go:52: игроки: [alice bob carol]
+--- PASS: TestWorldOwnsState (0.00s)
+=== RUN   TestInputQueueFull
+    main_test.go:65: принято 4 из 6, остальные — отказ
+--- PASS: TestInputQueueFull (0.00s)
+=== RUN   TestCatchUp
+    main_test.go:100: тик 1 начался в 0s
+    main_test.go:100: тик 2 начался в 50ms
+    main_test.go:100: тик 3 начался в 100ms
+    main_test.go:100: тик 4 начался в 230ms
+    main_test.go:100: тик 5 начался в 240ms
+    main_test.go:100: тик 6 начался в 250ms
+    main_test.go:100: тик 7 начался в 300ms
+--- PASS: TestCatchUp (0.00s)
+=== RUN   TestSkipWhenFarBehind
+    main_test.go:113: тик 1 начался в 0s
+    main_test.go:113: тик 2 начался в 50ms
+    main_test.go:113: тик 3 начался в 450ms
+    main_test.go:113: тик 4 начался в 460ms
+    main_test.go:113: тик 5 начался в 470ms
+    main_test.go:113: тик 6 начался в 500ms
+    main_test.go:115: пропущено тиков: 5
+--- PASS: TestSkipWhenFarBehind (0.00s)
+=== RUN   TestTickerDropsTicks
+    main_test.go:138: тик 1: 50ms (получен в 50ms)
+    main_test.go:138: тик 2: 100ms (получен в 100ms)
+    main_test.go:138: тик 3: 150ms (получен в 150ms)
+    main_test.go:138: тик 4: 200ms (получен в 280ms)
+    main_test.go:138: тик 5: 300ms (получен в 300ms)
+    main_test.go:138: тик 6: 350ms (получен в 350ms)
+--- PASS: TestTickerDropsTicks (0.00s)
+PASS

@@ -13,6 +13,7 @@ Microsoft.Extensions.* и фреймворков: зависимости соб�
 | [`warehouse/`](warehouse) | `gotutor/labs/warehouse` | «Склад»: остатки и резервы с блокировками, MySQL |
 | [`notifications/`](notifications) | `gotutor/labs/notifications` | «Уведомления»: консьюмер Kafka, дедупликация, DLQ |
 | [`loadgen/`](loadgen) | `gotutor/labs/loadgen` | генератор нагрузки и нагрузочный разбор (модуль 14) |
+| [`gameserver/`](gameserver) | `gotutor/labs/gameserver` | игровой сервер модуля 15: Minecraft 1.21.1 + WebSocket-шлюз, нагрузочные боты |
 | [`initdb/`](initdb), [`prometheus/`](prometheus) | — | init-скрипты баз и конфигурация Prometheus для профиля labs |
 
 ## Как устроено
@@ -174,7 +175,7 @@ export ORDERS_TEST_POSTGRES='postgres://postgres:labs@127.0.0.1:55432/postgres?s
 export WAREHOUSE_TEST_MYSQL='root:labs@tcp(127.0.0.1:53306)/'
 # модуль 14: реплика (read-your-writes на настоящей потоковой реплике)
 export ORDERS_TEST_POSTGRES_REPLICA='postgres://postgres:labs@127.0.0.1:55433/postgres?sslmode=disable'
-for m in api platform orders warehouse notifications loadgen; do (cd labs/$m && go vet ./... && go test -race -count=3 ./...); done
+for m in api platform orders warehouse notifications loadgen gameserver; do (cd labs/$m && go vet ./... && go test -race -count=3 ./...); done
 ```
 
 ## Безопасность
@@ -284,6 +285,47 @@ max) и разницу метрик «Заказов» за шаг, в конц�
 нарочно увеличена; кеш не инвалидируется при смене цены (обновится по TTL);
 переключатели `/admin/features` без аутентификации — только служебный порт
 на 127.0.0.1 и сеть docker `default`.
+
+## Модуль 15: игровой сервер
+
+[`gameserver/`](gameserver) — сквозной кейс модуля 15 и материал его
+последнего урока. Это учебный сервер, совместимый с подмножеством
+протокола **Minecraft Java Edition 1.21 / 1.21.1 (протокол 767)**, и
+WebSocket-шлюз для браузерного клиента сайта. Оба на одном игровом цикле:
+игроки Minecraft и браузера в одном мире, видят друг друга и общий чат.
+
+Сервер независим от остальных сервисов: ему не нужны ни базы, ни Kafka.
+Поднимать и пересобирать его можно отдельно:
+
+```sh
+docker-compose --profile labs up -d --build gameserver
+# Minecraft 1.21.1: Мультиплеер → localhost (offline-режим, только локально)
+docker-compose --profile labs run --rm gamebots   # 200 ботов: держит ли 20 TPS
+```
+
+| Адрес (только 127.0.0.1) | Что |
+|---|---|
+| 127.0.0.1:25565 | Minecraft |
+| ws://127.0.0.1:25580/ws | WebSocket-шлюз браузерного клиента (JSON, проверка Origin) |
+| http://127.0.0.1:25590 | служебный: `/metrics`, `/healthz`, `/readyz`, `/debug/pprof/` |
+
+Что внутри:
+
+- одна горутина владеет миром, тик 20 TPS, фазы ввод → обновление →
+  рассылка, лимит догоняния при перегрузке;
+- на соединение — горутины чтения и записи, ограниченный входящий канал и
+  ограниченные очереди клиентов: переполнение означает отключение, тик не
+  ждёт;
+- interest management на пространственном хеше, событие кодируется один
+  раз на протокол, тик без аллокаций, метрики MSPT/TPS;
+- проверка ввода и лимиты одинаковые для Minecraft и браузера;
+- fuzz декодеров, асинхронные атомарные снапшоты в томе
+  `gameserver-data`, graceful shutdown с финальным сохранением.
+
+Ресурсов Mojang в репозитории нет: реестры передаются через known packs
+только именами записей. Протокол WebSocket, метрики, нагрузочный отчёт и
+чек-лист ручной проверки с настоящим клиентом описаны в
+[`gameserver/README.md`](gameserver/README.md).
 
 ## Проверка контрактов в CI
 

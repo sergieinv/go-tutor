@@ -1,0 +1,92 @@
+questions:
+  - id: uuid-version
+    kind: output
+    prompt: "Что выведет программа?"
+    code: |
+      package main
+
+      import (
+      	"crypto/md5"
+      	"fmt"
+      )
+
+      func main() {
+      	u := md5.Sum([]byte("OfflinePlayer:Steve"))
+      	u[6] = u[6]&0x0f | 0x30
+      	u[8] = u[8]&0x3f | 0x80
+      	fmt.Printf("%x-%x-%x-%x-%x\n", u[0:4], u[4:6], u[6:8], u[8:10], u[10:16])
+      	fmt.Println(u[6]>>4, u[8]>>6)
+      }
+    options:
+      - text: "5627dd98-e6be-3c21-b8a8-e92344183641\n3 2"
+        correct: true
+        explain: "Это offline-UUID ника Steve на любом сервере Minecraft. Старшая цифра третьей группы — версия `3`, старшие биты четвёртой группы — `10` (вариант RFC 4122, число 2), поэтому она начинается с `8`–`b`."
+      - text: "5627dd98-e6be-3c21-b8a8-e92344183641\n3 8"
+        explain: "`u[8]>>6` оставляет два старших бита: `0x80|…` даёт `10` в двоичной записи, то есть 2, а не 8."
+      - text: "98dd2756-bee6-213c-b8a8-e92344183641\n3 2"
+        explain: "Так выглядел бы UUID, если прочитать первые три поля little-endian, как делает `new Guid(bytes)` в .NET. В Go байты печатаются в порядке массива."
+
+  - id: table-miss
+    kind: output
+    prompt: "Обработчик ищется по паре (состояние, id). Что выведет программа?"
+    code: |
+      package main
+
+      import "fmt"
+
+      type state int
+
+      const (
+      	handshake state = iota
+      	play
+      )
+
+      var handlers = map[state]map[int32]string{
+      	handshake: {0x00: "Handshake"},
+      	play:      {0x01: "KeepAlive", 0x02: "Chat"},
+      }
+
+      func main() {
+      	for _, q := range []struct {
+      		s  state
+      		id int32
+      	}{{handshake, 0x02}, {play, 0x02}, {5, 0x00}} {
+      		h, ok := handlers[q.s][q.id]
+      		fmt.Printf("%q %v\n", h, ok)
+      	}
+      }
+    options:
+      - text: "\"\" false\n\"Chat\" true\n\"\" false"
+        correct: true
+        explain: "Чат в handshake не найден — это повод разорвать соединение. Чтение из `nil`-map (`handlers[5]` нет) безопасно и тоже даёт нулевое значение и `false`, поэтому неизвестное состояние не паникует."
+      - text: "\"Chat\" true\n\"Chat\" true\n\"\" false"
+        explain: "Внутренняя map у каждого состояния своя: в `handlers[handshake]` id `0x02` нет."
+      - text: "Паника: чтение из nil map"
+        explain: "Паникует только запись в `nil`-map. Чтение возвращает нулевое значение."
+
+  - id: keepalive-why
+    kind: single
+    prompt: "Зачем игровому протоколу свой keep-alive, если у TCP есть подтверждения доставки?"
+    options:
+      - text: "Пропавший клиент (выдернут кабель, уснул ноутбук) не присылает FIN, и без своей проверки соединение висит, пока не сработает TCP keep-alive — по умолчанию ОС через часы, у Go около 2,5 минуты, и он не проверяет, что живо само приложение"
+        correct: true
+        explain: "Подтверждения TCP есть только когда кто-то отправляет данные. Тихое соединение без трафика держится, пока не сработает TCP keep-alive (если он вообще включён: в .NET `Socket` — выключен, Go включает 15 с × 9 проб). Keep-alive протокола и дедлайн чтения закрывают его за секунды и заодно проверяют, что клиент-программа читает пакеты."
+      - text: "TCP не гарантирует доставку, keep-alive её подтверждает"
+        explain: "Доставку и порядок TCP гарантирует сам. Keep-alive нужен для обнаружения пропавшей стороны."
+      - text: "Чтобы мерить TPS сервера"
+        explain: "Число в keep-alive позволяет мерить задержку до клиента, но не TPS. Основная задача — обнаружить пропавшего клиента."
+
+  - id: offline-risk
+    kind: multiple
+    prompt: "Что верно про offline-режим?"
+    options:
+      - text: "UUID игрока определяется только ником, поэтому войти можно под любым ником"
+        correct: true
+        explain: "Сервер не проверяет, кто прислал Login Start. Ник `Admin` — это права администратора."
+      - text: "Он подходит для локальной разработки, тестов с ботами и серверов за прокси, который сам проверил игрока"
+        correct: true
+        explain: "Там некому подделать ник, или проверку сделали раньше. Наружу offline-сервер не открывают."
+      - text: "Трафик в offline-режиме шифруется, но без проверки сессии"
+        explain: "Шифрование включается только вместе с online-режимом (Encryption Request). В offline-режиме всё идёт открытым текстом."
+      - text: "Один и тот же ник получает разные UUID на разных offline-серверах"
+        explain: "UUID — MD5 от `\"OfflinePlayer:\"+ник`, он одинаков везде. Поэтому offline-UUID и онлайн-UUID одного игрока различаются."

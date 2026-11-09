@@ -1,5 +1,6 @@
 # Prometheus профиля labs: собирает метрики трёх сервисов с их служебных
-# портов (:8081, /metrics) по именам docker-сети. UI — http://127.0.0.1:9091.
+# портов (:8081, /metrics) и игрового сервера (:25590) по именам
+# docker-сети. UI — http://127.0.0.1:9091.
 global:
   scrape_interval: 5s      # учебный стенд: графики оживают быстро
   evaluation_interval: 5s
@@ -14,3 +15,7 @@ scrape_configs:
   - job_name: notifications
     static_configs:
       - targets: ["notifications:8081"]
+  # Игровой сервер (модуль 15): TPS, MSPT, игроки, отключения.
+  - job_name: gameserver
+    static_configs:
+      - targets: ["gameserver:25590"]

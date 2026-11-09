@@ -1,0 +1,110 @@
+questions:
+  - id: nan-compare
+    kind: output
+    prompt: "Что выведет программа?"
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"math"
+      )
+
+      func main() {
+      	d := math.NaN()
+      	fmt.Println(d > 1, d <= 1, d != d, !(d <= 1))
+      }
+    options:
+      - text: "false false true true"
+        correct: true
+        explain: "По IEEE 754 любое упорядочивающее сравнение с NaN ложно, а NaN не равен даже себе. Поэтому проверка `if d > max { отказ }` пропускает NaN, а `if !(d <= max) { отказ }` — нет. Ещё надёжнее — явно отсечь `math.IsNaN`/`math.IsInf` до всех вычислений."
+      - text: "true false true true"
+        explain: "`d > 1` с NaN тоже ложно: NaN не больше и не меньше ничего. Именно поэтому наивная проверка скорости его пропускает."
+      - text: "false false false true"
+        explain: "`d != d` — классический способ проверить NaN: это единственное значение, не равное самому себе."
+      - text: "false true true false"
+        explain: "`d <= 1` для NaN ложно, как и `d > 1`; отрицание `!(d <= 1)` — истинно."
+
+  - id: tick-bucket
+    kind: output
+    prompt: "Ведро на тиках: ёмкость 2, один токен каждые 10 тиков. Что выведет программа?"
+    code: |
+      package main
+
+      import "fmt"
+
+      type bucket struct {
+      	tokens, burst, every int
+      	last                 int
+      }
+
+      func (b *bucket) take(tick int) bool {
+      	if n := (tick - b.last) / b.every; n > 0 {
+      		b.tokens = min(b.burst, b.tokens+n)
+      		b.last += n * b.every
+      	}
+      	if b.tokens == 0 {
+      		return false
+      	}
+      	b.tokens--
+      	return true
+      }
+
+      func main() {
+      	b := &bucket{tokens: 2, burst: 2, every: 10}
+      	var got []bool
+      	for _, t := range []int{0, 0, 0, 10, 15, 30} {
+      		got = append(got, b.take(t))
+      	}
+      	fmt.Println(got)
+      }
+    options:
+      - text: "[true true false true false true]"
+        correct: true
+        explain: "Два токена тратятся на тике 0, третий запрос отклонён. К тику 10 пришёл один токен, к 15 — ни одного (`last` сдвинулся на 10, а не на 15: остаток тиков не теряется). К тику 30 накопилось два — ведро снова полно, но берём один."
+      - text: "[true true false true true true]"
+        explain: "Между тиками 10 и 15 прошло 5 тиков — меньше `every`, новый токен не пришёл."
+      - text: "[true true true true false true]"
+        explain: "Ёмкость ведра — 2: третий запрос на тике 0 уже не помещается в бюджет."
+      - text: "[true true false false false true]"
+        explain: "К тику 10 прошло ровно `every` тиков — один токен добавляется, запрос проходит."
+
+  - id: catch-up
+    kind: single
+    prompt: "Бюджет перемещения — `MaxSpeed × (тиков с последней принятой позиции)`. Зачем ограничивать число засчитанных тиков (MaxCatchUp)?"
+    options:
+      - text: "Иначе можно постоять минуту и «телепортироваться» на 1200 тиков бега"
+        correct: true
+        explain: "Без предела бюджет копится, пока клиент не шлёт перемещений. Предел оставляет запас на настоящий лаг (пакеты пришли пачкой после задержки), но не даёт превратить простой в телепорт."
+      - text: "Чтобы не переполнился uint64 при вычитании тиков"
+        explain: "Тики не убывают, разность неотрицательна, и `uint64` её вмещает. Проблема не в переполнении, а в накопленном бюджете."
+      - text: "Чтобы честные игроки не получали отказ после лага"
+        explain: "Наоборот: подсчёт тиков с последней позиции как раз помогает после лага, а предел его урезает. Защищает предел сервер, а не игрока."
+      - text: "Чтобы проверка стоила O(1)"
+        explain: "Проверка и без предела O(1): одна разность тиков и одно сравнение."
+
+  - id: chat-length
+    kind: output
+    prompt: "Сколько байт и сколько символов в сообщении? Что выведет программа?"
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"unicode/utf8"
+      )
+
+      func main() {
+      	msg := "привет"
+      	fmt.Println(len(msg), utf8.RuneCountInString(msg), utf8.ValidString(msg[:3]))
+      }
+    options:
+      - text: "12 6 false"
+        correct: true
+        explain: "`len` строки в Go — байты UTF-8: кириллица — по 2 байта на букву. Символы считает `utf8.RuneCountInString`. `msg[:3]` режет вторую букву пополам — получается невалидный UTF-8, поэтому лимит длины в символах проверяют вместе с `utf8.ValidString`."
+      - text: "6 6 true"
+        explain: "`len` считает байты, а не символы: у кириллицы их по два на букву."
+      - text: "12 12 false"
+        explain: "`utf8.RuneCountInString` считает кодовые точки, а не байты: букв шесть."
+      - text: "12 6 true"
+        explain: "Срез строки по байтам может разрезать символ: три байта — это «п» и половина «р», такая строка не валидна."

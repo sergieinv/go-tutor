@@ -28,6 +28,12 @@ const modules = loadCourse();
                 <a href={`/slides/${m.slug}/`}>Слайды модуля</a>
               </>
             )}
+            {m.slug.startsWith("15-") && (
+              <>
+                {" "}
+                <a href="/game/">Браузерный клиент игрового сервера</a>
+              </>
+            )}
           </p>
           {m.lessons.length > 0 ? (
             <ol class="lessons">
