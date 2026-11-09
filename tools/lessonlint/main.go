@@ -38,6 +38,8 @@ func main() {
 	vulndb := flag.String("vulndb", "", "база уязвимостей для govulncheck -db; по умолчанию https://vuln.go.dev")
 	postgres := flag.String("postgres", "", "DSN администратора PostgreSQL профиля labs")
 	mysql := flag.String("mysql", "", "DSN администратора MySQL профиля labs")
+	valkey := flag.String("valkey", "", "администратор Valkey песочницы профиля labs: valkey://default:labs-valkey@127.0.0.1:56380")
+	replica := flag.String("postgres-replica", "", "адрес реплики PostgreSQL профиля labs (127.0.0.1:55433): примеры с [postgres] получают POSTGRES_REPLICA_DSN")
 	sqlc := flag.String("sqlc", "", "путь к sqlc для сверки сгенерированного кода; по умолчанию ищется в PATH")
 	buf := flag.String("buf", "", "путь к buf (плагины protoc-gen-* рядом) для примеров с .proto; по умолчанию ищется в PATH")
 	pprof := flag.String("pprof", "", "путь к собранному cmd/pprof для примеров с runtime/pprof; по умолчанию ищется в PATH, иначе собирается")
@@ -79,6 +81,12 @@ func main() {
 	}
 	if *mysql != "" {
 		cfg.Labs[sandbox.LabMySQL] = *mysql
+	}
+	if *valkey != "" {
+		cfg.Labs[sandbox.LabValkey] = *valkey
+	}
+	if *replica != "" {
+		cfg.Labs[sandbox.LabPostgresReplica] = *replica
 	}
 	if cfg.Govulncheck == "" {
 		cfg.Govulncheck, _ = osexec.LookPath("govulncheck")

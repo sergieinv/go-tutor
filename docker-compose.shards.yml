@@ -1,0 +1,16 @@
+# Модуль 14: «Заказы» с шардированием по покупателю (labs/orders/README.md,
+# раздел «Шардирование»). Шард 0 — прежняя база orders в postgres, шард 1 —
+# postgres-shard1. Включить (пересоздаётся только контейнер orders):
+#
+#   docker-compose -f docker-compose.yml -f docker-compose.shards.yml --profile labs up -d orders
+#
+# Выключить — тот же up без второго файла. Реплика остаётся только у
+# шарда 0 (postgres-replica — копия postgres): покупатели шарда 1 читают
+# историю с его основной базы.
+services:
+  orders:
+    environment:
+      ORDERS_SHARD_DSNS: postgres://postgres:labs@postgres:5432/orders?sslmode=disable&pool_max_conns=8,postgres://postgres:labs@postgres-shard1:5432/orders?sslmode=disable&pool_max_conns=8
+    depends_on:
+      postgres-shard1:
+        condition: service_healthy

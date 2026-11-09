@@ -41,6 +41,7 @@ RUN cd /tmp/deps && GOPROXY=https://proxy.golang.org GOFLAGS= go mod download al
        google.golang.org/grpc/... github.com/grpc-ecosystem/grpc-gateway/v2/runtime buf.build/go/protovalidate \
        google.golang.org/genproto/googleapis/rpc/errdetails google.golang.org/genproto/googleapis/api/annotations \
        github.com/twmb/franz-go/pkg/kgo github.com/twmb/franz-go/pkg/kadm github.com/twmb/franz-go/pkg/kfake \
+       github.com/valkey-io/valkey-go github.com/alicebob/miniredis/v2 \
        go.opentelemetry.io/otel/sdk/trace go.opentelemetry.io/otel/sdk/metric go.opentelemetry.io/otel/exporters/stdout/stdouttrace \
        go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc github.com/prometheus/client_golang/prometheus/... \
     && rm -rf /tmp/deps

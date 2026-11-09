@@ -20,7 +20,7 @@
   "paths": {
     "/v1/orders": {
       "get": {
-        "summary": "ListOrders возвращает заказы покупателя, новые первыми, страницами.\nПагинация по курсору (page_token), а не по смещению: страница не\n«съезжает», когда появляются новые заказы.",
+        "summary": "ListOrders возвращает заказы покупателя, новые первыми, страницами.\nПагинация по курсору (page_token), а не по смещению: страница не\n«съезжает», когда появляются новые заказы. История может читаться с\nреплики и отставать; чтобы увидеть свою только что сделанную запись,\nпередайте consistency_token из ответа CreateOrder/CancelOrder.",
         "operationId": "OrderService_ListOrders",
         "responses": {
           "200": {
@@ -58,6 +58,13 @@
             "in": "query",
             "required": false,
             "type": "string"
+          },
+          {
+            "name": "consistencyToken",
+            "description": "Токен из ответа CreateOrder/CancelOrder (read-your-writes): история\nчитается с реплики, только если реплика уже применила эту запись,\nиначе — с основной базы. Пустой — подойдёт любая реплика.",
+            "in": "query",
+            "required": false,
+            "type": "string"
           }
         ],
         "tags": [
@@ -65,7 +72,7 @@
         ]
       },
       "post": {
-        "summary": "CreateOrder создаёт заказ и резервирует товар.\nОшибки: INVALID_ARGUMENT — запрос не прошёл валидацию или товара нет в\nкаталоге (детали — google.rpc.BadRequest); FAILED_PRECONDITION — не\nхватает товара (google.rpc.PreconditionFailure, google.rpc.ErrorInfo с\nreason OUT_OF_STOCK); UNAVAILABLE — склад недоступен, запрос можно\nповторить.",
+        "summary": "CreateOrder создаёт заказ и резервирует товар.\nОшибки: RESOURCE_EXHAUSTED — сервис перегружен и отбросил запрос сразу\n(google.rpc.RetryInfo — когда повторить; REST — 429); INVALID_ARGUMENT — запрос не прошёл валидацию или товара нет в\nкаталоге (детали — google.rpc.BadRequest); FAILED_PRECONDITION — не\nхватает товара (google.rpc.PreconditionFailure, google.rpc.ErrorInfo с\nreason OUT_OF_STOCK); UNAVAILABLE — склад недоступен, запрос можно\nповторить.",
         "operationId": "OrderService_CreateOrder",
         "responses": {
           "200": {
@@ -98,7 +105,7 @@
     },
     "/v1/orders/{orderId}": {
       "get": {
-        "summary": "GetOrder возвращает заказ. NOT_FOUND — заказа нет.",
+        "summary": "GetOrder возвращает заказ. NOT_FOUND — заказа нет. Читает всегда с\nосновной базы: заказ виден сразу после CreateOrder.",
         "operationId": "OrderService_GetOrder",
         "responses": {
           "200": {
@@ -167,6 +174,38 @@
           "OrderService"
         ]
       }
+    },
+    "/v1/products/{productId}": {
+      "get": {
+        "summary": "GetProduct возвращает товар каталога с текущей ценой. NOT_FOUND —\nтовара нет. Ответ может приходить из кеша и отставать от каталога на\nвремя жизни записи кеша (минуты).",
+        "operationId": "OrderService_GetProduct",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1GetProductResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "productId",
+            "in": "path",
+            "required": true,
+            "type": "string",
+            "format": "int64"
+          }
+        ],
+        "tags": [
+          "OrderService"
+        ]
+      }
     }
   },
   "definitions": {
@@ -206,6 +245,10 @@
       "properties": {
         "order": {
           "$ref": "#/definitions/v1Order"
+        },
+        "consistencyToken": {
+          "type": "string",
+          "description": "То же, что CreateOrderResponse.consistency_token."
         }
       }
     },
@@ -245,6 +288,10 @@
       "properties": {
         "order": {
           "$ref": "#/definitions/v1Order"
+        },
+        "consistencyToken": {
+          "type": "string",
+          "description": "Непрозрачный токен согласованности: позиция записи в базе. Передайте\nего в ListOrdersRequest.consistency_token, чтобы история точно\nсодержала этот заказ. Пустой — сервис не различает позиции (нет\nреплик), передавать нечего."
         }
       }
     },
@@ -253,6 +300,14 @@
       "properties": {
         "order": {
           "$ref": "#/definitions/v1Order"
+        }
+      }
+    },
+    "v1GetProductResponse": {
+      "type": "object",
+      "properties": {
+        "product": {
+          "$ref": "#/definitions/v1Product"
         }
       }
     },
@@ -337,6 +392,24 @@
       ],
       "default": "ORDER_STATUS_UNSPECIFIED",
       "description": "OrderStatus — статус заказа.\n\n - ORDER_STATUS_UNSPECIFIED: Нулевое значение обязано означать «не задано»: его получит поле,\nкоторое отправитель не заполнил (или заполнил значением из будущей\nверсии контракта, неизвестной получателю).\n - ORDER_STATUS_RESERVED: Товар зарезервирован на складе. Заказ без резерва не записывается.\n - ORDER_STATUS_CANCELLED: Заказ отменён, резерв возвращён. Конечный статус."
+    },
+    "v1Product": {
+      "type": "object",
+      "properties": {
+        "productId": {
+          "type": "string",
+          "format": "int64"
+        },
+        "name": {
+          "type": "string"
+        },
+        "priceCents": {
+          "type": "string",
+          "format": "int64",
+          "description": "Текущая цена в копейках. В заказе фиксируется цена на момент заказа."
+        }
+      },
+      "description": "Product — товар каталога."
     }
   }
 }

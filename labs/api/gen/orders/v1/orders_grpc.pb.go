@@ -28,6 +28,7 @@ const (
 	OrderService_GetOrder_FullMethodName    = "/orders.v1.OrderService/GetOrder"
 	OrderService_ListOrders_FullMethodName  = "/orders.v1.OrderService/ListOrders"
 	OrderService_CancelOrder_FullMethodName = "/orders.v1.OrderService/CancelOrder"
+	OrderService_GetProduct_FullMethodName  = "/orders.v1.OrderService/GetProduct"
 )
 
 // OrderServiceClient is the client API for OrderService service.
@@ -41,21 +42,29 @@ const (
 // (Release). События уходят в Kafka (events.v1.OrderEvent).
 type OrderServiceClient interface {
 	// CreateOrder создаёт заказ и резервирует товар.
-	// Ошибки: INVALID_ARGUMENT — запрос не прошёл валидацию или товара нет в
+	// Ошибки: RESOURCE_EXHAUSTED — сервис перегружен и отбросил запрос сразу
+	// (google.rpc.RetryInfo — когда повторить; REST — 429); INVALID_ARGUMENT — запрос не прошёл валидацию или товара нет в
 	// каталоге (детали — google.rpc.BadRequest); FAILED_PRECONDITION — не
 	// хватает товара (google.rpc.PreconditionFailure, google.rpc.ErrorInfo с
 	// reason OUT_OF_STOCK); UNAVAILABLE — склад недоступен, запрос можно
 	// повторить.
 	CreateOrder(ctx context.Context, in *CreateOrderRequest, opts ...grpc.CallOption) (*CreateOrderResponse, error)
-	// GetOrder возвращает заказ. NOT_FOUND — заказа нет.
+	// GetOrder возвращает заказ. NOT_FOUND — заказа нет. Читает всегда с
+	// основной базы: заказ виден сразу после CreateOrder.
 	GetOrder(ctx context.Context, in *GetOrderRequest, opts ...grpc.CallOption) (*GetOrderResponse, error)
 	// ListOrders возвращает заказы покупателя, новые первыми, страницами.
 	// Пагинация по курсору (page_token), а не по смещению: страница не
-	// «съезжает», когда появляются новые заказы.
+	// «съезжает», когда появляются новые заказы. История может читаться с
+	// реплики и отставать; чтобы увидеть свою только что сделанную запись,
+	// передайте consistency_token из ответа CreateOrder/CancelOrder.
 	ListOrders(ctx context.Context, in *ListOrdersRequest, opts ...grpc.CallOption) (*ListOrdersResponse, error)
 	// CancelOrder отменяет заказ и возвращает товар на склад. Идемпотентен:
 	// повторная отмена возвращает тот же отменённый заказ.
 	CancelOrder(ctx context.Context, in *CancelOrderRequest, opts ...grpc.CallOption) (*CancelOrderResponse, error)
+	// GetProduct возвращает товар каталога с текущей ценой. NOT_FOUND —
+	// товара нет. Ответ может приходить из кеша и отставать от каталога на
+	// время жизни записи кеша (минуты).
+	GetProduct(ctx context.Context, in *GetProductRequest, opts ...grpc.CallOption) (*GetProductResponse, error)
 }
 
 type orderServiceClient struct {
@@ -106,6 +115,16 @@ func (c *orderServiceClient) CancelOrder(ctx context.Context, in *CancelOrderReq
 	return out, nil
 }
 
+func (c *orderServiceClient) GetProduct(ctx context.Context, in *GetProductRequest, opts ...grpc.CallOption) (*GetProductResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetProductResponse)
+	err := c.cc.Invoke(ctx, OrderService_GetProduct_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // OrderServiceServer is the server API for OrderService service.
 // All implementations must embed UnimplementedOrderServiceServer
 // for forward compatibility.
@@ -117,21 +136,29 @@ func (c *orderServiceClient) CancelOrder(ctx context.Context, in *CancelOrderReq
 // (Release). События уходят в Kafka (events.v1.OrderEvent).
 type OrderServiceServer interface {
 	// CreateOrder создаёт заказ и резервирует товар.
-	// Ошибки: INVALID_ARGUMENT — запрос не прошёл валидацию или товара нет в
+	// Ошибки: RESOURCE_EXHAUSTED — сервис перегружен и отбросил запрос сразу
+	// (google.rpc.RetryInfo — когда повторить; REST — 429); INVALID_ARGUMENT — запрос не прошёл валидацию или товара нет в
 	// каталоге (детали — google.rpc.BadRequest); FAILED_PRECONDITION — не
 	// хватает товара (google.rpc.PreconditionFailure, google.rpc.ErrorInfo с
 	// reason OUT_OF_STOCK); UNAVAILABLE — склад недоступен, запрос можно
 	// повторить.
 	CreateOrder(context.Context, *CreateOrderRequest) (*CreateOrderResponse, error)
-	// GetOrder возвращает заказ. NOT_FOUND — заказа нет.
+	// GetOrder возвращает заказ. NOT_FOUND — заказа нет. Читает всегда с
+	// основной базы: заказ виден сразу после CreateOrder.
 	GetOrder(context.Context, *GetOrderRequest) (*GetOrderResponse, error)
 	// ListOrders возвращает заказы покупателя, новые первыми, страницами.
 	// Пагинация по курсору (page_token), а не по смещению: страница не
-	// «съезжает», когда появляются новые заказы.
+	// «съезжает», когда появляются новые заказы. История может читаться с
+	// реплики и отставать; чтобы увидеть свою только что сделанную запись,
+	// передайте consistency_token из ответа CreateOrder/CancelOrder.
 	ListOrders(context.Context, *ListOrdersRequest) (*ListOrdersResponse, error)
 	// CancelOrder отменяет заказ и возвращает товар на склад. Идемпотентен:
 	// повторная отмена возвращает тот же отменённый заказ.
 	CancelOrder(context.Context, *CancelOrderRequest) (*CancelOrderResponse, error)
+	// GetProduct возвращает товар каталога с текущей ценой. NOT_FOUND —
+	// товара нет. Ответ может приходить из кеша и отставать от каталога на
+	// время жизни записи кеша (минуты).
+	GetProduct(context.Context, *GetProductRequest) (*GetProductResponse, error)
 	mustEmbedUnimplementedOrderServiceServer()
 }
 
@@ -153,6 +180,9 @@ func (UnimplementedOrderServiceServer) ListOrders(context.Context, *ListOrdersRe
 }
 func (UnimplementedOrderServiceServer) CancelOrder(context.Context, *CancelOrderRequest) (*CancelOrderResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method CancelOrder not implemented")
+}
+func (UnimplementedOrderServiceServer) GetProduct(context.Context, *GetProductRequest) (*GetProductResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetProduct not implemented")
 }
 func (UnimplementedOrderServiceServer) mustEmbedUnimplementedOrderServiceServer() {}
 func (UnimplementedOrderServiceServer) testEmbeddedByValue()                      {}
@@ -247,6 +277,24 @@ func _OrderService_CancelOrder_Handler(srv interface{}, ctx context.Context, dec
 	return interceptor(ctx, in, info, handler)
 }
 
+func _OrderService_GetProduct_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetProductRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(OrderServiceServer).GetProduct(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: OrderService_GetProduct_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(OrderServiceServer).GetProduct(ctx, req.(*GetProductRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // OrderService_ServiceDesc is the grpc.ServiceDesc for OrderService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -269,6 +317,10 @@ var OrderService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "CancelOrder",
 			Handler:    _OrderService_CancelOrder_Handler,
+		},
+		{
+			MethodName: "GetProduct",
+			Handler:    _OrderService_GetProduct_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

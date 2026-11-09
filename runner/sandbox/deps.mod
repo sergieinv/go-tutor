@@ -10,8 +10,10 @@ module lesson
 go 1.25.0
 
 require (
+	github.com/yuin/gopher-lua v1.1.1 // indirect
 	buf.build/gen/go/bufbuild/protovalidate/protocolbuffers/go v1.36.11-20260709200747-435963d16310.1
 	buf.build/go/protovalidate v1.3.0
+	github.com/alicebob/miniredis/v2 v2.40.0
 	github.com/go-sql-driver/mysql v1.10.1
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.30.0
 	github.com/jackc/pgx/v5 v5.11.0
@@ -21,6 +23,7 @@ require (
 	github.com/twmb/franz-go/pkg/kadm v1.18.0
 	github.com/twmb/franz-go/pkg/kfake v0.0.0-20260915001422-21ef8a4103bb
 	github.com/twmb/franz-go/pkg/kmsg v1.13.1
+	github.com/valkey-io/valkey-go v1.0.79
 	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.71.0
 	go.opentelemetry.io/otel v1.46.0
 	go.opentelemetry.io/otel/exporters/stdout/stdouttrace v1.46.0

@@ -19,7 +19,8 @@ option go_package = "gotutor/labs/api/gen/orders/v1;ordersv1";
 // (Release). События уходят в Kafka (events.v1.OrderEvent).
 service OrderService {
   // CreateOrder создаёт заказ и резервирует товар.
-  // Ошибки: INVALID_ARGUMENT — запрос не прошёл валидацию или товара нет в
+  // Ошибки: RESOURCE_EXHAUSTED — сервис перегружен и отбросил запрос сразу
+  // (google.rpc.RetryInfo — когда повторить; REST — 429); INVALID_ARGUMENT — запрос не прошёл валидацию или товара нет в
   // каталоге (детали — google.rpc.BadRequest); FAILED_PRECONDITION — не
   // хватает товара (google.rpc.PreconditionFailure, google.rpc.ErrorInfo с
   // reason OUT_OF_STOCK); UNAVAILABLE — склад недоступен, запрос можно
@@ -31,14 +32,17 @@ service OrderService {
     };
   }
 
-  // GetOrder возвращает заказ. NOT_FOUND — заказа нет.
+  // GetOrder возвращает заказ. NOT_FOUND — заказа нет. Читает всегда с
+  // основной базы: заказ виден сразу после CreateOrder.
   rpc GetOrder(GetOrderRequest) returns (GetOrderResponse) {
     option (google.api.http) = {get: "/v1/orders/{order_id}"};
   }
 
   // ListOrders возвращает заказы покупателя, новые первыми, страницами.
   // Пагинация по курсору (page_token), а не по смещению: страница не
-  // «съезжает», когда появляются новые заказы.
+  // «съезжает», когда появляются новые заказы. История может читаться с
+  // реплики и отставать; чтобы увидеть свою только что сделанную запись,
+  // передайте consistency_token из ответа CreateOrder/CancelOrder.
   rpc ListOrders(ListOrdersRequest) returns (ListOrdersResponse) {
     option (google.api.http) = {get: "/v1/orders"};
   }
@@ -51,6 +55,13 @@ service OrderService {
       post: "/v1/orders/{order_id}:cancel"
       body: "*"
     };
+  }
+
+  // GetProduct возвращает товар каталога с текущей ценой. NOT_FOUND —
+  // товара нет. Ответ может приходить из кеша и отставать от каталога на
+  // время жизни записи кеша (минуты).
+  rpc GetProduct(GetProductRequest) returns (GetProductResponse) {
+    option (google.api.http) = {get: "/v1/products/{product_id}"};
   }
 }
 
@@ -114,6 +125,11 @@ message CreateOrderItem {
 
 message CreateOrderResponse {
   Order order = 1;
+  // Непрозрачный токен согласованности: позиция записи в базе. Передайте
+  // его в ListOrdersRequest.consistency_token, чтобы история точно
+  // содержала этот заказ. Пустой — сервис не различает позиции (нет
+  // реплик), передавать нечего.
+  string consistency_token = 2;
 }
 
 message GetOrderRequest {
@@ -134,6 +150,10 @@ message ListOrdersRequest {
   // Непрозрачный курсор из next_page_token предыдущего ответа. Действует
   // только с тем же customer_id.
   string page_token = 3 [(buf.validate.field).string.max_len = 128];
+  // Токен из ответа CreateOrder/CancelOrder (read-your-writes): история
+  // читается с реплики, только если реплика уже применила эту запись,
+  // иначе — с основной базы. Пустой — подойдёт любая реплика.
+  string consistency_token = 4 [(buf.validate.field).string.max_len = 64];
 }
 
 message ListOrdersResponse {
@@ -148,4 +168,22 @@ message CancelOrderRequest {
 
 message CancelOrderResponse {
   Order order = 1;
+  // То же, что CreateOrderResponse.consistency_token.
+  string consistency_token = 2;
+}
+
+// Product — товар каталога.
+message Product {
+  int64 product_id = 1;
+  string name = 2;
+  // Текущая цена в копейках. В заказе фиксируется цена на момент заказа.
+  int64 price_cents = 3;
+}
+
+message GetProductRequest {
+  int64 product_id = 1 [(buf.validate.field).int64.gt = 0];
+}
+
+message GetProductResponse {
+  Product product = 1;
 }

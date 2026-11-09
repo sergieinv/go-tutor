@@ -11,7 +11,7 @@ labs/api/
 ├── buf.lock          коммиты зависимостей (те же, что у песочницы учебника)
 ├── buf.gen.yaml      плагины: protoc-gen-go, -go-grpc, -grpc-gateway, -openapiv2
 ├── proto/
-│   ├── orders/v1/orders.proto        OrderService: CreateOrder, GetOrder, ListOrders, CancelOrder
+│   ├── orders/v1/orders.proto        OrderService: CreateOrder, GetOrder, ListOrders, CancelOrder, GetProduct
 │   ├── warehouse/v1/warehouse.proto  WarehouseService: Reserve, Release, GetStock
 │   └── events/v1/events.proto        OrderEvent { OrderCreated | OrderCancelled } — значение записи Kafka
 └── gen/              сгенерированный код (закоммичен, руками не правится)
@@ -30,7 +30,7 @@ Registry, а сервисы брали бы версию модуля.
 - **REST — аннотации `google.api.http`.** `POST /v1/orders`,
   `GET /v1/orders/{order_id}`, `GET /v1/orders?customer_id=…&page_size=…&page_token=…`,
   `POST /v1/orders/{order_id}:cancel` (пользовательский метод, AIP-136),
-  `GET /v1/stock/{product_id}`. У `Reserve`/`Release` аннотаций нет, и
+  `GET /v1/products/{product_id}` (модуль 14), `GET /v1/stock/{product_id}`. У `Reserve`/`Release` аннотаций нет, и
   REST-маршрутов для них не существует: внутренний API наружу не торчит.
 - **Валидация — правила protovalidate прямо в полях.** `int64.gt = 0`,
   `repeated.min_items/max_items`, `int32.gte/lte`, CEL-правило
@@ -46,6 +46,13 @@ Registry, а сервисы брали бы версию модуля.
   в одном топике и в одной партиции (ключ — `order_id`), потребитель
   разбирает их одним типом. В конверте — `event_id` для дедупликации.
   Заголовки записи описаны в `events.proto`.
+
+- **Модуль 14 — только совместимые изменения** (`buf breaking` проходит):
+  новый метод `GetProduct` и сообщение `Product`, новые поля
+  `consistency_token` в `CreateOrderResponse`, `CancelOrderResponse` (номер
+  2) и `ListOrdersRequest` (номер 4, `max_len = 64`). Старый клиент их не
+  видит и работает как раньше; новый передаёт токен из ответа в историю,
+  чтобы прочитать свою запись (read-your-writes, см. `labs/orders/README.md`).
 
 ## Команды
 

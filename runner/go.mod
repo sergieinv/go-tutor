@@ -9,6 +9,7 @@ require (
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/twmb/franz-go v1.21.7
 	github.com/twmb/franz-go/pkg/kadm v1.18.0
+	github.com/valkey-io/valkey-go v1.0.79
 	golang.org/x/exp v0.0.0-20261014143641-f0251eb4aa3e
 )
 
@@ -22,5 +23,6 @@ require (
 	github.com/rogpeppe/go-internal v1.16.0 // indirect
 	github.com/twmb/franz-go/pkg/kmsg v1.13.1 // indirect
 	golang.org/x/crypto v0.50.0 // indirect
-	golang.org/x/text v0.36.0 // indirect
+	golang.org/x/sys v0.47.0 // indirect
+	golang.org/x/text v0.41.0 // indirect
 )

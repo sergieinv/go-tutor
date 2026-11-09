@@ -35,9 +35,14 @@ import (
 	"google.golang.org/grpc/reflection"
 
 	ordersv1 "gotutor/labs/api/gen/orders/v1"
+	"gotutor/labs/orders/internal/catalog"
+	"gotutor/labs/orders/internal/features"
 	"gotutor/labs/orders/internal/grpcapi"
 	"gotutor/labs/orders/internal/orders"
 	"gotutor/labs/orders/internal/outbox"
+	"gotutor/labs/orders/internal/replica"
+	"gotutor/labs/orders/internal/shard"
+	"gotutor/labs/orders/internal/shed"
 	"gotutor/labs/orders/internal/store/postgres"
 	"gotutor/labs/orders/internal/store/sqlite"
 	"gotutor/labs/orders/internal/warehouse"
@@ -97,7 +102,9 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout 
 	// cfg.dsn — logging.Secret: в журнале будет [REDACTED].
 	log.Info("starting", "version", version(), "db", cfg.db, "dsn", cfg.dsn,
 		"http_addr", cfg.httpAddr, "grpc_addr", cfg.grpcAddr, "ops_addr", cfg.opsAddr,
-		"warehouse", cfg.warehouseAddr, "kafka", cfg.kafkaBrokers, "topic", cfg.kafkaTopic)
+		"warehouse", cfg.warehouseAddr, "kafka", cfg.kafkaBrokers, "topic", cfg.kafkaTopic,
+		"shards", len(cfg.shardDSNs), "replica", cfg.replicaDSN != "", "valkey", cfg.valkeyAddr,
+		"create_max_in_flight", cfg.createMaxInFlight, "admin_features", cfg.adminFeatures)
 
 	startCtx, cancelStart := context.WithTimeout(ctx, startupTimeout)
 	defer cancelStart()
@@ -117,15 +124,24 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout 
 		_ = tp.Shutdown(shCtx)
 	}()
 
-	store, err := openStore(startCtx, cfg)
+	// Шарды: без ORDERS_SHARD_DSNS — один, база ORDERS_DSN. У каждого шарда
+	// свои миграции, outbox и relay; шард 0 — прежняя база.
+	stores, err := openStores(startCtx, cfg)
 	if err != nil {
 		return err
 	}
-	defer store.Close() // пул — последним из ресурсов: им пользуются все
-	if err := store.Migrate(startCtx); err != nil {
-		return err
+	defer func() { // пулы — последними из ресурсов: ими пользуются все
+		for _, st := range stores {
+			st.Close()
+		}
+	}()
+	for i, st := range stores {
+		if err := st.Migrate(startCtx); err != nil {
+			return fmt.Errorf("shard %d: %w", i, err)
+		}
 	}
-	log.Info("migrations applied")
+	store := stores[0]
+	log.Info("migrations applied", "shards", len(stores))
 
 	// Kafka: один клиент на процесс. Продюсер franz-go идемпотентный по
 	// умолчанию (acks=all + номера последовательностей).
@@ -157,20 +173,82 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout 
 	}
 	defer whConn.Close()
 
+	// Переключатели модуля 14 (кеш, реплика) — меняются без перезапуска
+	// через /admin/features, если он включён.
+	switches := features.New(cfg.valkeyAddr != "", cfg.replicaDSN != "")
+
+	shardStores := make([]orders.Store, len(stores))
+	for i, st := range stores {
+		shardStores[i] = st
+	}
+	router, err := shard.New(shardStores)
+	if err != nil {
+		return err
+	}
+
+	// Каталог: база (со счётчиком запросов) → кеш в Valkey, если задан адрес.
+	// Каталог — справочник; читается с шарда 0.
+	var cat orders.Catalog = catalog.Counted(store, reg)
+	if cfg.valkeyAddr != "" {
+		kv, err := catalog.NewValkey(cfg.valkeyAddr, log)
+		if err != nil {
+			return err
+		}
+		defer kv.Close()
+		cat = catalog.New(kv, cat, catalog.Config{
+			TTL: cfg.catalogTTL, NegativeTTL: cfg.catalogNegativeTTL,
+			Enabled: switches.CatalogCache, Registerer: reg, Logger: log,
+		})
+	}
+
+	// История: с реплики шарда 0 с проверкой токена согласованности.
+	var history orders.History
+	if cfg.replicaDSN != "" {
+		rep, err := postgres.OpenReplica(startCtx, cfg.replicaDSN.Reveal())
+		if err != nil {
+			return err
+		}
+		defer rep.Close()
+		primaries := make([]replica.Primary, len(stores))
+		for i, st := range stores {
+			primaries[i] = st.(*postgres.Store) // реплика только с postgres (loadConfig)
+		}
+		if history, err = replica.New(replica.Config{
+			Primaries: primaries, Replica: rep, ShardOf: router.ShardOf,
+			Enabled: switches.ReplicaReads, Registerer: reg, Logger: log,
+		}); err != nil {
+			return err
+		}
+	}
+
 	svc := orders.NewService(store, warehouse.New(whConn, warehouse.Config{Registerer: reg}), orders.Options{
 		Log:      log,
 		Observer: newSagaMetrics(reg),
+		Catalog:  cat,
+		Router:   router,
+		History:  history,
 	})
 
 	validator, err := protovalidate.New()
 	if err != nil {
 		return fmt.Errorf("protovalidate: %w", err)
 	}
+	// Load shedding на CreateOrder: самый дорогой вызов (склад, транзакция,
+	// outbox). Interceptor — внутренний в цепочке: журнал и метрики видят
+	// RESOURCE_EXHAUSTED.
+	var extra []grpc.ServerOption
+	if cfg.createMaxInFlight > 0 {
+		limiter := shed.New(shed.Config{
+			MaxInFlight: cfg.createMaxInFlight, MaxQueue: cfg.createMaxQueue,
+			QueueTimeout: cfg.createQueueTimeout, Registerer: reg, Logger: log,
+		})
+		extra = append(extra, grpc.ChainUnaryInterceptor(limiter.UnaryInterceptor(ordersv1.OrderService_CreateOrder_FullMethodName)))
+	}
 	grpcSrv := grpcx.NewServer(grpcx.ServerConfig{
 		Logger:    log,
 		Metrics:   grpcx.NewServerMetrics(reg),
 		Validator: validator,
-	})
+	}, extra...)
 	ordersv1.RegisterOrderServiceServer(grpcSrv, grpcapi.New(svc, log))
 	healthSrv := grpchealth.NewServer()
 	healthpb.RegisterHealthServer(grpcSrv, healthSrv)
@@ -186,6 +264,9 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout 
 	// сбой соседа снимал бы с балансировщика все реплики «Заказов».
 	ready := &health.Readiness{}
 	ready.Add("db", store.Ping)
+	for i, st := range stores[1:] {
+		ready.Add(fmt.Sprintf("db_shard%d", i+1), st.Ping)
+	}
 
 	// Listen отдельно от Serve: занятый порт — ошибка старта, а в журнал
 	// попадает настоящий адрес (важно для :0 в тестах).
@@ -237,11 +318,28 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout 
 		otelhttp.WithFilter(func(r *http.Request) bool { return strings.HasPrefix(r.URL.Path, "/v1/") }),
 	)
 	httpSrv := httpx.NewServer(restHandler, log)
-	opsSrv := httpx.NewServer(httpx.OpsHandler(reg, ready, log), log)
+	var opsHandler http.Handler = httpx.OpsHandler(reg, ready, log)
+	if cfg.adminFeatures {
+		opsMux := http.NewServeMux()
+		opsMux.Handle("/admin/features", http.MaxBytesHandler(switches.Handler(log), 1<<10))
+		opsMux.Handle("/", opsHandler)
+		opsHandler = opsMux
+	}
+	opsSrv := httpx.NewServer(opsHandler, log)
 
-	relay := outbox.New(store, kafka, outbox.Config{
-		Topic: cfg.kafkaTopic, Interval: cfg.outboxInterval, Logger: log, Registerer: reg,
-	})
+	// Relay на каждый шард: у каждого свой outbox. Порядок событий заказа
+	// сохраняется — заказ целиком живёт на одном шарде. Метрики шардов —
+	// с меткой shard (без шардирования метки нет, как раньше).
+	relays := make([]*outbox.Relay, len(stores))
+	for i, st := range stores {
+		relayReg := prometheus.Registerer(reg)
+		if len(stores) > 1 {
+			relayReg = prometheus.WrapRegistererWith(prometheus.Labels{"shard": strconv.Itoa(i)}, reg)
+		}
+		relays[i] = outbox.New(st, kafka, outbox.Config{
+			Topic: cfg.kafkaTopic, Interval: cfg.outboxInterval, Logger: log.With("shard", i), Registerer: relayReg,
+		})
+	}
 
 	cancelStart()
 
@@ -269,7 +367,9 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout 
 		}
 		return nil
 	})
-	g.Go(func() error { return relay.Run(relayCtx) })
+	for _, relay := range relays {
+		g.Go(func() error { return relay.Run(relayCtx) })
+	}
 	g.Go(func() error {
 		health.SyncGRPC(gctx, ready, healthSrv, 5*time.Second, "", ordersv1.OrderService_ServiceDesc.ServiceName)
 		return nil
@@ -378,6 +478,17 @@ type config struct {
 	reflection       bool
 	drainDelay       time.Duration
 	outboxInterval   time.Duration
+
+	// Модуль 14.
+	shardDSNs          []logging.Secret
+	replicaDSN         logging.Secret
+	valkeyAddr         string
+	catalogTTL         time.Duration
+	catalogNegativeTTL time.Duration
+	createMaxInFlight  int
+	createMaxQueue     int
+	createQueueTimeout time.Duration
+	adminFeatures      bool
 }
 
 // loadConfig читает и проверяет окружение. Ошибка — сразу при старте
@@ -402,8 +513,40 @@ func loadConfig(getenv func(string) string) (config, error) {
 	default:
 		errs = append(errs, fmt.Errorf("ORDERS_DB=%q: want postgres or sqlite", cfg.db))
 	}
-	if cfg.dsn == "" {
+	for _, d := range strings.Split(getenv("ORDERS_SHARD_DSNS"), ",") {
+		if d = strings.TrimSpace(d); d != "" {
+			cfg.shardDSNs = append(cfg.shardDSNs, logging.Secret(d))
+		}
+	}
+	switch {
+	case len(cfg.shardDSNs) > 0:
+		// Шард 0 — прежняя база: ORDERS_DSN можно не задавать, а если задан,
+		// он должен совпадать с первым шардом (иначе это почти наверняка
+		// ошибка конфигурации, и заказы «исчезли» бы).
+		if cfg.db != "postgres" {
+			errs = append(errs, errors.New("ORDERS_SHARD_DSNS requires ORDERS_DB=postgres"))
+		}
+		if cfg.dsn != "" && cfg.dsn != cfg.shardDSNs[0] {
+			errs = append(errs, errors.New("ORDERS_DSN must be empty or equal to the first of ORDERS_SHARD_DSNS (shard 0)"))
+		}
+		if len(cfg.shardDSNs) > shard.MaxShards {
+			errs = append(errs, fmt.Errorf("ORDERS_SHARD_DSNS: at most %d shards", shard.MaxShards))
+		}
+		cfg.dsn = cfg.shardDSNs[0]
+	case cfg.dsn == "":
 		errs = append(errs, errors.New("ORDERS_DSN is required"))
+	default:
+		cfg.shardDSNs = []logging.Secret{cfg.dsn}
+	}
+	cfg.replicaDSN = logging.Secret(getenv("ORDERS_REPLICA_DSN"))
+	if cfg.replicaDSN != "" && cfg.db != "postgres" {
+		errs = append(errs, errors.New("ORDERS_REPLICA_DSN requires ORDERS_DB=postgres"))
+	}
+	cfg.valkeyAddr = getenv("ORDERS_VALKEY_ADDR")
+	if cfg.valkeyAddr != "" {
+		if _, _, err := net.SplitHostPort(cfg.valkeyAddr); err != nil {
+			errs = append(errs, fmt.Errorf("ORDERS_VALKEY_ADDR=%q: want host:port", cfg.valkeyAddr))
+		}
 	}
 	for name, addr := range map[string]string{"ORDERS_HTTP_ADDR": cfg.httpAddr, "ORDERS_GRPC_ADDR": cfg.grpcAddr, "ORDERS_OPS_ADDR": cfg.opsAddr} {
 		if _, _, err := net.SplitHostPort(addr); err != nil {
@@ -440,6 +583,22 @@ func loadConfig(getenv func(string) string) (config, error) {
 	errs = append(errs, err)
 	cfg.outboxInterval, err = parseDuration(getenv, "ORDERS_OUTBOX_INTERVAL", 500*time.Millisecond)
 	errs = append(errs, err)
+
+	cfg.catalogTTL, err = parseDuration(getenv, "ORDERS_CATALOG_TTL", 5*time.Minute)
+	errs = append(errs, err)
+	cfg.catalogNegativeTTL, err = parseDuration(getenv, "ORDERS_CATALOG_NEGATIVE_TTL", 30*time.Second)
+	errs = append(errs, err)
+	cfg.createMaxInFlight, err = parseInt(getenv, "ORDERS_CREATE_MAX_IN_FLIGHT", 64, 0, 100000)
+	errs = append(errs, err)
+	cfg.createMaxQueue, err = parseInt(getenv, "ORDERS_CREATE_MAX_QUEUE", 64, 0, 100000)
+	errs = append(errs, err)
+	cfg.createQueueTimeout, err = parseDuration(getenv, "ORDERS_CREATE_QUEUE_TIMEOUT", 100*time.Millisecond)
+	errs = append(errs, err)
+	if v := getenv("ORDERS_ADMIN_FEATURES"); v != "" {
+		if cfg.adminFeatures, err = strconv.ParseBool(v); err != nil {
+			errs = append(errs, fmt.Errorf("ORDERS_ADMIN_FEATURES=%q: want true or false", v))
+		}
+	}
 
 	if err := errors.Join(errs...); err != nil {
 		return config{}, fmt.Errorf("config: %w", err)
@@ -486,15 +645,35 @@ type storage interface {
 	Close()
 }
 
-// openStore открывает хранилище нужного типа.
-func openStore(ctx context.Context, cfg config) (storage, error) {
-	switch cfg.db {
-	case "postgres":
-		return asStorage(postgres.Open(ctx, cfg.dsn.Reveal()))
-	case "sqlite":
-		return asStorage(sqlite.Open(ctx, cfg.dsn.Reveal()))
+// openStores открывает хранилища шардов (без шардирования — одно). При
+// ошибке закрывает уже открытые.
+func openStores(ctx context.Context, cfg config) ([]storage, error) {
+	stores := make([]storage, 0, len(cfg.shardDSNs))
+	for i, dsn := range cfg.shardDSNs {
+		st, err := openStore(ctx, cfg.db, dsn)
+		if err != nil {
+			for _, s := range stores {
+				s.Close()
+			}
+			if len(cfg.shardDSNs) > 1 {
+				err = fmt.Errorf("shard %d: %w", i, err)
+			}
+			return nil, err
+		}
+		stores = append(stores, st)
 	}
-	return nil, fmt.Errorf("unknown ORDERS_DB %q", cfg.db) // loadConfig такое не пропустит
+	return stores, nil
+}
+
+// openStore открывает хранилище нужного типа.
+func openStore(ctx context.Context, db string, dsn logging.Secret) (storage, error) {
+	switch db {
+	case "postgres":
+		return asStorage(postgres.Open(ctx, dsn.Reveal()))
+	case "sqlite":
+		return asStorage(sqlite.Open(ctx, dsn.Reveal()))
+	}
+	return nil, fmt.Errorf("unknown ORDERS_DB %q", db) // loadConfig такое не пропустит
 }
 
 // asStorage переводит (*T, error) в (storage, error).

@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"buf.build/go/protovalidate"
 	"google.golang.org/genproto/googleapis/rpc/errdetails"
@@ -24,6 +25,7 @@ import (
 	ordersv1 "gotutor/labs/api/gen/orders/v1"
 	"gotutor/labs/orders/internal/grpcapi"
 	"gotutor/labs/orders/internal/orders"
+	"gotutor/labs/orders/internal/shed"
 	"gotutor/labs/orders/internal/store/sqlite"
 	"gotutor/labs/orders/internal/storetest"
 	"gotutor/labs/platform/grpcx"
@@ -41,6 +43,13 @@ type harness struct {
 // валидацией, gateway через gRPC-соединение (здесь — bufconn).
 func newHarness(t *testing.T) *harness {
 	t.Helper()
+	return newHarnessWith(t, nil)
+}
+
+// newHarnessWith — то же с обёрткой склада и дополнительными опциями
+// gRPC-сервера (interceptor'ы модуля 14).
+func newHarnessWith(t *testing.T, wrapWH func(orders.Warehouse) orders.Warehouse, extra ...grpc.ServerOption) *harness {
+	t.Helper()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	store, err := sqlite.Open(t.Context(), filepath.Join(t.TempDir(), "orders.db"))
 	if err != nil {
@@ -55,13 +64,17 @@ func newHarness(t *testing.T) *harness {
 		t.Fatal(err)
 	}
 	wh := storetest.NewWarehouse()
-	svc := orders.NewService(store, wh, orders.Options{})
+	var whIface orders.Warehouse = wh
+	if wrapWH != nil {
+		whIface = wrapWH(wh)
+	}
+	svc := orders.NewService(store, whIface, orders.Options{})
 
 	v, err := protovalidate.New()
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv := grpcx.NewServer(grpcx.ServerConfig{Logger: log, Validator: v})
+	srv := grpcx.NewServer(grpcx.ServerConfig{Logger: log, Validator: v}, extra...)
 	ordersv1.RegisterOrderServiceServer(srv, grpcapi.New(svc, log))
 	lis := bufconn.Listen(1 << 20)
 	go func() { _ = srv.Serve(lis) }()
@@ -259,5 +272,120 @@ func TestREST(t *testing.T) {
 		if rec.Code != tt.status || e["code"] != tt.code || e["request_id"] == "" {
 			t.Errorf("%s %s = %d %s, want %d %s", tt.method, tt.path, rec.Code, rec.Body, tt.status, tt.code)
 		}
+	}
+}
+
+func TestGetProduct(t *testing.T) {
+	h := newHarness(t)
+	resp, err := h.client.GetProduct(t.Context(), &ordersv1.GetProductRequest{ProductId: h.product.ID})
+	if err != nil || resp.GetProduct().GetName() != "Ручка" || resp.GetProduct().GetPriceCents() != 15000 {
+		t.Fatalf("GetProduct = %v, %v", resp, err)
+	}
+	_, err = h.client.GetProduct(t.Context(), &ordersv1.GetProductRequest{ProductId: 999})
+	if st := status.Convert(err); st.Code() != codes.NotFound || st.Message() != "product not found" {
+		t.Errorf("missing product: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	h.rest.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/products/"+strconv.FormatInt(h.product.ID, 10), nil))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"price_cents":"15000"`) {
+		t.Errorf("REST GET product = %d %s", rec.Code, rec.Body)
+	}
+	rec = httptest.NewRecorder()
+	h.rest.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/products/999", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("REST missing product = %d", rec.Code)
+	}
+}
+
+// TestConsistencyTokenRoundTrip: без реплик токен пустой, а ListOrders
+// принимает поле (REST — параметр запроса) и отдаёт историю.
+func TestConsistencyTokenRoundTrip(t *testing.T) {
+	h := newHarness(t)
+	resp, err := h.client.CreateOrder(t.Context(), &ordersv1.CreateOrderRequest{
+		CustomerId: 7, Items: []*ordersv1.CreateOrderItem{{ProductId: h.product.ID, Quantity: 1}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tok := resp.GetConsistencyToken(); tok != "" {
+		t.Errorf("token without replicas = %q, want empty", tok)
+	}
+	rec := httptest.NewRecorder()
+	h.rest.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/orders?customer_id=7&consistency_token=lsn:0/1", nil))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"customer_id":"7"`) {
+		t.Errorf("REST list with token = %d %s", rec.Code, rec.Body)
+	}
+	rec = httptest.NewRecorder()
+	h.rest.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/orders?customer_id=7&consistency_token="+strings.Repeat("x", 65), nil))
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("REST list with oversized token = %d, want 400", rec.Code)
+	}
+}
+
+// blockingWarehouse держит Reserve, пока тест не закроет gate.
+type blockingWarehouse struct {
+	orders.Warehouse
+	entered chan struct{}
+	gate    chan struct{}
+}
+
+func (w *blockingWarehouse) Reserve(ctx context.Context, id int64, items []orders.ItemRequest) error {
+	w.entered <- struct{}{}
+	<-w.gate
+	return w.Warehouse.Reserve(ctx, id, items)
+}
+
+// TestOverloadRejectsFast: место занято, очереди нет — CreateOrder сразу
+// получает RESOURCE_EXHAUSTED с RetryInfo, REST — 429 с Retry-After.
+// Чтение при этом работает.
+func TestOverloadRejectsFast(t *testing.T) {
+	bw := &blockingWarehouse{entered: make(chan struct{}, 1), gate: make(chan struct{})}
+	limiter := shed.New(shed.Config{MaxInFlight: 1, RetryAfter: 2 * time.Second})
+	h := newHarnessWith(t, func(w orders.Warehouse) orders.Warehouse { bw.Warehouse = w; return bw },
+		grpc.ChainUnaryInterceptor(limiter.UnaryInterceptor(ordersv1.OrderService_CreateOrder_FullMethodName)))
+
+	first := make(chan error, 1)
+	go func() {
+		_, err := h.client.CreateOrder(context.Background(), &ordersv1.CreateOrderRequest{
+			CustomerId: 7, Items: []*ordersv1.CreateOrderItem{{ProductId: h.product.ID, Quantity: 1}},
+		})
+		first <- err
+	}()
+	<-bw.entered // первый заказ занял единственное место
+
+	_, err := h.client.CreateOrder(t.Context(), &ordersv1.CreateOrderRequest{
+		CustomerId: 8, Items: []*ordersv1.CreateOrderItem{{ProductId: h.product.ID, Quantity: 1}},
+	})
+	st := status.Convert(err)
+	if st.Code() != codes.ResourceExhausted {
+		t.Fatalf("second CreateOrder: %v, want ResourceExhausted", err)
+	}
+	if ri, ok := detail[*errdetails.RetryInfo](st); !ok || ri.GetRetryDelay().AsDuration() != 2*time.Second {
+		t.Errorf("RetryInfo = %v", ri)
+	}
+
+	rec := httptest.NewRecorder()
+	h.rest.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/orders",
+		strings.NewReader(`{"customer_id": 9, "items": [{"product_id": `+strconv.FormatInt(h.product.ID, 10)+`, "quantity": 1}]}`)))
+	if rec.Code != http.StatusTooManyRequests || rec.Header().Get("Retry-After") != "2" {
+		t.Errorf("REST = %d Retry-After %q %s, want 429 and 2", rec.Code, rec.Header().Get("Retry-After"), rec.Body)
+	}
+	var body struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil || body.Error.Code != "RESOURCE_EXHAUSTED" {
+		t.Errorf("REST body = %s", rec.Body)
+	}
+
+	// Чтение не ограничено.
+	if _, err := h.client.ListOrders(t.Context(), &ordersv1.ListOrdersRequest{CustomerId: 7}); err != nil {
+		t.Errorf("ListOrders during overload: %v", err)
+	}
+	close(bw.gate)
+	if err := <-first; err != nil {
+		t.Errorf("first CreateOrder: %v", err)
 	}
 }

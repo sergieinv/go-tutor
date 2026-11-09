@@ -1,0 +1,94 @@
+questions:
+  - id: mutex-fraction
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"runtime"
+      )
+
+      func main() {
+      	before := runtime.SetMutexProfileFraction(5)
+      	now := runtime.SetMutexProfileFraction(-1)
+      	fmt.Println(before, now)
+      }
+    options:
+      - text: "0 5"
+        correct: true
+        explain: "Mutex-профиль по умолчанию выключен — доля 0. Функция возвращает предыдущее значение, а отрицательный аргумент только читает текущее, ничего не меняя. Поэтому её вызывают в начале `main`, если профиль нужен."
+      - text: "1 5"
+        explain: "Записывать каждое событие конкуренции по умолчанию было бы дорого для продакшна; профиль включают явно."
+      - text: "0 -1"
+        explain: "Отрицательное значение не устанавливается: оно означает «верни текущее»."
+
+  - id: quiet-cpu
+    kind: single
+    prompt: "Под нагрузкой p99 вырос до 2 секунд, CPU сервиса — 15%, CPU-профиль почти пустой. С чего начать?"
+    options:
+      - text: "С профиля горутин и mutex/block-профилей: запросы, скорее всего, ждут — блокировку, канал или ответ соседа"
+        correct: true
+        explain: "CPU-профиль видит только работу на CPU. Ожидание мьютекса — в mutex/block, ожидание сети и пула соединений — в профиле горутин (сотни горутин с одинаковым стеком) и в трассе."
+      - text: "Снять CPU-профиль подольше: за 30 секунд выборка слишком мала"
+        explain: "Длинный профиль даст ту же картину: горутины, которые ждут, не тратят CPU и в нём не появятся."
+      - text: "Поднять GOGC: высокий p99 — это паузы GC"
+        explain: "Паузы GC видны в CPU-профиле (воркеры маркировки, mark assist) и в трассе. При 15% CPU и пустом профиле GC — маловероятная причина."
+
+  - id: pprof-exposure
+    kind: single
+    prompt: "Как подключить `net/http/pprof` к сервису с публичным API на `:8080`?"
+    options:
+      - text: "Отдельный `http.Server` со своим `ServeMux` на `127.0.0.1:6060` (или внутреннем адресе), обработчики `pprof.Index`, `pprof.Profile` и т. д. регистрируются явно"
+        correct: true
+        explain: "Публичный сервер ничего не знает о профилях, а служебный порт снаружи недоступен — профиль забирают через `port-forward` или SSH-туннель."
+      - text: "`import _ \"net/http/pprof\"` и `http.ListenAndServe(\":8080\", nil)`"
+        explain: "Пустой импорт регистрирует обработчики в `DefaultServeMux`, и с `Handler: nil` публичный сервер отдаёт профили, стеки и аргументы командной строки всему интернету."
+      - text: "Регистрировать `/debug/pprof/` на публичном mux, но за проверкой заголовка `X-Debug: 1`"
+        explain: "Секретный заголовок — не аутентификация: его находят перебором или из утёкшего конфига, а запрос CPU-профиля ещё и нагружает процесс."
+
+  - id: flight-recorder
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"io"
+      	"runtime/trace"
+      )
+
+      func main() {
+      	fr := trace.NewFlightRecorder(trace.FlightRecorderConfig{})
+      	_, err := fr.WriteTo(io.Discard)
+      	fmt.Println(err != nil)
+      	fmt.Println(fr.Start() == nil, fr.Enabled())
+      	other := trace.NewFlightRecorder(trace.FlightRecorderConfig{})
+      	fmt.Println(other.Start() != nil)
+      	fr.Stop()
+      }
+    options:
+      - text: "true\ntrue true\ntrue"
+        correct: true
+        explain: "Снимок у незапущенного самописца — ошибка. После `Start` он активен. Второй самописец запустить нельзя: в процессе может работать только один `FlightRecorder` (хотя одновременно с ним разрешён обычный `trace.Start`)."
+      - text: "false\ntrue true\nfalse"
+        explain: "`WriteTo` до `Start` писать нечего — это ошибка, а не пустой снимок. И второй `FlightRecorder` одновременно с первым не запускается."
+      - text: "true\ntrue true\nfalse"
+        explain: "Ограничение «один самописец на процесс» действует: `Start` второго возвращает ошибку."
+
+  - id: profile-meaning
+    kind: multiple
+    prompt: "Какие утверждения о профилях верны?"
+    options:
+      - text: "Mutex-профиль приписывает ожидание стеку того, кто держал блокировку (место `Unlock`)"
+        correct: true
+        explain: "Так сразу видно, какая критическая секция виновата: `list` по этой функции покажет строки под мьютексом."
+      - text: "Block-профиль показывает горутины, ждавшие на каналах, `select`, `Lock` и `WaitGroup`"
+        correct: true
+        explain: "Это профиль ждущих: стек — место ожидания, вес — сколько ждали."
+      - text: "Ожидание ответа от базы по сети попадает в block-профиль"
+        explain: "Сетевое ожидание идёт через netpoller и в block-профиль не попадает. Его видно в профиле горутин и в трассе."
+      - text: "Горутина, ждущая мьютекс, появляется в CPU-профиле в `sync.(*Mutex).Lock`"
+        explain: "Ждущая горутина припаркована и CPU не тратит — в CPU-профиле её нет (кроме короткого активного ожидания перед парковкой)."

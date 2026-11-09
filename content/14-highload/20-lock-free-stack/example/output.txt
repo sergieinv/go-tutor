@@ -1,0 +1,7 @@
+=== RUN   TestLIFO
+    main_test.go:21: вытолкнуто: [3 2 1]
+--- PASS: TestLIFO (0.00s)
+=== RUN   TestConcurrent
+    main_test.go:75: вытолкнуто 8000 из 8000, потеряно или повторено: 0
+--- PASS: TestConcurrent (0.00s)
+PASS

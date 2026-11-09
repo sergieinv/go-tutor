@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"math"
 	"net/http"
+	"strconv"
 
 	"github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
 	semconv "go.opentelemetry.io/otel/semconv/v1.43.0"
@@ -12,7 +14,7 @@ import (
 	"google.golang.org/genproto/googleapis/rpc/code"
 	// Типы google.rpc.BadRequest, ErrorInfo… должны быть в реестре protobuf,
 	// иначе protojson не сможет развернуть их из Any в details.
-	_ "google.golang.org/genproto/googleapis/rpc/errdetails"
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
@@ -96,6 +98,15 @@ func gatewayErrorHandler(log *slog.Logger) runtime.ErrorHandlerFunc {
 		for _, d := range st.Proto().GetDetails() {
 			if b, err := protojson.Marshal(d); err == nil {
 				body.Details = append(body.Details, json.RawMessage(b))
+			}
+		}
+		// RetryInfo (перегрузка — 429, недоступность — 503) дублируется
+		// стандартным заголовком Retry-After в целых секундах: его понимают
+		// HTTP-клиенты и прокси, которые не разбирают тело ответа.
+		for _, d := range st.Details() {
+			if ri, ok := d.(*errdetails.RetryInfo); ok && ri.GetRetryDelay() != nil {
+				secs := int64(math.Ceil(ri.GetRetryDelay().AsDuration().Seconds()))
+				w.Header().Set("Retry-After", strconv.FormatInt(max(secs, 1), 10))
 			}
 		}
 		httpStatus := runtime.HTTPStatusFromCode(st.Code())

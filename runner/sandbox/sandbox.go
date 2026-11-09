@@ -96,12 +96,12 @@ type RunResult struct {
 	BuildOutput string `json:"buildOutput,omitempty"`
 	// CompilerOutput — диагностика компилятора при успешной сборке с GCFlags.
 	CompilerOutput string `json:"compilerOutput,omitempty"`
-	Stdout      string `json:"stdout"`
-	Stderr      string `json:"stderr"`
-	ExitCode    int    `json:"exitCode"`
-	TimedOut    bool   `json:"timedOut"`
-	Truncated   bool   `json:"truncated"`
-	DurationMs  int64  `json:"durationMs"`
+	Stdout         string `json:"stdout"`
+	Stderr         string `json:"stderr"`
+	ExitCode       int    `json:"exitCode"`
+	TimedOut       bool   `json:"timedOut"`
+	Truncated      bool   `json:"truncated"`
+	DurationMs     int64  `json:"durationMs"`
 }
 
 type Executor struct {

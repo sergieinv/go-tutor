@@ -1,0 +1,11 @@
+строки по партициям: orders_2026_01=744 orders_2026_02=672 orders_2026_03=744 orders_2026_04=720 orders_default=1
+индексов на партициях: 5
+10–20 февраля: orders_2026_02
+только покупатель: orders_2026_01, orders_2026_02, orders_2026_03, orders_2026_04, orders_default
+date_trunc над ключом: orders_2026_01, orders_2026_02, orders_2026_03, orders_2026_04, orders_default
+обобщённый план: orders_2026_03 (отброшено при выполнении: 4)
+PRIMARY KEY (id): 0A000 unique constraint on partitioned table must include all partitioning columns
+PRIMARY KEY (id, created_at): ок
+строк до и после отсоединения января: 2881 2137
+корзины по hash-партициям: carts_0=259 carts_1=234 carts_2=276 carts_3=231
+корзина покупателя: carts_2

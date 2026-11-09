@@ -348,10 +348,15 @@ func (x *CreateOrderItem) GetQuantity() int32 {
 }
 
 type CreateOrderResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Order         *Order                 `protobuf:"bytes,1,opt,name=order,proto3" json:"order,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Order *Order                 `protobuf:"bytes,1,opt,name=order,proto3" json:"order,omitempty"`
+	// Непрозрачный токен согласованности: позиция записи в базе. Передайте
+	// его в ListOrdersRequest.consistency_token, чтобы история точно
+	// содержала этот заказ. Пустой — сервис не различает позиции (нет
+	// реплик), передавать нечего.
+	ConsistencyToken string `protobuf:"bytes,2,opt,name=consistency_token,json=consistencyToken,proto3" json:"consistency_token,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *CreateOrderResponse) Reset() {
@@ -389,6 +394,13 @@ func (x *CreateOrderResponse) GetOrder() *Order {
 		return x.Order
 	}
 	return nil
+}
+
+func (x *CreateOrderResponse) GetConsistencyToken() string {
+	if x != nil {
+		return x.ConsistencyToken
+	}
+	return ""
 }
 
 type GetOrderRequest struct {
@@ -486,9 +498,13 @@ type ListOrdersRequest struct {
 	PageSize int32 `protobuf:"varint,2,opt,name=page_size,json=pageSize,proto3" json:"page_size,omitempty"`
 	// Непрозрачный курсор из next_page_token предыдущего ответа. Действует
 	// только с тем же customer_id.
-	PageToken     string `protobuf:"bytes,3,opt,name=page_token,json=pageToken,proto3" json:"page_token,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	PageToken string `protobuf:"bytes,3,opt,name=page_token,json=pageToken,proto3" json:"page_token,omitempty"`
+	// Токен из ответа CreateOrder/CancelOrder (read-your-writes): история
+	// читается с реплики, только если реплика уже применила эту запись,
+	// иначе — с основной базы. Пустой — подойдёт любая реплика.
+	ConsistencyToken string `protobuf:"bytes,4,opt,name=consistency_token,json=consistencyToken,proto3" json:"consistency_token,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *ListOrdersRequest) Reset() {
@@ -538,6 +554,13 @@ func (x *ListOrdersRequest) GetPageSize() int32 {
 func (x *ListOrdersRequest) GetPageToken() string {
 	if x != nil {
 		return x.PageToken
+	}
+	return ""
+}
+
+func (x *ListOrdersRequest) GetConsistencyToken() string {
+	if x != nil {
+		return x.ConsistencyToken
 	}
 	return ""
 }
@@ -640,10 +663,12 @@ func (x *CancelOrderRequest) GetOrderId() int64 {
 }
 
 type CancelOrderResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Order         *Order                 `protobuf:"bytes,1,opt,name=order,proto3" json:"order,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Order *Order                 `protobuf:"bytes,1,opt,name=order,proto3" json:"order,omitempty"`
+	// То же, что CreateOrderResponse.consistency_token.
+	ConsistencyToken string `protobuf:"bytes,2,opt,name=consistency_token,json=consistencyToken,proto3" json:"consistency_token,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *CancelOrderResponse) Reset() {
@@ -683,6 +708,163 @@ func (x *CancelOrderResponse) GetOrder() *Order {
 	return nil
 }
 
+func (x *CancelOrderResponse) GetConsistencyToken() string {
+	if x != nil {
+		return x.ConsistencyToken
+	}
+	return ""
+}
+
+// Product — товар каталога.
+type Product struct {
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	ProductId int64                  `protobuf:"varint,1,opt,name=product_id,json=productId,proto3" json:"product_id,omitempty"`
+	Name      string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	// Текущая цена в копейках. В заказе фиксируется цена на момент заказа.
+	PriceCents    int64 `protobuf:"varint,3,opt,name=price_cents,json=priceCents,proto3" json:"price_cents,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Product) Reset() {
+	*x = Product{}
+	mi := &file_orders_v1_orders_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Product) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Product) ProtoMessage() {}
+
+func (x *Product) ProtoReflect() protoreflect.Message {
+	mi := &file_orders_v1_orders_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Product.ProtoReflect.Descriptor instead.
+func (*Product) Descriptor() ([]byte, []int) {
+	return file_orders_v1_orders_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *Product) GetProductId() int64 {
+	if x != nil {
+		return x.ProductId
+	}
+	return 0
+}
+
+func (x *Product) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *Product) GetPriceCents() int64 {
+	if x != nil {
+		return x.PriceCents
+	}
+	return 0
+}
+
+type GetProductRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ProductId     int64                  `protobuf:"varint,1,opt,name=product_id,json=productId,proto3" json:"product_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetProductRequest) Reset() {
+	*x = GetProductRequest{}
+	mi := &file_orders_v1_orders_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetProductRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetProductRequest) ProtoMessage() {}
+
+func (x *GetProductRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_orders_v1_orders_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetProductRequest.ProtoReflect.Descriptor instead.
+func (*GetProductRequest) Descriptor() ([]byte, []int) {
+	return file_orders_v1_orders_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *GetProductRequest) GetProductId() int64 {
+	if x != nil {
+		return x.ProductId
+	}
+	return 0
+}
+
+type GetProductResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Product       *Product               `protobuf:"bytes,1,opt,name=product,proto3" json:"product,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetProductResponse) Reset() {
+	*x = GetProductResponse{}
+	mi := &file_orders_v1_orders_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetProductResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetProductResponse) ProtoMessage() {}
+
+func (x *GetProductResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_orders_v1_orders_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetProductResponse.ProtoReflect.Descriptor instead.
+func (*GetProductResponse) Descriptor() ([]byte, []int) {
+	return file_orders_v1_orders_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *GetProductResponse) GetProduct() *Product {
+	if x != nil {
+		return x.Product
+	}
+	return nil
+}
+
 var File_orders_v1_orders_proto protoreflect.FileDescriptor
 
 const file_orders_v1_orders_proto_rawDesc = "" +
@@ -715,30 +897,44 @@ const file_orders_v1_orders_proto_rawDesc = "" +
 	"\n" +
 	"product_id\x18\x01 \x01(\x03B\a\xbaH\x04\"\x02 \x00R\tproductId\x12&\n" +
 	"\bquantity\x18\x02 \x01(\x05B\n" +
-	"\xbaH\a\x1a\x05\x18\xe8\a(\x01R\bquantity\"=\n" +
+	"\xbaH\a\x1a\x05\x18\xe8\a(\x01R\bquantity\"j\n" +
 	"\x13CreateOrderResponse\x12&\n" +
-	"\x05order\x18\x01 \x01(\v2\x10.orders.v1.OrderR\x05order\"5\n" +
+	"\x05order\x18\x01 \x01(\v2\x10.orders.v1.OrderR\x05order\x12+\n" +
+	"\x11consistency_token\x18\x02 \x01(\tR\x10consistencyToken\"5\n" +
 	"\x0fGetOrderRequest\x12\"\n" +
 	"\border_id\x18\x01 \x01(\x03B\a\xbaH\x04\"\x02 \x00R\aorderId\":\n" +
 	"\x10GetOrderResponse\x12&\n" +
-	"\x05order\x18\x01 \x01(\v2\x10.orders.v1.OrderR\x05order\"\x8e\x01\n" +
+	"\x05order\x18\x01 \x01(\v2\x10.orders.v1.OrderR\x05order\"\xc4\x01\n" +
 	"\x11ListOrdersRequest\x12(\n" +
 	"\vcustomer_id\x18\x01 \x01(\x03B\a\xbaH\x04\"\x02 \x00R\n" +
 	"customerId\x12&\n" +
 	"\tpage_size\x18\x02 \x01(\x05B\t\xbaH\x06\x1a\x04\x18d(\x00R\bpageSize\x12'\n" +
 	"\n" +
-	"page_token\x18\x03 \x01(\tB\b\xbaH\x05r\x03\x18\x80\x01R\tpageToken\"f\n" +
+	"page_token\x18\x03 \x01(\tB\b\xbaH\x05r\x03\x18\x80\x01R\tpageToken\x124\n" +
+	"\x11consistency_token\x18\x04 \x01(\tB\a\xbaH\x04r\x02\x18@R\x10consistencyToken\"f\n" +
 	"\x12ListOrdersResponse\x12(\n" +
 	"\x06orders\x18\x01 \x03(\v2\x10.orders.v1.OrderR\x06orders\x12&\n" +
 	"\x0fnext_page_token\x18\x02 \x01(\tR\rnextPageToken\"8\n" +
 	"\x12CancelOrderRequest\x12\"\n" +
-	"\border_id\x18\x01 \x01(\x03B\a\xbaH\x04\"\x02 \x00R\aorderId\"=\n" +
+	"\border_id\x18\x01 \x01(\x03B\a\xbaH\x04\"\x02 \x00R\aorderId\"j\n" +
 	"\x13CancelOrderResponse\x12&\n" +
-	"\x05order\x18\x01 \x01(\v2\x10.orders.v1.OrderR\x05order*b\n" +
+	"\x05order\x18\x01 \x01(\v2\x10.orders.v1.OrderR\x05order\x12+\n" +
+	"\x11consistency_token\x18\x02 \x01(\tR\x10consistencyToken\"]\n" +
+	"\aProduct\x12\x1d\n" +
+	"\n" +
+	"product_id\x18\x01 \x01(\x03R\tproductId\x12\x12\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\x12\x1f\n" +
+	"\vprice_cents\x18\x03 \x01(\x03R\n" +
+	"priceCents\";\n" +
+	"\x11GetProductRequest\x12&\n" +
+	"\n" +
+	"product_id\x18\x01 \x01(\x03B\a\xbaH\x04\"\x02 \x00R\tproductId\"B\n" +
+	"\x12GetProductResponse\x12,\n" +
+	"\aproduct\x18\x01 \x01(\v2\x12.orders.v1.ProductR\aproduct*b\n" +
 	"\vOrderStatus\x12\x1c\n" +
 	"\x18ORDER_STATUS_UNSPECIFIED\x10\x00\x12\x19\n" +
 	"\x15ORDER_STATUS_RESERVED\x10\x01\x12\x1a\n" +
-	"\x16ORDER_STATUS_CANCELLED\x10\x022\xad\x03\n" +
+	"\x16ORDER_STATUS_CANCELLED\x10\x022\x9b\x04\n" +
 	"\fOrderService\x12c\n" +
 	"\vCreateOrder\x12\x1d.orders.v1.CreateOrderRequest\x1a\x1e.orders.v1.CreateOrderResponse\"\x15\x82\xd3\xe4\x93\x02\x0f:\x01*\"\n" +
 	"/v1/orders\x12b\n" +
@@ -746,7 +942,9 @@ const file_orders_v1_orders_proto_rawDesc = "" +
 	"\n" +
 	"ListOrders\x12\x1c.orders.v1.ListOrdersRequest\x1a\x1d.orders.v1.ListOrdersResponse\"\x12\x82\xd3\xe4\x93\x02\f\x12\n" +
 	"/v1/orders\x12u\n" +
-	"\vCancelOrder\x12\x1d.orders.v1.CancelOrderRequest\x1a\x1e.orders.v1.CancelOrderResponse\"'\x82\xd3\xe4\x93\x02!:\x01*\"\x1c/v1/orders/{order_id}:cancelB)Z'gotutor/labs/api/gen/orders/v1;ordersv1b\x06proto3"
+	"\vCancelOrder\x12\x1d.orders.v1.CancelOrderRequest\x1a\x1e.orders.v1.CancelOrderResponse\"'\x82\xd3\xe4\x93\x02!:\x01*\"\x1c/v1/orders/{order_id}:cancel\x12l\n" +
+	"\n" +
+	"GetProduct\x12\x1c.orders.v1.GetProductRequest\x1a\x1d.orders.v1.GetProductResponse\"!\x82\xd3\xe4\x93\x02\x1b\x12\x19/v1/products/{product_id}B)Z'gotutor/labs/api/gen/orders/v1;ordersv1b\x06proto3"
 
 var (
 	file_orders_v1_orders_proto_rawDescOnce sync.Once
@@ -761,7 +959,7 @@ func file_orders_v1_orders_proto_rawDescGZIP() []byte {
 }
 
 var file_orders_v1_orders_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_orders_v1_orders_proto_msgTypes = make([]protoimpl.MessageInfo, 11)
+var file_orders_v1_orders_proto_msgTypes = make([]protoimpl.MessageInfo, 14)
 var file_orders_v1_orders_proto_goTypes = []any{
 	(OrderStatus)(0),              // 0: orders.v1.OrderStatus
 	(*Order)(nil),                 // 1: orders.v1.Order
@@ -775,31 +973,37 @@ var file_orders_v1_orders_proto_goTypes = []any{
 	(*ListOrdersResponse)(nil),    // 9: orders.v1.ListOrdersResponse
 	(*CancelOrderRequest)(nil),    // 10: orders.v1.CancelOrderRequest
 	(*CancelOrderResponse)(nil),   // 11: orders.v1.CancelOrderResponse
-	(*timestamppb.Timestamp)(nil), // 12: google.protobuf.Timestamp
+	(*Product)(nil),               // 12: orders.v1.Product
+	(*GetProductRequest)(nil),     // 13: orders.v1.GetProductRequest
+	(*GetProductResponse)(nil),    // 14: orders.v1.GetProductResponse
+	(*timestamppb.Timestamp)(nil), // 15: google.protobuf.Timestamp
 }
 var file_orders_v1_orders_proto_depIdxs = []int32{
 	0,  // 0: orders.v1.Order.status:type_name -> orders.v1.OrderStatus
 	2,  // 1: orders.v1.Order.items:type_name -> orders.v1.OrderItem
-	12, // 2: orders.v1.Order.create_time:type_name -> google.protobuf.Timestamp
-	12, // 3: orders.v1.Order.update_time:type_name -> google.protobuf.Timestamp
+	15, // 2: orders.v1.Order.create_time:type_name -> google.protobuf.Timestamp
+	15, // 3: orders.v1.Order.update_time:type_name -> google.protobuf.Timestamp
 	4,  // 4: orders.v1.CreateOrderRequest.items:type_name -> orders.v1.CreateOrderItem
 	1,  // 5: orders.v1.CreateOrderResponse.order:type_name -> orders.v1.Order
 	1,  // 6: orders.v1.GetOrderResponse.order:type_name -> orders.v1.Order
 	1,  // 7: orders.v1.ListOrdersResponse.orders:type_name -> orders.v1.Order
 	1,  // 8: orders.v1.CancelOrderResponse.order:type_name -> orders.v1.Order
-	3,  // 9: orders.v1.OrderService.CreateOrder:input_type -> orders.v1.CreateOrderRequest
-	6,  // 10: orders.v1.OrderService.GetOrder:input_type -> orders.v1.GetOrderRequest
-	8,  // 11: orders.v1.OrderService.ListOrders:input_type -> orders.v1.ListOrdersRequest
-	10, // 12: orders.v1.OrderService.CancelOrder:input_type -> orders.v1.CancelOrderRequest
-	5,  // 13: orders.v1.OrderService.CreateOrder:output_type -> orders.v1.CreateOrderResponse
-	7,  // 14: orders.v1.OrderService.GetOrder:output_type -> orders.v1.GetOrderResponse
-	9,  // 15: orders.v1.OrderService.ListOrders:output_type -> orders.v1.ListOrdersResponse
-	11, // 16: orders.v1.OrderService.CancelOrder:output_type -> orders.v1.CancelOrderResponse
-	13, // [13:17] is the sub-list for method output_type
-	9,  // [9:13] is the sub-list for method input_type
-	9,  // [9:9] is the sub-list for extension type_name
-	9,  // [9:9] is the sub-list for extension extendee
-	0,  // [0:9] is the sub-list for field type_name
+	12, // 9: orders.v1.GetProductResponse.product:type_name -> orders.v1.Product
+	3,  // 10: orders.v1.OrderService.CreateOrder:input_type -> orders.v1.CreateOrderRequest
+	6,  // 11: orders.v1.OrderService.GetOrder:input_type -> orders.v1.GetOrderRequest
+	8,  // 12: orders.v1.OrderService.ListOrders:input_type -> orders.v1.ListOrdersRequest
+	10, // 13: orders.v1.OrderService.CancelOrder:input_type -> orders.v1.CancelOrderRequest
+	13, // 14: orders.v1.OrderService.GetProduct:input_type -> orders.v1.GetProductRequest
+	5,  // 15: orders.v1.OrderService.CreateOrder:output_type -> orders.v1.CreateOrderResponse
+	7,  // 16: orders.v1.OrderService.GetOrder:output_type -> orders.v1.GetOrderResponse
+	9,  // 17: orders.v1.OrderService.ListOrders:output_type -> orders.v1.ListOrdersResponse
+	11, // 18: orders.v1.OrderService.CancelOrder:output_type -> orders.v1.CancelOrderResponse
+	14, // 19: orders.v1.OrderService.GetProduct:output_type -> orders.v1.GetProductResponse
+	15, // [15:20] is the sub-list for method output_type
+	10, // [10:15] is the sub-list for method input_type
+	10, // [10:10] is the sub-list for extension type_name
+	10, // [10:10] is the sub-list for extension extendee
+	0,  // [0:10] is the sub-list for field type_name
 }
 
 func init() { file_orders_v1_orders_proto_init() }
@@ -813,7 +1017,7 @@ func file_orders_v1_orders_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_orders_v1_orders_proto_rawDesc), len(file_orders_v1_orders_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   11,
+			NumMessages:   14,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

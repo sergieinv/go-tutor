@@ -1,0 +1,8 @@
+=== RUN   TestLayout
+    main_test.go:16: Packed: 128 байт, шаг 8
+    main_test.go:17: Padded: 2048 байт, шаг 128
+--- PASS: TestLayout (0.00s)
+=== RUN   TestConcurrentInc
+    main_test.go:38: Packed: 80000, Padded: 80000
+--- PASS: TestConcurrentInc (0.00s)
+PASS

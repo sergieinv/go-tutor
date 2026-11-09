@@ -1,0 +1,7 @@
+=== RUN   TestSPSCOrder
+    main_test.go:35: получено 20000 значений по порядку
+--- PASS: TestSPSCOrder (0.00s)
+=== RUN   TestMPSC
+    main_test.go:70: получено 20000 значений, порядок каждого производителя сохранён
+--- PASS: TestMPSC (0.00s)
+PASS

@@ -28,7 +28,7 @@ export interface RunnerFlags {
   gcflags?: string;
   gotraceback?: "none" | "single" | "all" | "system";
   /** Базы профиля labs: runner создаёт на запуск пустую базу и передаёт DSN в окружении. */
-  labs?: ("postgres" | "mysql")[];
+  labs?: ("postgres" | "mysql" | "valkey")[];
 }
 
 export interface LessonMeta {

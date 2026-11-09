@@ -1,0 +1,16 @@
+=== RUN   TestSameJSON
+    main_test.go:41: ответ: {"count":2,"order":{"id":42,"customer":"Анна \"VIP\"","items":[{"sku":"A-1","qty":2,"price":1999},{"sku":"B-7","qty":1,"price":54900}]}}
+--- PASS: TestSameJSON (0.00s)
+=== RUN   TestAllocs
+    main_test.go:58: map[string]any выделяет больше, чем структура: true
+    main_test.go:59: renderFast: 0 аллокаций
+    main_test.go:67: fmt.Sprintf выделяет память: true; strconv.AppendInt: 0 аллокаций
+--- PASS: TestAllocs (0.00s)
+=== RUN   TestPresize
+    main_test.go:100: срез: без предразмера больше аллокаций: true; с предразмером: 1
+    main_test.go:116: map: подсказка размера уменьшает число аллокаций: true
+--- PASS: TestPresize (0.00s)
+=== RUN   TestHandler
+    main_test.go:126: статус 200, application/json
+--- PASS: TestHandler (0.00s)
+PASS

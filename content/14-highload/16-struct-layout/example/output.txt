@@ -1,0 +1,7 @@
+orderBad: 48 байт, orderGood: 24 байт
+смещения в orderBad: id 8 qty 20 amount 32
+выравнивание: int64 8 int32 4 bool 1 orderBad 8
+struct{} в конце: 16 в начале: 8
+time.Time: 24 int64: 8
+выделений на 1000 заказов: []orderGood 1 []*orderGood 1001
+байт пройдено ради суммы amount: AoS 48000 SoA 8000

@@ -1,0 +1,9 @@
+N+1: запросов 21
+батч: запросов 2 | имена совпали: true
+OFFSET 10000: Limit → Index Only Scan Backward using orders_feed, строк из индекса: 10020
+keyset: Limit → Index Only Scan Backward using orders_feed, строк из индекса: 20
+пул занят, запрос с дедлайном 100 мс: true | отменённых ожиданий: 1
+8 запросов на 2 соединениях: ошибок 0 | ждали соединение: true | открыто: 2
+контекст: DeadlineExceeded=true SQLSTATE=- новое соединение=true
+statement_timeout: DeadlineExceeded=false SQLSTATE=57014 новое соединение=false
+контекст + CancelRequest: DeadlineExceeded=false SQLSTATE=57014 новое соединение=false

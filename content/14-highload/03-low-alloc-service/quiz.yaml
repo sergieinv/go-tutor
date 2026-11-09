@@ -1,0 +1,101 @@
+questions:
+  - id: append-int
+    kind: output
+    prompt: "Что выведет программа? (Автоматический GC выключен, чтобы счёт был точным.)"
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"runtime/debug"
+      	"strconv"
+      	"testing"
+      )
+
+      var sink string
+
+      func main() {
+      	debug.SetGCPercent(-1)
+      	buf := make([]byte, 0, 64)
+      	id := int64(123456)
+      	a := testing.AllocsPerRun(100, func() {
+      		buf = strconv.AppendInt(buf[:0], id, 10)
+      	})
+      	b := testing.AllocsPerRun(100, func() {
+      		sink = strconv.FormatInt(id, 10)
+      	})
+      	fmt.Println(a, b, string(buf) == sink)
+      }
+    options:
+      - text: "0 1 true"
+        correct: true
+        explain: "`AppendInt` пишет цифры в существующий буфер с запасом ёмкости — выделять нечего. `FormatInt` возвращает новую строку: одна аллокация на вызов (кроме маленьких чисел до 100 — для них строки берутся из готовой таблицы)."
+      - text: "0 0 true"
+        explain: "Строка, которую возвращает `FormatInt`, сохраняется в глобальную `sink` и не может жить на стеке — для шестизначного числа она выделяется в куче."
+      - text: "1 1 true"
+        explain: "Ёмкость `buf` — 64 байта, шести цифрам хватает: `append` не перевыделяет массив."
+
+  - id: pool-leak
+    kind: output
+    prompt: "Что выведет программа? (`GOMAXPROCS(1)` — чтобы горутина не сменила P между вызовами.)"
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"runtime"
+      	"strconv"
+      	"sync"
+      )
+
+      var pool = sync.Pool{New: func() any { b := make([]byte, 0, 64); return &b }}
+
+      func render(id int) []byte {
+      	bp := pool.Get().(*[]byte)
+      	b := strconv.AppendInt((*bp)[:0], int64(id), 10)
+      	*bp = b
+      	pool.Put(bp)
+      	return b
+      }
+
+      func main() {
+      	runtime.GOMAXPROCS(1)
+      	a := render(111)
+      	b := render(222)
+      	fmt.Println(string(a), string(b))
+      }
+    options:
+      - text: "222 222"
+        correct: true
+        explain: "`render` возвращает срез, который указывает в массив буфера из пула, хотя буфер уже возвращён. Второй вызов получил тот же буфер и перезаписал байты — первый ответ «превратился» во второй. Копируйте результат (`string(b)`, `bytes.Clone`) или пишите в `io.Writer` до `Put`."
+      - text: "111 222"
+        explain: "Так было бы, если бы `render` возвращала копию. Здесь `a` и `b` разделяют один массив из пула."
+      - text: "111 111"
+        explain: "Второй вызов пишет в тот же массив поверх старых байт, а не наоборот: последним записан `222`."
+
+  - id: map-any
+    kind: single
+    prompt: "Обработчик отвечает `json.NewEncoder(w).Encode(map[string]any{\"order\": o, \"count\": n})`. Что из этого — главная лишняя работа на каждом запросе?"
+    options:
+      - text: "Создание map, упаковка значений в интерфейсы и сортировка ключей при кодировании"
+        correct: true
+        explain: "Типизированная структура ответа убирает всё это сразу: поля известны заранее, ключи идут в порядке полей, ничего не упаковывается. Рефлексия по полям при этом остаётся."
+      - text: "Создание `json.Encoder`: у него внутри большой буфер, который выделяется каждый раз"
+        explain: "Буфер кодировщик берёт из внутреннего пула, а сама структура `Encoder` в таком вызове обычно не покидает стек. Для простой структуры `Encode` в установившемся режиме почти не выделяет."
+      - text: "`Write` в `http.ResponseWriter` без буферизации"
+        explain: "`ResponseWriter` уже буферизован: мелкие записи копятся и уходят пачками."
+
+  - id: gc-tuning
+    kind: multiple
+    prompt: "Сервис тратит 20% CPU на GC, живая куча — 300 МБ, лимит памяти контейнера — 2 ГБ. Что разумно?"
+    options:
+      - text: "Найти горячие источники аллокаций по `alloc_space` и убрать лишние выделения в них"
+        correct: true
+        explain: "Частота сборок пропорциональна скорости выделений: меньше аллокаций — реже GC, независимо от настроек."
+      - text: "Поставить `GOMEMLIMIT` около 1800 МБ и поднять `GOGC`"
+        correct: true
+        explain: "Куче разрешено расти до лимита, и сборки идут реже. Запас ниже лимита контейнера оставляют под стеки, буферы ОС и всё, что не входит в кучу."
+      - text: "`GOGC=off` без `GOMEMLIMIT`"
+        explain: "Без лимита куча будет расти, пока процесс не убьёт OOM killer. `GOGC=off` имеет смысл только вместе с `GOMEMLIMIT`."
+      - text: "Вызывать `runtime.GC()` после каждого запроса"
+        explain: "Принудительная сборка на каждый запрос — это полный цикл маркировки тысячи раз в секунду: CPU на GC вырастет многократно."

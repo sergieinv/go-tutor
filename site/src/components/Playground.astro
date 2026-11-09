@@ -17,10 +17,14 @@ interface Props {
   gcflags?: string;
   gotraceback?: string;
   vulncheck?: boolean;
-  labs?: ("postgres" | "mysql")[];
+  labs?: ("postgres" | "mysql" | "valkey")[];
 }
 const { lesson, example, race, gcflags, gotraceback, vulncheck, labs = [] } = Astro.props;
-const labInfo = { postgres: ["PostgreSQL", "POSTGRES_DSN"], mysql: ["MySQL", "MYSQL_DSN"] } as const;
+const labInfo = {
+  postgres: ["PostgreSQL", "POSTGRES_DSN"],
+  mysql: ["MySQL", "MYSQL_DSN"],
+  valkey: ["Valkey", "VALKEY_ADDR"],
+} as const;
 const editable: Record<string, string> = {
   ...example.protos,
   "main.go": example.source,
@@ -85,6 +89,15 @@ const files = example.files;
         учебник командой <code>docker compose --profile labs up</code>. На каждый запуск runner создаёт пустую базу и
         передаёт её адрес в {labs.map((l, i) => <>{i > 0 && " и "}<code>{labInfo[l][1]}</code></>)}, а после запуска
         удаляет.
+        {
+          labs.includes("valkey") && (
+            <>
+              {" "}
+              В Valkey вместо базы — пользователь запуска, которому доступны только ключи с префиксом{" "}
+              <code>VALKEY_PREFIX</code>.
+            </>
+          )
+        }
       </p>
     )
   }

@@ -42,12 +42,20 @@ type Options struct {
 	// ReleaseTimeout — сколько ждать возврата резерва (компенсации или
 	// отмены), если клиент уже ушёл; 0 — 10 секунд.
 	ReleaseTimeout time.Duration
+	// Catalog — откуда брать товары и цены; nil — из store (без кеша).
+	Catalog Catalog
+	// Router — шарды заказов; nil — все заказы в store.
+	Router Router
+	// History — чтение истории покупателя; nil — с основной базы шарда.
+	History History
 }
 
 // Service — бизнес-операции с заказами. Зависимости передаются в
 // конструктор явно, без DI-контейнера: граф собирается в main.
 type Service struct {
-	store          Store
+	catalog        Catalog
+	router         Router
+	history        History
 	warehouse      Warehouse
 	now            func() time.Time
 	log            *slog.Logger
@@ -73,8 +81,22 @@ func NewService(store Store, warehouse Warehouse, opts Options) *Service {
 	if timeout == 0 {
 		timeout = 10 * time.Second
 	}
+	var catalog Catalog = store
+	if opts.Catalog != nil {
+		catalog = opts.Catalog
+	}
+	var router Router = singleRouter{store: store}
+	if opts.Router != nil {
+		router = opts.Router
+	}
+	var history History = primaryHistory{router: router}
+	if opts.History != nil {
+		history = opts.History
+	}
 	return &Service{
-		store:     store,
+		catalog:   catalog,
+		router:    router,
+		history:   history,
 		warehouse: warehouse,
 		// PostgreSQL хранит время с точностью до микросекунд. Обрезаем
 		// сразу, чтобы заказ, возвращённый из CreateOrder, совпадал с
@@ -112,8 +134,10 @@ func (s *Service) CreateOrder(ctx context.Context, req CreateOrderRequest) (Orde
 		ids[i] = it.ProductID
 	}
 
-	// Цены — из своего каталога, одним запросом (без N+1).
-	products, err := s.store.ProductsByIDs(ctx, ids)
+	// Цены — из своего каталога, одним запросом (без N+1). Каталог может
+	// стоять за кешем (Options.Catalog): цены меняются редко, а читаются
+	// на каждом заказе.
+	products, err := s.catalog.ProductsByIDs(ctx, ids)
 	if err != nil {
 		return Order{}, fmt.Errorf("create order: %w", err)
 	}
@@ -142,8 +166,12 @@ func (s *Service) CreateOrder(ctx context.Context, req CreateOrderRequest) (Orde
 		order.TotalCents += p.PriceCents * int64(it.Quantity)
 	}
 
+	// Заказы покупателя живут на его шарде. Номер заказа выдаёт шард: в
+	// номере зашит номер шарда, и GetOrder найдёт заказ без опроса всех.
+	store := s.router.ForCustomer(req.CustomerID)
+
 	// Номер заказа — до резерва: это ключ идемпотентности для склада.
-	order.ID, err = s.store.NextOrderID(ctx)
+	order.ID, err = store.NextOrderID(ctx)
 	if err != nil {
 		return Order{}, fmt.Errorf("create order: %w", err)
 	}
@@ -162,7 +190,7 @@ func (s *Service) CreateOrder(ctx context.Context, req CreateOrderRequest) (Orde
 	}
 
 	// Шаг 2: заказ и событие в своей базе.
-	err = s.inTx(ctx, func(tx Tx) error {
+	err = s.inTx(ctx, store, func(tx Tx) error {
 		if err := tx.CreateOrder(ctx, order); err != nil {
 			return err
 		}
@@ -179,7 +207,7 @@ func (s *Service) CreateOrder(ctx context.Context, req CreateOrderRequest) (Orde
 		// нельзя — проверяем, есть ли он.
 		checkCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), s.releaseTimeout)
 		defer cancel()
-		saved, getErr := s.store.Order(checkCtx, order.ID)
+		saved, getErr := store.Order(checkCtx, order.ID)
 		switch {
 		case getErr == nil:
 			return saved, nil
@@ -230,8 +258,12 @@ func (s *Service) release(ctx context.Context, orderID int64, reason string) err
 // заказ как есть и снова вызывает Release (идемпотентный). Так повтор
 // дочищает резерв, если в прошлый раз склад не ответил.
 func (s *Service) CancelOrder(ctx context.Context, id int64) (Order, error) {
+	store, err := s.router.ForOrder(id)
+	if err != nil {
+		return Order{}, fmt.Errorf("cancel order %d: %w", id, err)
+	}
 	var order Order
-	err := s.inTx(ctx, func(tx Tx) error {
+	err = s.inTx(ctx, store, func(tx Tx) error {
 		// Блокировка строки заказа: параллельная отмена того же заказа ждёт
 		// здесь и после нашего коммита увидит уже StatusCancelled.
 		o, err := tx.LockOrder(ctx, id)
@@ -263,9 +295,14 @@ func (s *Service) CancelOrder(ctx context.Context, id int64) (Order, error) {
 	return order, nil
 }
 
-// Order возвращает заказ с позициями.
+// Order возвращает заказ с позициями. Читает всегда с основной базы шарда:
+// заказ, только что созданный клиентом, виден сразу (реплика отстаёт).
 func (s *Service) Order(ctx context.Context, id int64) (Order, error) {
-	o, err := s.store.Order(ctx, id)
+	store, err := s.router.ForOrder(id)
+	if err != nil {
+		return Order{}, fmt.Errorf("get order %d: %w", id, err)
+	}
+	o, err := store.Order(ctx, id)
 	if err != nil {
 		return Order{}, fmt.Errorf("get order %d: %w", id, err)
 	}
@@ -277,6 +314,14 @@ func (s *Service) Order(ctx context.Context, id int64) (Order, error) {
 // Пагинация по ключу (keyset), а не OFFSET: страница не «съезжает» от
 // новых заказов, и база не перебирает пропущенные строки.
 func (s *Service) ListOrders(ctx context.Context, customerID, beforeID int64, limit int) ([]Order, bool, error) {
+	return s.ListOrdersAfter(ctx, customerID, beforeID, limit, "")
+}
+
+// ListOrdersAfter — ListOrders с токеном согласованности: история не
+// старее позиции after (см. History и WritePosition). Без токена история
+// может читаться с реплики и не содержать заказы последних сотен
+// миллисекунд.
+func (s *Service) ListOrdersAfter(ctx context.Context, customerID, beforeID int64, limit int, after Position) ([]Order, bool, error) {
 	if customerID <= 0 {
 		return nil, false, &ValidationError{Field: "customer_id", Message: "must be positive"}
 	}
@@ -284,7 +329,7 @@ func (s *Service) ListOrders(ctx context.Context, customerID, beforeID int64, li
 		return nil, false, &ValidationError{Field: "page_size", Message: "must be between 1 and 100"}
 	}
 	// На одну строку больше: так без COUNT(*) понятно, есть ли следующая страница.
-	list, err := s.store.ListOrders(ctx, customerID, beforeID, limit+1)
+	list, err := s.history.ListOrders(ctx, customerID, beforeID, limit+1, after)
 	if err != nil {
 		return nil, false, fmt.Errorf("list orders: %w", err)
 	}
@@ -292,6 +337,30 @@ func (s *Service) ListOrders(ctx context.Context, customerID, beforeID int64, li
 		return list[:limit], true, nil
 	}
 	return list, false, nil
+}
+
+// WritePosition — токен согласованности для клиента после записи заказа
+// покупателя (CreateOrder, CancelOrder): передав его в ListOrdersAfter,
+// клиент увидит свою запись даже при чтении с реплики. Вызывать после
+// того, как запись завершилась.
+func (s *Service) WritePosition(ctx context.Context, customerID int64) Position {
+	return s.history.WritePosition(ctx, customerID)
+}
+
+// Product возвращает товар каталога; нет такого — ошибка с
+// ErrProductNotFound.
+func (s *Service) Product(ctx context.Context, id int64) (Product, error) {
+	if id <= 0 {
+		return Product{}, &ValidationError{Field: "product_id", Message: "must be positive"}
+	}
+	products, err := s.catalog.ProductsByIDs(ctx, []int64{id})
+	if err != nil {
+		return Product{}, fmt.Errorf("get product %d: %w", id, err)
+	}
+	if len(products) == 0 {
+		return Product{}, fmt.Errorf("product %d: %w", id, ErrProductNotFound)
+	}
+	return products[0], nil
 }
 
 // commitError — сбой на COMMIT: исход транзакции неизвестен.
@@ -302,8 +371,8 @@ func (e *commitError) Unwrap() error { return e.err }
 
 // inTx выполняет fn в транзакции: Commit, если fn вернула nil, иначе
 // Rollback. Это единственное место, где сервис открывает транзакции.
-func (s *Service) inTx(ctx context.Context, fn func(tx Tx) error) error {
-	tx, err := s.store.Begin(ctx)
+func (s *Service) inTx(ctx context.Context, store Store, fn func(tx Tx) error) error {
+	tx, err := store.Begin(ctx)
 	if err != nil {
 		return err
 	}

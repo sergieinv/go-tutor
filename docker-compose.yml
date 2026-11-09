@@ -33,6 +33,13 @@ services:
       # работает в той же сети, и пароли из репозитория ей известны.
       RUNNER_LAB_POSTGRES: postgres://runner:labs-runner@postgres:5432/postgres?sslmode=disable
       RUNNER_LAB_MYSQL: runner:labs-runner@tcp(mysql:3306)/
+      # Реплика PostgreSQL: урок с labs: [postgres] получает ещё и
+      # POSTGRES_REPLICA_DSN — ту же базу, но на реплике (только чтение).
+      RUNNER_LAB_POSTGRES_REPLICA: postgres-replica:5432
+      # Valkey песочницы — отдельный экземпляр, не тот, что у сервисов: на
+      # запуск runner создаёт ACL-пользователя, которому доступны только ключи
+      # с его префиксом, и удаляет пользователя и ключи после запуска.
+      RUNNER_LAB_VALKEY: valkey://default:labs-valkey@valkey-sandbox:6379
       # Kafka для песочницы выключена: у брокера нет аутентификации и ACL,
       # и программа ученика могла бы читать и удалять чужие топики (в том числе
       # orders.events сервисов), менять настройки брокера и уронить его.
@@ -55,6 +62,9 @@ services:
   postgres:
     image: postgres:18.4
     profiles: [labs]
+    # wal_keep_size — запас WAL, чтобы реплика догоняла после паузы;
+    # max_wal_size держит WAL в tmpfs (то есть в памяти) в узде.
+    command: ["postgres", "-c", "wal_keep_size=128MB", "-c", "max_wal_size=256MB"]
     environment:
       POSTGRES_PASSWORD: labs
       # База сервиса «Заказы» (labs/orders); runner создаёт свои базы рядом.
@@ -71,6 +81,94 @@ services:
       interval: 2s
       timeout: 3s
       retries: 30
+    networks: [default, sandbox]
+
+  # Потоковая реплика postgres (модуль 14): при старте снимает копию
+  # pg_basebackup и дальше получает WAL. recovery_min_apply_delay
+  # применяет транзакции с задержкой 200 мс — так задержка репликации
+  # видна в уроках и в «Заказах», а не теряется в миллисекундах локальной
+  # сети. Порт с машины — 55433. hot_standby_feedback выключен нарочно:
+  # обратная связь (раз в 10 с) держала бы горизонт VACUUM основной базы,
+  # и уроки модуля 10 про MVCC и VACUUM видели бы чужие «старые» снимки.
+  postgres-replica:
+    image: postgres:18.4
+    profiles: [labs]
+    entrypoint: ["/labs/start.sh"]
+    command: ["postgres", "-c", "recovery_min_apply_delay=200ms", "-c", "max_wal_size=256MB"]
+    environment:
+      PGPASSWORD: labs-replicator
+    tmpfs:
+      - /var/lib/postgresql:size=1g
+    volumes:
+      - ./labs/replica/start.sh:/labs/start.sh:ro
+    # Данные и WAL лежат в tmpfs и считаются в память контейнера: лимит
+    # не меньше, чем у основной, иначе реплику убивает OOM.
+    mem_limit: 1g
+    ports:
+      - "127.0.0.1:55433:5432"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres"]
+      interval: 2s
+      timeout: 3s
+      retries: 60
+    networks: [default, sandbox]
+
+  # Второй шард «Заказов» (модуль 14, роутер по покупателю): первый шард —
+  # база orders в postgres. Только для сервисов, из песочницы недоступен.
+  postgres-shard1:
+    image: postgres:18.4
+    profiles: [labs]
+    environment:
+      POSTGRES_PASSWORD: labs
+      POSTGRES_DB: orders
+    tmpfs:
+      - /var/lib/postgresql:size=512m
+    mem_limit: 512m
+    ports:
+      - "127.0.0.1:55434:5432"
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    networks: [default]
+
+  # Valkey (открытый форк Redis) для сервисов: кеш каталога «Заказов».
+  # Без пароля, но только в сети default: из песочницы недоступен.
+  valkey:
+    image: valkey/valkey:9.1.2
+    profiles: [labs]
+    command: ["valkey-server", "--save", "", "--appendonly", "no", "--maxmemory", "96mb", "--maxmemory-policy", "allkeys-lru"]
+    mem_limit: 128m
+    ports:
+      - "127.0.0.1:56379:6379"
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    networks: [default]
+
+  # Valkey для песочницы: администратор — default с паролем, программы
+  # ходят ACL-пользователями запусков (только свой префикс ключей, без
+  # опасных команд). Пароль в репозитории, поэтому здесь нет ничего, кроме
+  # временных ключей уроков. Порт с машины — 56380 (для lessonlint).
+  valkey-sandbox:
+    image: valkey/valkey:9.1.2
+    profiles: [labs]
+    command: ["valkey-server", "--requirepass", "labs-valkey", "--save", "", "--appendonly", "no", "--maxmemory", "48mb", "--maxmemory-policy", "noeviction"]
+    mem_limit: 96m
+    ports:
+      - "127.0.0.1:56380:6379"
+    healthcheck:
+      test: ["CMD", "valkey-cli", "-a", "labs-valkey", "--no-auth-warning", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    # default — ради порта на 127.0.0.1: у internal-сети публикации нет.
     networks: [default, sandbox]
 
   mysql:
@@ -136,6 +234,9 @@ services:
   # «Заказы» (labs/orders): REST http://127.0.0.1:8090, gRPC 127.0.0.1:50051,
   # метрики и пробы — 127.0.0.1:8190. Миграции и топик orders.events —
   # при старте. DSN — учебный суперпользователь (см. labs/orders/README.md).
+  # Модуль 14: кеш каталога в valkey, история с postgres-replica, load
+  # shedding на CreateOrder, переключатели /admin/features на служебном
+  # порту (для loadgen analyze). Шарды — docker-compose.shards.yml.
   orders:
     build:
       context: ./labs
@@ -144,14 +245,33 @@ services:
     profiles: [labs]
     environment:
       ORDERS_DB: postgres
-      ORDERS_DSN: postgres://postgres:labs@postgres:5432/orders?sslmode=disable
+      # pool_max_conns — маленький пул нарочно: под нагрузкой видно, как
+      # запросы ждут соединения, и что кеш и реплика его разгружают.
+      ORDERS_DSN: postgres://postgres:labs@postgres:5432/orders?sslmode=disable&pool_max_conns=8
       ORDERS_WAREHOUSE_ADDR: dns:///warehouse:9090
       ORDERS_KAFKA_BROKERS: kafka:9092
       ORDERS_OTLP_ENDPOINT: jaeger:4317
       ORDERS_GRPC_REFLECTION: "true"
+      ORDERS_VALKEY_ADDR: valkey:6379
+      # Реплика только читает; суперпользователь на hot standby не может
+      # ничего изменить, но в проде здесь была бы роль только с SELECT.
+      ORDERS_REPLICA_DSN: postgres://postgres:labs@postgres-replica:5432/orders?sslmode=disable&pool_max_conns=8
+      ORDERS_CREATE_MAX_IN_FLIGHT: "16"
+      ORDERS_CREATE_MAX_QUEUE: "16"
+      ORDERS_CREATE_QUEUE_TIMEOUT: 50ms
+      # Служебный /admin/features (кеш и реплика вкл/выкл без перезапуска):
+      # порт 8081 опубликован только на 127.0.0.1, в сеть sandbox сервис не
+      # входит.
+      ORDERS_ADMIN_FEATURES: "true"
     depends_on:
       postgres:
         condition: service_healthy
+      # Реплика и valkey необязательны: без них «Заказы» работают (история
+      # с основной базы, каталог без кеша) — поэтому service_started.
+      postgres-replica:
+        condition: service_started
+      valkey:
+        condition: service_started
       kafka:
         condition: service_healthy
       warehouse:
@@ -214,6 +334,26 @@ services:
         condition: service_started
     ports:
       - "127.0.0.1:8192:8081"
+    read_only: true
+    mem_limit: 256m
+    networks: [default]
+
+  # Генератор нагрузки (labs/loadgen, модуль 14). Свой профиль loadtest:
+  # «docker compose --profile labs up» его не запускает, а
+  # «docker compose --profile labs run --rm loadgen analyze» включает
+  # профиль сам. depends_on нет нарочно: run не трогает уже запущенные
+  # базы, а loadgen сам ждёт готовности «Заказов». Ходит только по HTTP в
+  # orders внутри сети default; портов не публикует, в sandbox не входит.
+  loadgen:
+    build:
+      context: ./labs
+      dockerfile: loadgen/Dockerfile
+    image: go-tutor/loadgen:dev
+    profiles: [loadtest]
+    environment:
+      LOADGEN_TARGET: http://orders:8080
+      LOADGEN_OPS: http://orders:8081
+    command: ["analyze"]
     read_only: true
     mem_limit: 256m
     networks: [default]

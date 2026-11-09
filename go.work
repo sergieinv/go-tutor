@@ -2,6 +2,7 @@ go 1.26.0
 
 use (
 	./labs/api
+	./labs/loadgen
 	./labs/notifications
 	./labs/orders
 	./labs/platform

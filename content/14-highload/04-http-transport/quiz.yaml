@@ -1,0 +1,101 @@
+questions:
+  - id: idle-default
+    kind: output
+    prompt: Что выведет программа?
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"net/http"
+      )
+
+      func main() {
+      	dt := http.DefaultTransport.(*http.Transport)
+      	fmt.Println(dt.MaxIdleConns, dt.MaxIdleConnsPerHost, http.DefaultMaxIdleConnsPerHost)
+      }
+    options:
+      - text: "100 0 2"
+        correct: true
+        explain: "Поле `MaxIdleConnsPerHost` в `DefaultTransport` не задано (ноль), а ноль означает «по умолчанию» — константу `DefaultMaxIdleConnsPerHost`, то есть 2. Всего простаивающих — до 100, но на один хост — только два."
+      - text: "100 100 2"
+        explain: "Общий лимит простаивающих (`MaxIdleConns: 100`) задан явно, а лимит на хост — нет: поле остаётся нулём и трактуется как 2."
+      - text: "0 0 2"
+        explain: "`DefaultTransport` создаётся с `MaxIdleConns: 100` — это видно в исходнике `net/http/transport.go`. Ноль был бы у `&http.Transport{}`."
+
+  - id: no-close
+    kind: output
+    prompt: "Что выведет программа? (Сервер считает принятые соединения.)"
+    code: |
+      package main
+
+      import (
+      	"fmt"
+      	"io"
+      	"net"
+      	"net/http"
+      	"net/http/httptest"
+      	"sync/atomic"
+      )
+
+      func main() {
+      	var conns atomic.Int64
+      	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+      		io.WriteString(w, "ok")
+      	}))
+      	srv.Config.ConnState = func(_ net.Conn, s http.ConnState) {
+      		if s == http.StateNew {
+      			conns.Add(1)
+      		}
+      	}
+      	srv.Start()
+      	defer srv.Close()
+
+      	c := &http.Client{Transport: &http.Transport{}}
+      	for range 5 {
+      		resp, err := c.Get(srv.URL)
+      		if err != nil {
+      			panic(err)
+      		}
+      		_ = resp.StatusCode // тело не читаем и не закрываем
+      	}
+      	fmt.Println(conns.Load())
+      }
+    options:
+      - text: "5"
+        correct: true
+        explain: "Соединение HTTP/1.1 занято ответом, пока его тело не прочитано и не закрыто. Тело никто не закрыл — соединение не вернулось в пул, и каждый следующий запрос открыл новое. Это утечка: соединения и горутины транспорта висят до конца программы."
+      - text: "1"
+        explain: "Так было бы, если бы тело дочитали и закрыли: тогда соединение вернулось бы в пул, и следующие запросы взяли бы его."
+      - text: "2"
+        explain: "`MaxIdleConnsPerHost = 2` ограничивает только простаивающие соединения. Здесь ни одно не стало простаивающим — все заняты незакрытыми ответами."
+
+  - id: new-client
+    kind: single
+    prompt: "Какой код в обработчике входящего запроса создаёт проблему под нагрузкой?"
+    options:
+      - text: "`c := &http.Client{Transport: &http.Transport{}, Timeout: 5 * time.Second}` на каждый входящий запрос"
+        correct: true
+        explain: "Новый транспорт — новый пустой пул: каждый запрос открывает соединение, а после ответа оно навсегда остаётся простаивать в забытом пуле (`IdleConnTimeout` у `&http.Transport{}` — ноль, без лимита). Это аналог `new HttpClient()` на запрос в .NET."
+      - text: "`c := &http.Client{Timeout: 5 * time.Second}` на каждый входящий запрос"
+        explain: "Без поля `Transport` клиент использует общий `http.DefaultTransport` с его пулом. Создавать такой `Client` дёшево, хотя завести его один раз всё равно аккуратнее."
+      - text: "Общий для всех горутин `var client = &http.Client{Transport: tr, Timeout: 5 * time.Second}`"
+        explain: "Так и надо: `Client` и `Transport` безопасны для конкурентного использования, их создают один раз."
+      - text: "Общий клиент и `http.NewRequestWithContext(r.Context(), ...)` на каждый запрос"
+        explain: "Запрос с контекстом входящего — правильный способ пробросить дедлайн и отмену. Запросы дешёвые, дорогие — соединения."
+
+  - id: timeouts
+    kind: multiple
+    prompt: "Какие утверждения о таймаутах верны?"
+    options:
+      - text: "`Client.Timeout` включает время чтения тела ответа"
+        correct: true
+        explain: "Таймер останавливается, только когда тело прочитано или закрыто. Поэтому для скачивания больших файлов `Client.Timeout` неудобен — там нужен контекст и таймауты стадий."
+      - text: "`ResponseHeaderTimeout` ограничивает ожидание заголовков ответа после отправки запроса"
+        correct: true
+        explain: "Это одна стадия: сервер принял запрос и думает. Чтение тела этот таймаут не ограничивает."
+      - text: "`IdleConnTimeout` ограничивает, сколько запрос ждёт свободного соединения при `MaxConnsPerHost`"
+        explain: "`IdleConnTimeout` — сколько простаивающее соединение живёт в пуле. Ожидание свободного соединения ограничивает только контекст запроса или `Client.Timeout`."
+      - text: "`ReadHeaderTimeout` на сервере защищает от клиентов, которые присылают заголовки по байту"
+        correct: true
+        explain: "Это защита от Slowloris: если заголовки не пришли за отведённое время, сервер закрывает соединение."

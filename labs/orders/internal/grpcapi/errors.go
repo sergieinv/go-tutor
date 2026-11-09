@@ -35,6 +35,8 @@ func (s *Server) toStatus(ctx context.Context, err error) error {
 		})
 	case errors.As(err, &stockErr):
 		return outOfStock(stockErr)
+	case errors.Is(err, orders.ErrProductNotFound):
+		return status.Error(codes.NotFound, "product not found")
 	case errors.Is(err, orders.ErrNotFound):
 		return status.Error(codes.NotFound, "order not found")
 	case errors.Is(err, orders.ErrConflict):

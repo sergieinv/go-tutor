@@ -1,0 +1,7 @@
+=== RUN   TestSameResult
+    main_test.go:26: сумма одинакова во всех раскладках: 1498500
+--- PASS: TestSameResult (0.00s)
+=== RUN   TestMatrix
+    main_test.go:40: шаг по столбцу в матрице 2048×2048: 16384 байт — новая кеш-линия на каждый элемент
+--- PASS: TestMatrix (0.00s)
+PASS

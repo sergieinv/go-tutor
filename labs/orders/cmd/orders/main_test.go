@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alicebob/miniredis/v2"
 	"github.com/twmb/franz-go/pkg/kfake"
 	"github.com/twmb/franz-go/pkg/kgo"
 
@@ -251,5 +252,145 @@ func TestRunRejectsBadConfig(t *testing.T) {
 	err := run(t.Context(), []string{"orders"}, env(nil), io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "ORDERS_DB is required") {
 		t.Fatalf("run with empty env = %v, want config error", err)
+	}
+}
+
+func TestLoadConfigModule14(t *testing.T) {
+	cfg, err := loadConfig(env(minimal))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.createMaxInFlight != 64 || cfg.createMaxQueue != 64 || cfg.createQueueTimeout != 100*time.Millisecond ||
+		cfg.catalogTTL != 5*time.Minute || cfg.catalogNegativeTTL != 30*time.Second ||
+		cfg.valkeyAddr != "" || cfg.replicaDSN != "" || cfg.adminFeatures ||
+		len(cfg.shardDSNs) != 1 || cfg.shardDSNs[0] != cfg.dsn {
+		t.Errorf("module 14 defaults = %+v", cfg)
+	}
+
+	pg := with(minimal, "ORDERS_DB", "postgres", "ORDERS_DSN", "")
+	cfg, err = loadConfig(env(with(pg, "ORDERS_SHARD_DSNS", "postgres://a/orders, postgres://b/orders",
+		"ORDERS_REPLICA_DSN", "postgres://r/orders", "ORDERS_VALKEY_ADDR", "valkey:6379",
+		"ORDERS_CREATE_MAX_IN_FLIGHT", "0", "ORDERS_ADMIN_FEATURES", "true")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.shardDSNs) != 2 || cfg.dsn != "postgres://a/orders" || cfg.createMaxInFlight != 0 || !cfg.adminFeatures {
+		t.Errorf("sharded cfg = %+v", cfg)
+	}
+
+	for name, tc := range map[string]struct {
+		env  map[string]string
+		want string
+	}{
+		"shards on sqlite":  {with(minimal, "ORDERS_SHARD_DSNS", "a.db,b.db"), "requires ORDERS_DB=postgres"},
+		"dsn != shard 0":    {with(pg, "ORDERS_DSN", "postgres://x/orders", "ORDERS_SHARD_DSNS", "postgres://a/orders,postgres://b/orders"), "equal to the first"},
+		"replica on sqlite": {with(minimal, "ORDERS_REPLICA_DSN", "postgres://r/orders"), "ORDERS_REPLICA_DSN requires"},
+		"bad valkey":        {with(minimal, "ORDERS_VALKEY_ADDR", "valkey"), "ORDERS_VALKEY_ADDR"},
+		"bad limits":        {with(minimal, "ORDERS_CREATE_MAX_IN_FLIGHT", "-1", "ORDERS_CREATE_QUEUE_TIMEOUT", "soon"), "ORDERS_CREATE_QUEUE_TIMEOUT"},
+		"bad admin flag":    {with(minimal, "ORDERS_ADMIN_FEATURES", "yes please"), "ORDERS_ADMIN_FEATURES"},
+	} {
+		if _, err := loadConfig(env(tc.env)); err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: err = %v, want mention of %q", name, err, tc.want)
+		}
+	}
+
+	// Пароли шардов и реплики не попадают в ошибки.
+	const password = "sh4rd-pa55"
+	_, err = loadConfig(env(with(minimal, "ORDERS_SHARD_DSNS", "postgres://u:"+password+"@a/db", "ORDERS_REPLICA_DSN", "postgres://u:"+password+"@r/db")))
+	if err == nil || strings.Contains(err.Error(), password) {
+		t.Errorf("error = %v; want error without the password", err)
+	}
+}
+
+// TestRunModule14 — сборка main с кешем каталога (miniredis) и
+// переключателями: GetProduct через REST идёт в базу один раз, затем из
+// кеша; /admin/features на служебном порту выключает кеш без перезапуска.
+func TestRunModule14(t *testing.T) {
+	wh := warehousetest.New(map[int64]int32{1: 10, 2: 25, 3: 3})
+	whLis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wh.Serve(t, whLis)
+	cluster, err := kfake.NewCluster(kfake.NumBrokers(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(cluster.Close)
+	mr := miniredis.RunT(t)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	stdout := &syncBuffer{}
+	getenv := env(map[string]string{
+		"ORDERS_DB":             "sqlite",
+		"ORDERS_DSN":            filepath.Join(t.TempDir(), "orders.db"),
+		"ORDERS_HTTP_ADDR":      "127.0.0.1:0",
+		"ORDERS_GRPC_ADDR":      "127.0.0.1:0",
+		"ORDERS_OPS_ADDR":       "127.0.0.1:0",
+		"ORDERS_WAREHOUSE_ADDR": "passthrough:///" + whLis.Addr().String(),
+		"ORDERS_KAFKA_BROKERS":  strings.Join(cluster.ListenAddrs(), ","),
+		"ORDERS_VALKEY_ADDR":    mr.Addr(),
+		"ORDERS_ADMIN_FEATURES": "true",
+	})
+	done := make(chan error, 1)
+	go func() { done <- run(ctx, []string{"orders"}, getenv, stdout) }()
+	addrs := waitListening(t, stdout, done, "http", "ops", "grpc")
+	api, ops := "http://"+addrs["http"], "http://"+addrs["ops"]
+
+	dbQueries := func() string {
+		var m string
+		get(t, ops+"/metrics", &m)
+		for _, line := range strings.Split(m, "\n") {
+			if strings.HasPrefix(line, "orders_catalog_db_queries_total ") {
+				return strings.TrimPrefix(line, "orders_catalog_db_queries_total ")
+			}
+		}
+		return "absent"
+	}
+
+	var body string
+	for range 3 {
+		if code := get(t, api+"/v1/products/1", &body); code != http.StatusOK || !strings.Contains(body, "Клавиатура") {
+			t.Fatalf("GET /v1/products/1 = %d %s", code, body)
+		}
+	}
+	if q := dbQueries(); q != "1" {
+		t.Errorf("db queries with cache = %s, want 1", q)
+	}
+	if code := get(t, api+"/v1/products/404", nil); code != http.StatusNotFound {
+		t.Errorf("missing product = %d, want 404", code)
+	}
+
+	// Переключатели — только на служебном порту.
+	if code := get(t, api+"/admin/features", nil); code == http.StatusOK {
+		t.Error("/admin/features is exposed on the public REST port")
+	}
+	resp, err := http.Post(ops+"/admin/features", "application/json", strings.NewReader(`{"catalog_cache": false}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("POST /admin/features = %d", resp.StatusCode)
+	}
+	get(t, api+"/v1/products/1", nil)
+	get(t, api+"/v1/products/1", nil)
+	if q := dbQueries(); q != "4" { // 1 + 404 + два чтения без кеша
+		t.Errorf("db queries with cache off = %s, want 4", q)
+	}
+	// Реплика не настроена — включить нельзя.
+	resp, err = http.Post(ops+"/admin/features", "application/json", strings.NewReader(`{"replica_reads": true}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusConflict {
+		t.Errorf("enable replica without DSN = %d, want 409", resp.StatusCode)
+	}
+
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatalf("run: %v", err)
 	}
 }

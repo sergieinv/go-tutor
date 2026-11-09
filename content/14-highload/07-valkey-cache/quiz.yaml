@@ -1,0 +1,122 @@
+questions:
+  - id: nil-vs-empty
+    kind: output
+    prompt: "Пустая строка — отрицательная запись, отсутствие ключа — промах. Что выведет программа?"
+    code: |
+      package main
+
+      import (
+      	"context"
+      	"fmt"
+
+      	"github.com/alicebob/miniredis/v2"
+      	"github.com/valkey-io/valkey-go"
+      )
+
+      func main() {
+      	mr, _ := miniredis.Run()
+      	defer mr.Close()
+      	c, err := valkey.NewClient(valkey.ClientOption{
+      		InitAddress: []string{mr.Addr()}, DisableCache: true, ForceSingleClient: true,
+      	})
+      	if err != nil {
+      		panic(err)
+      	}
+      	defer c.Close()
+      	ctx := context.Background()
+      	c.Do(ctx, c.B().Set().Key("product:404").Value("").ExSeconds(10).Build())
+      	v, err := c.Do(ctx, c.B().Get().Key("product:404").Build()).ToString()
+      	_, err2 := c.Do(ctx, c.B().Get().Key("product:1").Build()).ToString()
+      	fmt.Printf("%q %v %v\n", v, err, valkey.IsValkeyNil(err2))
+      }
+    options:
+      - text: "\"\" <nil> true"
+        correct: true
+        explain: "Записанная пустая строка читается как пустая строка без ошибки — это «товара нет, не ходи в базу». Отсутствующий ключ — ошибка `valkey nil`, её распознаёт `valkey.IsValkeyNil`: это промах. Две ситуации различимы, на этом и держится отрицательное кеширование."
+      - text: "\"\" valkey nil message true"
+        explain: "Ключ `product:404` существует, просто его значение пустое — ошибки нет."
+      - text: "\"\" <nil> false"
+        explain: "`product:1` не записывали: `GET` вернёт nil-ответ, и `IsValkeyNil` для него — `true`."
+
+  - id: ttl-fastforward
+    kind: output
+    prompt: "miniredis двигает время сам — `FastForward`. Что выведет программа?"
+    code: |
+      package main
+
+      import (
+      	"context"
+      	"fmt"
+      	"time"
+
+      	"github.com/alicebob/miniredis/v2"
+      	"github.com/valkey-io/valkey-go"
+      )
+
+      func main() {
+      	mr, _ := miniredis.Run()
+      	defer mr.Close()
+      	c, err := valkey.NewClient(valkey.ClientOption{
+      		InitAddress: []string{mr.Addr()}, DisableCache: true, ForceSingleClient: true,
+      	})
+      	if err != nil {
+      		panic(err)
+      	}
+      	defer c.Close()
+      	ctx := context.Background()
+      	c.Do(ctx, c.B().Set().Key("a").Value("1").PxMilliseconds(60_000).Build())
+      	c.Do(ctx, c.B().Set().Key("b").Value("1").Build())
+      	mr.FastForward(time.Minute)
+      	a, _ := c.Do(ctx, c.B().Exists().Key("a").Build()).AsInt64()
+      	b, _ := c.Do(ctx, c.B().Exists().Key("b").Build()).AsInt64()
+      	ttl, _ := c.Do(ctx, c.B().Ttl().Key("b").Build()).AsInt64()
+      	fmt.Println(a, b, ttl)
+      }
+    options:
+      - text: "0 1 -1"
+        correct: true
+        explain: "Через минуту ключ `a` истёк. `b` записан без TTL и будет жить вечно — `TTL` для ключа без срока возвращает -1 (а -2 — для отсутствующего). Каждая запись кеша должна иметь TTL."
+      - text: "1 1 -1"
+        explain: "TTL `a` — 60 000 мс, `FastForward(time.Minute)` сдвигает время miniredis ровно на него: ключ истекает."
+      - text: "0 0 -2"
+        explain: "У `b` нет срока жизни: никакое ожидание его не удалит. -2 было бы для отсутствующего ключа."
+
+  - id: set-vs-del
+    kind: single
+    prompt: "При обновлении товара сервис пишет новое значение в базу, а затем `SET` нового значения в кеш. Два обновления одного товара идут параллельно. Чем это плохо?"
+    options:
+      - text: "Записи в кеш могут прийти в другом порядке, чем в базу, — в кеше останется не последняя версия до истечения TTL"
+        correct: true
+        explain: "A пишет базу, B пишет базу, B пишет кеш, A пишет кеш: в базе B, в кеше A. С `DEL` после записи порядок не важен — следующее чтение возьмёт из базы последнее."
+      - text: "`SET` медленнее `DEL`, и обновление занимает больше времени"
+        explain: "Разница в скорости ничтожна. Проблема — в согласованности: какое значение останется в кеше."
+      - text: "Ничем: Valkey однопоточный и выполняет команды по очереди"
+        explain: "Valkey действительно выполняет команды по одной, но в каком порядке они придут от двух обработчиков, никто не гарантирует."
+
+  - id: cache-down
+    kind: multiple
+    prompt: "Valkey перезапускается, команды возвращают ошибку соединения. Что должен делать сервис каталога?"
+    options:
+      - text: "Читать базу и отвечать пользователю как обычно"
+        correct: true
+        explain: "Кеш — ускоритель. Пока база жива, пользователь не должен заметить падения кеша."
+      - text: "Ограничить ожидание кеша коротким таймаутом"
+        correct: true
+        explain: "Зависший кеш опаснее упавшего: без таймаута каждый запрос будет ждать его до своего дедлайна."
+      - text: "Защитить базу от волны промахов (ограничитель, circuit breaker)"
+        correct: true
+        explain: "Без кеша в базу придёт вся нагрузка, а не 10% промахов. Если её не ограничить, вслед за кешем ляжет база."
+      - text: "Возвращать 503, пока кеш не поднимется"
+        explain: "Это превращает падение вспомогательного компонента в отказ всего сервиса, хотя данные есть в базе."
+
+  - id: negative-ttl
+    kind: single
+    prompt: "Как правильно кешировать ответы базы «товара нет» и «таймаут базы»?"
+    options:
+      - text: "«Нет» — отдельным значением с коротким TTL; таймаут не кешировать вовсе"
+        correct: true
+        explain: "Отрицательная запись защищает базу от перебора несуществующих id, короткий TTL — чтобы новый товар появился быстро. Таймаут — временный сбой, закешированный, он продлится на весь TTL."
+      - text: "Оба — тем же TTL, что и товары: меньше запросов в базу"
+        explain: "Пятисекундный сбой базы превратится в минуту ответов «товара нет» для всех, а созданный товар будет «не существовать» до истечения записи."
+      - text: "Ничего не кешировать, кроме найденных товаров"
+        explain: "Тогда каждый запрос несуществующего товара идёт в базу — скрипт, перебирающий id, нагрузит её не хуже атаки."

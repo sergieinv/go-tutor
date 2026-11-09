@@ -13,6 +13,9 @@ import (
 var (
 	// ErrNotFound — заказа нет.
 	ErrNotFound = errors.New("not found")
+	// ErrProductNotFound — товара нет в каталоге. errors.Is(err, ErrNotFound)
+	// для неё тоже истинно.
+	ErrProductNotFound = fmt.Errorf("product %w", ErrNotFound)
 	// ErrOutOfStock — на складе не хватает товара. Подробности — в
 	// *OutOfStockError.
 	ErrOutOfStock = errors.New("out of stock")

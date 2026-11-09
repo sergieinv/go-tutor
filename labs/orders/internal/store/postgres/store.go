@@ -13,6 +13,8 @@ import (
 	"fmt"
 	"io/fs"
 	"math"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -59,6 +61,63 @@ func Open(ctx context.Context, dsn string) (*Store, error) {
 		return nil, fmt.Errorf("ping postgres: %w", err)
 	}
 	return &Store{pool: pool, q: sqlcgen.New(pool)}, nil
+}
+
+// OpenReplica создаёт пул к реплике, не проверяя связь: недоступная при
+// старте реплика не мешает сервису (история читается с основной базы, см.
+// internal/replica), а пул подключится, когда реплика поднимется.
+// Миграции на реплике не применяются — она только для чтения и получает
+// схему с основной базы вместе с WAL.
+func OpenReplica(ctx context.Context, dsn string) (*Store, error) {
+	cfg, err := pgxpool.ParseConfig(dsn)
+	if err != nil {
+		return nil, fmt.Errorf("parse replica dsn: %w", err)
+	}
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		return nil, fmt.Errorf("create replica pool: %w", err)
+	}
+	return &Store{pool: pool, q: sqlcgen.New(pool)}, nil
+}
+
+// WALPosition — текущая позиция записи WAL основной базы
+// (pg_current_wal_lsn). Вызванная после COMMIT, она не меньше позиции
+// этого коммита: реплика, применившая её, видит транзакцию.
+func (s *Store) WALPosition(ctx context.Context) (uint64, error) {
+	var lsn string
+	if err := s.pool.QueryRow(ctx, "SELECT pg_current_wal_lsn()::text").Scan(&lsn); err != nil {
+		return 0, fmt.Errorf("current wal lsn: %w", err)
+	}
+	return parseLSN(lsn)
+}
+
+// ReplayPosition — до какой позиции WAL реплика применила изменения
+// (pg_last_wal_replay_lsn). На основной базе функция возвращает NULL —
+// это ошибка: значит, DSN реплики указывает не на реплику.
+func (s *Store) ReplayPosition(ctx context.Context) (uint64, error) {
+	var lsn *string
+	if err := s.pool.QueryRow(ctx, "SELECT pg_last_wal_replay_lsn()::text").Scan(&lsn); err != nil {
+		return 0, fmt.Errorf("last wal replay lsn: %w", err)
+	}
+	if lsn == nil {
+		return 0, errors.New("last wal replay lsn: server is not in recovery (not a replica)")
+	}
+	return parseLSN(*lsn)
+}
+
+// parseLSN разбирает текстовую позицию WAL «16/B374D848» (две половины
+// 64-битного числа в шестнадцатеричном виде).
+func parseLSN(s string) (uint64, error) {
+	hi, lo, ok := strings.Cut(s, "/")
+	if !ok {
+		return 0, fmt.Errorf("malformed lsn %q", s)
+	}
+	h, err1 := strconv.ParseUint(hi, 16, 32)
+	l, err2 := strconv.ParseUint(lo, 16, 32)
+	if err1 != nil || err2 != nil {
+		return 0, fmt.Errorf("malformed lsn %q", s)
+	}
+	return h<<32 | l, nil
 }
 
 // Close закрывает пул, дожидаясь возврата соединений.

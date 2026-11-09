@@ -18,6 +18,8 @@
 //	RUNNER_LAB_POSTGRES DSN администратора PostgreSQL профиля labs (runner.labs: [postgres])
 //	RUNNER_LAB_MYSQL    DSN администратора MySQL профиля labs (runner.labs: [mysql])
 //	RUNNER_LAB_KAFKA    брокеры Kafka профиля labs через запятую (runner.labs: [kafka])
+//	RUNNER_LAB_VALKEY   администратор Valkey песочницы, valkey://default:пароль@хост:порт (runner.labs: [valkey])
+//	RUNNER_LAB_POSTGRES_REPLICA адрес host:port реплики PostgreSQL: запуск с [postgres] получает POSTGRES_REPLICA_DSN
 package main
 
 import (
@@ -94,7 +96,8 @@ func serve(log *slog.Logger) error {
 		cfg.Pprof, _ = osexec.LookPath("pprof")
 	}
 	cfg.Labs = map[string]string{}
-	for name, key := range map[string]string{sandbox.LabPostgres: "RUNNER_LAB_POSTGRES", sandbox.LabMySQL: "RUNNER_LAB_MYSQL", sandbox.LabKafka: "RUNNER_LAB_KAFKA"} {
+	for name, key := range map[string]string{sandbox.LabPostgres: "RUNNER_LAB_POSTGRES", sandbox.LabMySQL: "RUNNER_LAB_MYSQL", sandbox.LabKafka: "RUNNER_LAB_KAFKA",
+		sandbox.LabValkey: "RUNNER_LAB_VALKEY", sandbox.LabPostgresReplica: "RUNNER_LAB_POSTGRES_REPLICA"} {
 		if dsn := os.Getenv(key); dsn != "" {
 			cfg.Labs[name] = dsn
 		}

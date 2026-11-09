@@ -26,10 +26,20 @@ const (
 	LabPostgres = "postgres"
 	LabMySQL    = "mysql"
 	LabKafka    = "kafka"
+	LabValkey   = "valkey"
 )
 
 // LabNames — допустимые значения runner.labs.
-var LabNames = []string{LabPostgres, LabMySQL, LabKafka}
+var LabNames = []string{LabPostgres, LabMySQL, LabKafka, LabValkey}
+
+// LabPostgresReplica — ключ Config.Labs с адресом (host:port) потоковой
+// реплики LabPostgres. Это не отдельная база: запуск с labs: [postgres]
+// получает POSTGRES_REPLICA_DSN — свою базу на реплике, только для чтения.
+const LabPostgresReplica = "postgres-replica"
+
+// replicaWait — сколько ждать, пока база запуска доедет до реплики
+// (у реплики labs задержка применения 200 мс).
+const replicaWait = 5 * time.Second
 
 // labEnv — переменная окружения, в которой программа получает DSN своей базы.
 var labEnv = map[string]string{
@@ -84,8 +94,11 @@ func (l *labs) prepare(ctx context.Context, names []string) (env []string, note 
 		admin, ok := l.admin[name]
 		if !ok {
 			hint := "запустите учебник через docker compose --profile labs up"
-			if name == LabKafka {
+			switch name {
+			case LabKafka:
 				hint = "в песочнице Kafka выключена по умолчанию (см. docker-compose.yml), а kfake работает без неё"
+			case LabValkey:
+				hint = "запустите учебник через docker compose --profile labs up; без него урок работает на miniredis в памяти"
 			}
 			notes = append(notes, fmt.Sprintf("labs: %s в этом runner не настроен — %s", name, hint))
 			continue
@@ -123,12 +136,20 @@ func (l *labs) create(ctx context.Context, name, admin string) (env []string, dr
 		dsn, err = createMySQL(ctx, admin, id, password)
 	case LabKafka:
 		env, err = createKafka(ctx, admin, id)
+	case LabValkey:
+		env, err = createValkey(ctx, admin, id, password)
 	}
 	if err != nil {
 		return nil, nil, err
 	}
 	if dsn != "" {
 		env = []string{labEnv[name] + "=" + dsn}
+	}
+	if replica := l.admin[LabPostgresReplica]; name == LabPostgres && replica != "" {
+		// Реплика необязательна: не доехала база — урок получит только основную.
+		if rdsn, err := waitReplica(dsn, replica); err == nil {
+			env = append(env, "POSTGRES_REPLICA_DSN="+rdsn)
+		}
 	}
 	return env, func() {
 		// Контекст запроса к этому моменту может быть отменён, а база
@@ -142,6 +163,8 @@ func (l *labs) create(ctx context.Context, name, admin string) (env []string, dr
 			dropMySQL(ctx, admin, []string{id})
 		case LabKafka:
 			dropKafka(ctx, admin, func(owner string) bool { return owner == id })
+		case LabValkey:
+			dropValkey(ctx, admin, func(owner string) bool { return owner == id })
 		}
 	}, nil
 }
@@ -187,8 +210,35 @@ func (l *labs) dropStale(name, admin string) error {
 		dropMySQL(ctx, admin, staleIDs(ids))
 	case LabKafka:
 		return dropKafka(ctx, admin, func(owner string) bool { return len(staleIDs([]string{owner})) == 1 })
+	case LabValkey:
+		return dropValkey(ctx, admin, func(owner string) bool { return len(staleIDs([]string{owner})) == 1 })
 	}
 	return nil
+}
+
+// waitReplica ждёт, пока роль и база запуска появятся на реплике, и
+// возвращает DSN той же базы на реплике.
+func waitReplica(dsn, replica string) (string, error) {
+	u, err := url.Parse(dsn)
+	if err != nil {
+		return "", err
+	}
+	u.Host = replica
+	rdsn := u.String()
+	ctx, cancel := context.WithTimeout(context.Background(), replicaWait)
+	defer cancel()
+	for {
+		conn, err := pgx.Connect(ctx, rdsn)
+		if err == nil {
+			conn.Close(ctx)
+			return rdsn, nil
+		}
+		select {
+		case <-ctx.Done():
+			return "", err
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
 }
 
 // staleIDs оставляет имена временных баз, созданных раньше labStaleAge.

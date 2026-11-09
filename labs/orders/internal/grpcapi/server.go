@@ -52,7 +52,11 @@ func (s *Server) CreateOrder(ctx context.Context, req *ordersv1.CreateOrderReque
 	if err != nil {
 		return nil, s.toStatus(ctx, err)
 	}
-	return &ordersv1.CreateOrderResponse{Order: toProto(o)}, nil
+	return &ordersv1.CreateOrderResponse{
+		Order: toProto(o),
+		// Токен — после записи: позиция основной базы уже включает заказ.
+		ConsistencyToken: string(s.svc.WritePosition(ctx, o.CustomerID)),
+	}, nil
 }
 
 // GetOrder возвращает заказ.
@@ -77,7 +81,7 @@ func (s *Server) ListOrders(ctx context.Context, req *ordersv1.ListOrdersRequest
 			return nil, s.toStatus(ctx, &orders.ValidationError{Field: "page_token", Message: "invalid page token"})
 		}
 	}
-	list, more, err := s.svc.ListOrders(ctx, req.GetCustomerId(), before, size)
+	list, more, err := s.svc.ListOrdersAfter(ctx, req.GetCustomerId(), before, size, orders.Position(req.GetConsistencyToken()))
 	if err != nil {
 		return nil, s.toStatus(ctx, err)
 	}
@@ -97,7 +101,21 @@ func (s *Server) CancelOrder(ctx context.Context, req *ordersv1.CancelOrderReque
 	if err != nil {
 		return nil, s.toStatus(ctx, err)
 	}
-	return &ordersv1.CancelOrderResponse{Order: toProto(o)}, nil
+	return &ordersv1.CancelOrderResponse{
+		Order:            toProto(o),
+		ConsistencyToken: string(s.svc.WritePosition(ctx, o.CustomerID)),
+	}, nil
+}
+
+// GetProduct возвращает товар каталога (через кеш, если он включён).
+func (s *Server) GetProduct(ctx context.Context, req *ordersv1.GetProductRequest) (*ordersv1.GetProductResponse, error) {
+	p, err := s.svc.Product(ctx, req.GetProductId())
+	if err != nil {
+		return nil, s.toStatus(ctx, err)
+	}
+	return &ordersv1.GetProductResponse{Product: &ordersv1.Product{
+		ProductId: p.ID, Name: p.Name, PriceCents: p.PriceCents,
+	}}, nil
 }
 
 func toProto(o orders.Order) *ordersv1.Order {

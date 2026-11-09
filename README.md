@@ -25,10 +25,11 @@ docker compose --profile labs up --build   # плюс PostgreSQL, MySQL и се�
 
 - `site` — nginx со статикой Astro, `/api/*` проксируется в `runner`. Порт открыт только на `127.0.0.1`, nginx отвечает лишь на `Host: localhost`/`127.0.0.1` (защита от DNS rebinding), а runner отвергает запросы с чужой страницы (`Sec-Fetch-Site: cross-site`, чужой `Origin`) и без `Content-Type: application/json`: runner исполняет присланный код, и чужой сайт в браузере не должен до него дотянуться.
 - `runner` — Go-тулчейн с прогретым кешем сборки. Каждый запуск идёт в отдельном временном каталоге от имени отдельного uid слота с лимитами: 10 с CPU и реального времени, 256 МБ, 64 процесса, вывод до 64 КБ. После запуска все процессы слота убиваются.
-- У `runner` нет выхода в интернет (сеть `internal`); модули — только из кеша образа. Сторонние модули, доступные урокам, перечислены в `runner/sandbox/deps.mod` (сейчас `golang.org/x/sync`, `golang.org/x/crypto`, SQLite `modernc.org/sqlite`, `pgx`, `go-sql-driver/mysql` и `goose`). Модули из `go.sum` примеров со своим `go.mod` тоже скачиваются при сборке образа. В образе есть `govulncheck` и снимок базы уязвимостей vuln.go.dev, который обновляется при каждой пересборке.
+- У `runner` нет выхода в интернет (сеть `internal`); модули — только из кеша образа. Сторонние модули, доступные урокам, перечислены в `runner/sandbox/deps.mod` (среди них `golang.org/x/sync`, `golang.org/x/crypto`, SQLite `modernc.org/sqlite`, `pgx`, `go-sql-driver/mysql`, `goose`, gRPC, franz-go, OpenTelemetry, `valkey-go` и `miniredis`). Модули из `go.sum` примеров со своим `go.mod` тоже скачиваются при сборке образа. В образе есть `govulncheck` и снимок базы уязвимостей vuln.go.dev, который обновляется при каждой пересборке.
 - pprof (`/api/pprof`): профиль записала программа ученика, поэтому `pprof` (собранный `cmd/pprof`: с Go 1.25 тулчейн не содержит его готовым) разбирает его так же, как запускается сама программа, — от имени uid слота и с теми же лимитами.
 - Примеры с `.proto`: перед сборкой runner выполняет `buf generate` (buf и плагины `protoc-gen-go`, `protoc-gen-go-grpc`, `protoc-gen-grpc-gateway` — в образе, зависимости googleapis и protovalidate — в кеше buf образа). buf работает от имени runner, поэтому `buf.gen.yaml` и `buf.lock` всегда свои, присланный `buf.yaml` переписывается в каноническом виде после проверки, а `.proto` вместе — не больше 64 КиБ.
 - Профиль `labs` добавляет PostgreSQL 18 и MySQL 8.4 (данные в tmpfs, после перезапуска базы пустые; порты только на localhost: 55432 и 53306, пароль `labs`) Kafka 4.3 (KRaft, `localhost:59092`; сервисам итогового проекта, а не песочнице: у брокера нет ACL, уроки используют kfake) и сервис «Заказы» на `localhost:8090`. Урокам с `runner.labs` runner на каждый запуск создаёт отдельную базу и пользователя, передаёт DSN в `POSTGRES_DSN` / `MYSQL_DSN` и удаляет их после запуска. Без профиля такие уроки подсказывают, как его включить. Программы песочницы работают в одной сети с базами, а пароли лежат в репозитории, поэтому права разведены (`labs/initdb`): runner ходит в базы ролью `runner` без прав суперпользователя, суперпользователям `postgres` и `root` вход из сети песочницы закрыт (а заблокированные записи MySQL защищены `SYSTEM_USER`, иначе роль runner с `CREATE USER` сняла бы блокировку), роль запуска видит только свою базу, а базам и их tmpfs ограничена память. Тесты `labs/orders` и `psql` с машины по-прежнему могут входить как `postgres`/`root`.
+- Для модуля 14 профиль `labs` добавляет потоковую реплику PostgreSQL `postgres-replica` (`localhost:55433`, транзакции применяются с задержкой 200 мс — так задержку репликации видно), второй шард «Заказов» `postgres-shard1` (`localhost:55434`, только для сервисов), `valkey` для сервисов (`localhost:56379`, из песочницы недоступен) и `valkey-sandbox` для уроков (`localhost:56380`, пароль администратора `labs-valkey`). Запуск с `labs: [postgres]` получает ещё `POSTGRES_REPLICA_DSN` — свою базу на реплике. Запуск с `labs: [valkey]` получает ACL-пользователя, которому доступны только ключи с префиксом `VALKEY_PREFIX` и закрыты опасные команды (`FLUSHALL`, `CONFIG`, `KEYS`, `ACL`…); после запуска пользователь и ключи удаляются. Репликация из сети песочницы закрыта: поток WAL — это все базы целиком.
 - В `site/package-lock.json` записаны адреса корпоративного Artifactory. Образ сайта ставит пакеты из `registry.npmjs.org`, подменяя префикс через `--replace-registry-host`; integrity-хеши проверяются как обычно. Другой реестр: `docker compose build --build-arg NPM_REGISTRY=... site`.
 - Режим `server` (runner внутри gVisor): `docker compose -f docker-compose.yml -f docker-compose.server.yml up -d`, нужен runtime `runsc`.
 
@@ -68,7 +69,8 @@ go run ./tools/lessonlint content
 # только один урок; -update перезаписывает example/output.txt
 go run ./tools/lessonlint -run 05-concurrency/07-select -update content
 
-# уроки на настоящих базах (нужен docker compose --profile labs up) и сверка кода sqlc
+# уроки на настоящих базах (нужен docker compose --profile labs up) и сверка кода sqlc;
+# модуль 14 — ещё -postgres-replica 127.0.0.1:55433 -valkey valkey://default:labs-valkey@127.0.0.1:56380
 go run ./tools/lessonlint -postgres 'postgres://runner:labs-runner@127.0.0.1:55432/postgres?sslmode=disable' \
   -mysql 'runner:labs-runner@tcp(127.0.0.1:53306)/' -sqlc "$(command -v sqlc)" -run 10-services-db/ content
 # примеры с runtime/pprof: pprof ищется в PATH, иначе lessonlint соберёт cmd/pprof сам (или -pprof путь)
@@ -93,7 +95,8 @@ cd site && npx playwright install chromium && npm run e2e
 
 ```sh
 # тесты runner; изоляция по uid и тесты fork-бомбы — только под root на Linux;
-# временные базы labs — при RUNNER_TEST_POSTGRES / RUNNER_TEST_MYSQL (DSN роли runner) и RUNNER_TEST_KAFKA;
+# временные базы labs — при RUNNER_TEST_POSTGRES / RUNNER_TEST_MYSQL (DSN роли runner), RUNNER_TEST_KAFKA,
+# RUNNER_TEST_POSTGRES_REPLICA (127.0.0.1:55433) и RUNNER_TEST_VALKEY (valkey://default:labs-valkey@127.0.0.1:56380);
 # генерация из .proto и buf lint/breaking — при RUNNER_BUF (или buf в PATH)
 go test ./runner/...
 docker run --rm --init -v "$PWD:/repo" -w /repo/runner -e GOWORK=off go-tutor/runner:dev go test ./...

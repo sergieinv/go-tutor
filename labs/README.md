@@ -1,4 +1,4 @@
-# labs — итоговый проект модулей 11–12
+# labs — итоговый проект модулей 11–12 (и нагрузка модуля 14)
 
 Система из трёх сервисов. Она выросла из сервиса «Заказы» модуля 10 и
 написана так, как пишут продакшн-сервисы на Go. Здесь нет DI-контейнера,
@@ -12,6 +12,7 @@ Microsoft.Extensions.* и фреймворков: зависимости соб�
 | [`orders/`](orders) | `gotutor/labs/orders` | «Заказы»: gRPC + REST, PostgreSQL, сага, outbox → Kafka |
 | [`warehouse/`](warehouse) | `gotutor/labs/warehouse` | «Склад»: остатки и резервы с блокировками, MySQL |
 | [`notifications/`](notifications) | `gotutor/labs/notifications` | «Уведомления»: консьюмер Kafka, дедупликация, DLQ |
+| [`loadgen/`](loadgen) | `gotutor/labs/loadgen` | генератор нагрузки и нагрузочный разбор (модуль 14) |
 | [`initdb/`](initdb), [`prometheus/`](prometheus) | — | init-скрипты баз и конфигурация Prometheus для профиля labs |
 
 ## Как устроено
@@ -26,6 +27,9 @@ flowchart LR
     saga -- "gRPC Reserve / Release<br/>дедлайн, повторы, выключатель" --> wh[Склад<br/>gRPC WarehouseService]
     saga -- "заказ + outbox<br/>одна транзакция" --> pg[(PostgreSQL<br/>orders)]
     relay -- читает outbox --> pg
+    og -- "каталог (кеш, модуль 14)" --> vk[(Valkey)]
+    og -- "история (модуль 14)" --> rep[(PostgreSQL<br/>реплика)]
+    pg -. WAL .-> rep
     wh --> my[(MySQL<br/>warehouse)]
     relay -- "orders.events<br/>ключ = order_id" --> kafka[[Kafka]]
     kafka -- consumer group --> notif[Уведомления]
@@ -58,11 +62,12 @@ flowchart LR
 docker compose --profile labs up --build
 ```
 
-Вместе с PostgreSQL, MySQL и Kafka поднимутся `orders`, `warehouse`,
-`notifications`, `jaeger` и `prometheus`. Базы и топики живут в tmpfs: это
+Вместе с PostgreSQL (и её репликой), MySQL, Kafka и Valkey поднимутся
+`orders`, `warehouse`, `notifications`, `jaeger` и `prometheus`. Базы и топики живут в tmpfs: это
 учебный стенд, после перезапуска он пуст. Миграции, демо-данные и топики
 сервисы создают сами при старте. Демо-каталог: 1 — «Клавиатура» (10 шт.),
-2 — «Мышь» (25 шт.), 3 — «Монитор» (3 шт.).
+2 — «Мышь» (25 шт.), 3 — «Монитор» (3 шт.), 4 — «Кабель USB-C» (миллион
+штук, для нагрузочных прогонов модуля 14).
 
 | Адрес (только 127.0.0.1) | Что |
 |---|---|
@@ -70,7 +75,7 @@ docker compose --profile labs up --build
 | 127.0.0.1:50051 | gRPC «Заказов» (reflection включён) |
 | http://127.0.0.1:8091 | REST «Склада» — только `GET /v1/stock/{product_id}` |
 | 127.0.0.1:50052 | gRPC «Склада» (reflection включён) |
-| http://127.0.0.1:8190, :8191, :8192 | служебные порты orders / warehouse / notifications: `/metrics`, `/healthz`, `/readyz` |
+| http://127.0.0.1:8190, :8191, :8192 | служебные порты orders / warehouse / notifications: `/metrics`, `/healthz`, `/readyz`; у orders ещё `/admin/features` (модуль 14) |
 | http://127.0.0.1:16686 | Jaeger UI |
 | http://127.0.0.1:9091 | Prometheus UI |
 
@@ -167,7 +172,9 @@ Kafka поднимается в процессе (`kfake`), gRPC работае�
 ```sh
 export ORDERS_TEST_POSTGRES='postgres://postgres:labs@127.0.0.1:55432/postgres?sslmode=disable'
 export WAREHOUSE_TEST_MYSQL='root:labs@tcp(127.0.0.1:53306)/'
-for m in api platform orders warehouse notifications; do (cd labs/$m && go vet ./... && go test -race -count=3 ./...); done
+# модуль 14: реплика (read-your-writes на настоящей потоковой реплике)
+export ORDERS_TEST_POSTGRES_REPLICA='postgres://postgres:labs@127.0.0.1:55433/postgres?sslmode=disable'
+for m in api platform orders warehouse notifications loadgen; do (cd labs/$m && go vet ./... && go test -race -count=3 ./...); done
 ```
 
 ## Безопасность
@@ -215,6 +222,68 @@ for m in api platform orders warehouse notifications; do (cd labs/$m && go vet .
   `SELECT/INSERT/UPDATE` на свои таблицы через `sslmode=verify-full`, а
   пароли берутся из менеджера секретов (в k8s — Secret, смонтированный
   файлом), а не из `docker-compose.yml`.
+
+## Модуль 14: нагрузка
+
+Модуль 14 («Высокие нагрузки») встраивает в «Заказы» то, что его уроки
+разбирают по отдельности. Всё включено в `docker-compose.yml`, подробности
+и переменные окружения — в [`orders/README.md`](orders/README.md#модуль-14-нагрузка).
+
+| Что | Как устроено | Видно в метриках |
+|---|---|---|
+| Кеш каталога | `GET /v1/products/{id}` и цены в CreateOrder читаются через Valkey: cache-aside, TTL с джиттером, singleflight на ключ (защита от stampede), отрицательный кеш «нет такого товара», деградация в базу при недоступном Valkey | `orders_catalog_cache_lookups_total{result}`, `orders_catalog_db_queries_total` |
+| Load shedding | CreateOrder: не больше N одновременно и короткая очередь; не дождался места — сразу `RESOURCE_EXHAUSTED` с `RetryInfo` (REST — 429 и `Retry-After`) | `orders_shed_rejected_total`, `orders_shed_in_flight` |
+| История с реплики | ListOrders читает с `postgres-replica`; read-your-writes — токен с позицией WAL из ответа CreateOrder/CancelOrder (`consistency_token`) | `orders_history_reads_total{target,reason}` |
+| Шарды по покупателю | по выбору: `docker-compose.shards.yml` — заказы покупателя на шарде `jump_hash(customer_id)`, номер шарда в старших битах номера заказа | `orders_outbox_*{shard}` |
+
+### Нагрузочный разбор одной командой
+
+При запущенном профиле `labs`:
+
+```sh
+docker compose --profile labs run --rm loadgen analyze
+```
+
+Сервис `loadgen` — в своём профиле `loadtest`: `up` его не запускает,
+`run` включает профиль сам. Он ходит в «Заказы» по сети docker (`orders:8080`)
+и переключает кеш и реплику через служебный эндпоинт
+`orders:8081/admin/features` — без пересборки и перезапуска контейнера.
+Разбор идёт около минуты:
+
+1. **база** — кеш и реплика выключены: каждый запрос каталога доходит до
+   PostgreSQL, вся история читается с основной базы;
+2. **+кеш** — запросы каталога к базе почти исчезают (остаются промахи по
+   несуществующим товарам — отрицательный кеш спасает только от повторов — и
+   раз в TTL);
+3. **+реплика** — история уходит на реплику; проверка read-your-writes
+   показывает, что без токена только что созданный заказ в истории не
+   виден (реплика отстаёт на 200 мс), а с токеном виден всегда;
+4. **перегрузка** — только заказы, 1500/с: часть получает 429 быстро, а
+   задержка принятых остаётся ограниченной.
+
+Каждый шаг печатает отчёт генератора (запросы, исходы по кодам, p50–p99.9,
+max) и разницу метрик «Заказов» за шаг, в конце — сводная таблица:
+
+```
+шаг            сцен/с   каталог   каталог      заказ    история    5xx/    429    400   БД кат.      кеш  реплика    не видно
+                            p50       p99        p99        p99    сеть                   в сек      hit     доля  без/с ток.
+1 база            150    1.22ms    3.90ms     9.47ms     4.35ms       0      0      0     105.1        —       0%         0/0
+2 +кеш            150    1.22ms    3.84ms     9.47ms     4.48ms       0      0      0       4.7      96%       0%         0/0
+3 +реплика        150    1.18ms    3.39ms     9.21ms     4.03ms       0      0      0       3.3      97%      81%       215/0
+4 перегрузка     1437         —         —      117ms          —       0   3051      0       0.0     100%        —           —
+```
+
+Числа зависят от машины и от того, что ещё на ней работает: на ноутбуке с
+маленькими таблицами база отвечает за доли миллисекунды, и разница в
+задержках между шагами невелика. Смотрите на направление: «БД кат. в сек»
+падает почти до нуля, «реплика доля» растёт, «не видно без токена» > 0,
+«с токеном» = 0, в перегрузке появляются 429. Как читать отчёт и что
+настраивается флагами — в [`loadgen/README.md`](loadgen/README.md).
+
+Ограничения стенда: реплика одна (и только у шарда 0), задержка её
+нарочно увеличена; кеш не инвалидируется при смене цены (обновится по TTL);
+переключатели `/admin/features` без аутентификации — только служебный порт
+на 127.0.0.1 и сеть docker `default`.
 
 ## Проверка контрактов в CI
 

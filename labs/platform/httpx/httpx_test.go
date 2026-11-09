@@ -14,8 +14,10 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/durationpb"
 
 	warehousev1 "gotutor/labs/api/gen/warehouse/v1"
 	"gotutor/labs/platform/health"
@@ -124,6 +126,38 @@ func TestGatewayErrorFormat(t *testing.T) {
 				t.Errorf("5xx not logged: %s", logs)
 			}
 		})
+	}
+}
+
+// TestGatewayRetryAfter: RetryInfo в деталях → заголовок Retry-After
+// (секунды, вверх); RESOURCE_EXHAUSTED → 429.
+func TestGatewayRetryAfter(t *testing.T) {
+	for _, tc := range []struct {
+		code       codes.Code
+		delay      time.Duration
+		wantStatus int
+		want       string
+	}{
+		{codes.ResourceExhausted, 1500 * time.Millisecond, http.StatusTooManyRequests, "2"},
+		{codes.Unavailable, 100 * time.Millisecond, http.StatusServiceUnavailable, "1"},
+	} {
+		st, err := status.New(tc.code, "busy").WithDetails(&errdetails.RetryInfo{RetryDelay: durationpb.New(tc.delay)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		h, _, _ := newGateway(t, &stockServer{err: st.Err()})
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/stock/5", nil))
+		if rec.Code != tc.wantStatus || rec.Header().Get("Retry-After") != tc.want {
+			t.Errorf("%v: status %d Retry-After %q, want %d %q", tc.code, rec.Code, rec.Header().Get("Retry-After"), tc.wantStatus, tc.want)
+		}
+	}
+	// Без RetryInfo заголовка нет.
+	h, _, _ := newGateway(t, &stockServer{err: status.Error(codes.NotFound, "no")})
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/stock/5", nil))
+	if v := rec.Header().Get("Retry-After"); v != "" {
+		t.Errorf("Retry-After without RetryInfo = %q", v)
 	}
 }
 
